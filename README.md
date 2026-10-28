@@ -763,7 +763,7 @@ ruff check --fix .
 pytest
 ```
 
-> **注释规范**：模块/函数说明统一使用 `#` 行注释，不使用三引号 `"""` 文档字符串；功能性多行字符串字面量（模板/SQL）改用单引号 + 换行拼接而非 `"""`。
+> **注释规范**：见 [AGENTS.md](AGENTS.md) 的代码风格约定。
 
 > **质量检查**：Ruff 负责格式化和导入排序，pytest 要求 0 warnings；不配置常驻类型检查器。统一入口见 AGENTS.md 的「格式化命令」。
 
@@ -1056,7 +1056,6 @@ brew install node
 - **测试覆盖率专项（09-21）**：`src/` 覆盖率 **73.28% → 82.03%**（仅动 `tests/`，产品代码零改动），并引入分层白名单（表默认空 + 到期即失败）。
 - **四语目录持续补全与核验**：594 → **780 条**，四个目录键集逐条一致、无空值；`.mo` 随变更重编译。
 - **元数据同源同步**：`AGENTS.md` 依赖条数与下限口径、`CODE_WIKI*.md` 依赖表（16 → 23 条）、`DouyinLiveRecorder.egg-info` 重建、`.dockerignore` 补 `_probe_*.py`、`config/config.ini` 补 `[Cookie] ttwid`。
-- **类型存根与注释治理**：`typings/execjs/` 7 个 `.pyi` 补齐注解、两个抽象基类存根去 `six`（改 `metaclass=ABCMeta`）；全仓多批注释精炼（含 68 文件一轮），`tool/check_annotations.py` 新增第三盲点（换行符形态）。
 - **清理已删除模块残留**：`src/weverse_auth.py` / `tests/test_weverse_auth.py`（2026-09-23 删除）在目录树、依赖注释与四语目录中的 3 条孤儿译文一并清除。
 - **跨文件一致性同步（09-27）**：`requirements.txt` ↔ `pyproject.toml [project.dependencies]` 23 ↔ 23 包名集合逐项相等、三组 extras 相等；`python_build = 3.14` 与 `node_version = 24` 在 `ci.yml` / `build-release.yml` 同值；14 个本地工具目录 + 6 个运行期产物目录在 `.gitignore` / `.dockerignore` / `pyproject` 各工具排除表 / `.coveragerc-concurrency` 四套清单中无缺项；本轮实际修订仅一处——`websockets>=14.0` 被截断的行内注释按同源文本补全（规格未动）。
 - **`AGENTS.md` 体积整理（09-27）**：把已在 `docs/agent-reference/measured-evidence.md` 留存的读数改为指针、合并三处真重复，97,034 → 95,715 B（−1.4%）；同时以「token 保全审计」自证未丢约束（用例名 / 错误码 / 常量与环境变量名丢失数均为 0）。

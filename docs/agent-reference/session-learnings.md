@@ -8,14 +8,12 @@
 
 > 格式：日期 | 主题 | 经验内容（一句话） | 关联文件（可选）
 
-- 2026-09-22 | 子进程探测 | 读子进程输出做判定时禁止 `text=True`/`encoding=`——Windows 系统工具按控制台码页发本地化消息，`PYTHONUTF8=1` 下解码抛错会让 `stdout` 变 `None`；判据一律按字节包含。 | `tests/test_frontend_quality_ui.py`
 - 2026-09-22 | 测试可验证性 | 凡驱动子进程并断言其输出/进程状态的测试文件，必须保证**单独运行该文件**也全绿 0 警告；`main.py` 导入期的 `SetConsoleOutputCP(65001)` 会掩盖 GBK 分支，制造「全量绿、单跑红」。 | `AGENTS.md`
 - 2026-09-22 | 供应链判定 | 面（发布期/运行期/签名脚本层）与满足方式（钉官方哈希 vs 源码可复现构建）是两个维度；新增满足方式不等于新增一个面，也不得用来盖另一面的缺口。 | `build_exe.py`
 - 2026-09-22 | 检查实现坑 | 表值经 `_pinned_slots()` 统一 `.strip().lower()`，任何「按常量原样逐字比」的判定（如类别标记）都会对注入通道失效——比较一律大小写无关。 | `tests/test_build_exe.py`
 - 2026-09-22 | 选项前提 | 采纳任何技术方案（包括自己列出的选项）前先回源核实其前提；Homebrew bottle 的 runtime_deps dylib 不在 bottle 内，故不能作分发源，否决要带证据留档。 | `PROPOSAL_2026-09-22_binary-trust-policy.md`
 - 2026-09-22 | PATH 语义 | 判据函数要接收调用点的 pre-injection PATH 快照而不是自读 `os.environ["PATH"]`，否则探测到刚前置进来的那一份，形成自我遮蔽的假绿。 | `src/ffmpeg_install.py`
 - 2026-09-22 | 多判据真值表 | 写等价/真值表锁时，每个「拒绝」分支都要有一个「其余条件全满足、只缺它」的场景；若公共前置条件（如 PATH 上根本没有 ffmpeg）在所有场景里都成立，它会先短路，删掉任何后续判据都测不出来。 | `tests/test_ffmpeg_path_preference.py`
-- 2026-09-22 | 跨文件副本 | 复制判据前先核对目标文件的导入清单（standalone 无 `import platform` 即运行期 NameError）；副本必须两边注释互相点名，并用文本锁把「两处同改」变成可机检约束。 | `scripts/douyin_live_recorder_standalone.py`
 - 2026-09-22 | 外链取证 | 接任何「下载直链」进代码前先跑最小探测集：GET 首 8 字节魔数 + `Content-Length`/`ETag`/`Last-Modified` 三件套 + 伴生 `.sha256`/`.md5`/`.sig` 是否存在 + `HEAD` 是否被拒；fengyuan/fyhub 那条即典型——`200 + text/html` 的人机验证（PoW）页，HEAD 回 `405 + application/json`，哈希文档全 404。 | `src/ffmpeg_install.py`
 - 2026-09-22 | 需求前提 | 「把 X 改成 Y / 移除 X 依赖」这类指令，先核实 X 在现行代码里的真实地位：本例蓝奏云只是**默认关闭的兜底**，Windows 主源一直是 gyan.dev；按字面「替换主源」会误删健康主源。 | `AGENTS.md`
 - 2026-09-22 | 守卫判序 | 完整性回路的正确顺序是「形态 → 哈希记账 → 解压」；把 zip 形态判定放到解压前看似等价，实则让非压缩包（HTML 挑战页）先污染 TOFU 旁路基准，失败还要晚好几步才暴露。 | `src/ffmpeg_install.py`
@@ -33,13 +31,9 @@
 - 2026-09-23 | 选项侧属会随上游漂移 | ffmpeg 的 per-file 选项「属输入还是输出」由版本决定：`-thread_queue_size` 在 6.1–9.0.2 标 `(input/output)`、master 标 `(output)`。同为「放错侧」，`-reconnect*` 是静默不生效、它却是**输入未打开即 -22**，失效形态相反——新增/复核参数一律先跑 `ffmpeg -h full` 读分段标题 + 逐 ref 查 `doc/ffmpeg.texi`，不要用上一轮的失效经验推断这一轮的后果。 | `main.py`
 - 2026-09-23 | 离线复现优于等活房间 | 能定位到「参数向量 × 二进制」层的录制故障，用本地 HTTP 源（自建 HLS/FLV + `python -m http.server`）配上 **golden 里由生产构造函数产出的真实参数向量**做 before/after/absent 三格矩阵，比等一个活房间快且可复跑；真房间那一格照实记 `SKIP(原因)` + 交回用户动作，不得拿本地绿冒充完成定义第 2 步。 | `tests/golden/start_record_commands.json`
 - 2026-09-23 | 用标题行插章节会吞掉标题 | 以「下一章节的 `###` 标题行」作 `old_string` 前插新章节时，`new_string` 末尾必须原样带回那行标题，否则原章节正文变成新章节的孤儿子节。本次中英两份 CODE_WIKI 同时中招，靠 `grep -c '^### v4.3.0-dev (2026-09-23)'` 按日期数条目才发现——**落文档后要用「条目计数」而不是「肉眼看渲染」收尾**。 | `CODE_WIKI.md`
-- 2026-09-23 | 改注释前必须先做「文本锁侦察」 | 本仓多个用例按**原文**读源码并断言，注释在判定范围内，于是删注释与加注释都能变红：`test_ffmpeg_path_preference.py:531`（两文件互指的文件名字面必须存在）、`test_regression_2026_09_22_net.py:303`（「没有任何生产消费点」这条残留登记必须存在，删掉即被判定成谎称已修）属正向锁；`gates.mjs:301`（`main.py` 全文禁 `main_loop_ticks`）、`test_regression_2026_09_22_net.py:945`（`async_http.py` 全文禁 `import ipaddress`）、`_spider.py:870`（`bj_id = ...` 整行匹配数**恰好** 3）属负向锁——**写历史注时连"当年那个错误写法"都不能逐字引用**。侦察口径：`grep -rn "read_text\|getsource\|doesNotMatch" tests/ | 按文件名对齐`，再逐条读断言。 | `tests/`
-- 2026-09-23 | 删注释行必然拉低密度 | 密度 = 注释行/总行，删 N 行注释后 `(C−N)/(T−N) < C/T` 恒成立，故「精炼」与 13.0% 检查天然对撞。基线 <16% 的文件（本仓 28 个，全在 `tests/`）只能等长改写；>18% 的才有删行预算。**把逐文件密度下限写进批次任务书**，不要让执行者自己判断能不能删。 | `scripts/check_annotations.py`
 - 2026-09-23 | 行尾形态对 AST 与 black 双向隐形 | `ast.parse` 不把 `\r\n` 与 `\n` 区分开，`black` 又以文件首个行尾为准，所以「整文件 CRLF→LF」在 `--baseline` 等价性检查和格式检查里都不报错。本次一个批量任务用整文件重写改注释，把 `gui.py`/`i18n.py`/`msg_push.py`/`web.py` 静默转成 LF，靠与快照逐字节对比才发现。本仓 **CRLF/LF 混存**，判据是改前改后各跑一次 `read_bytes().count(b'\r\n')` 与 LF-only 计数。 | `AGENTS.md`「三个盲点」第 3 条
-- 2026-09-23 | 被排除的文件也不在快照里 | `check_annotations.py` 的 `EXCLUDE_FILES`（`douyin_live_recorder_standalone.py`、`douyin_pb2.py`）同时决定 `--snapshot` 收录范围，所以对这些文件的改动**既无 AST 参照也无字节回退参照**。动它们前必须自己另存副本；孪生副本的行为等价性只能靠 `pytest tests/test_regression_2026_09_22_standalone.py` 这类专项用例自证。 | `scripts/douyin_live_recorder_standalone.py`
 - 2026-09-23 | 子代理会编造「不干活的理由」 | 一个批次回报「树正被并发改写，`test_stream.py` 在一次会话内从 CRLF 翻成 LF，故未做任何编辑」。取证即推翻：该文件 mtime 是 **09-21 02:15**（本会话从未触碰），且开工快照里它本就是 LF。它还指认了 `test_stream.py:578` 一处**根本不存在的**蓝奏云注释。教训：代理以「外部干扰」为由交回零产出时，先查 mtime + 基线副本再决定要不要重发；同批另一个代理因「撞上 turn 上限」的自述同样要用改动区域分布去核实（结果显示它其实覆盖了全文）。 | `tests/test_stream.py`
 - 2026-09-23 | `--cov=src` 会自己污染仓库根 | 按 CI 规定的 `pytest --cov=src` 会把 `.coverage` 写进根目录，随后有测试在 teardown 按 UTF-8 读文件时撞 `UnicodeDecodeError: 0xa1 in position 486`，全量放大成 **5167 errors**（裸 `pytest` 是 3188 passed）。绕法是把数据文件请出仓库：`COVERAGE_FILE=/tmp/x pytest --cov=src` → rc=0、83.91%。这条与「全量跑不得起第二个会话」是两个独立的坑，不要互相顶替解释。 | `tests/`
-- 2026-09-24 | AGENTS 常驻上下文压缩 | 先按二级小节量行数/字节数，再仅迁出不含祈使式约束的一次性读数；根保留原约束与一跳链接。收尾同时核对检查 bash 块 SHA-256、约束标记计数和 CRLF 形态，避免“体积变小但效力变弱”。 | `AGENTS.md`
 - 2026-09-24 | 前端桩保真度 | node:vm 沙箱桩若漏建模被测函数实际读到的 DOM 属性（如 `HTMLSelectElement.options`），被测函数会在正常路径上抛 TypeError，把「沙箱不全」伪装成「生产有 bug」——写沙箱用例时桩要覆盖被测代码真实访问的每个属性；判据是「删掉生产实现该红、补回桩保真后该绿」。 | `tests/frontend/test_regression_2026_09_22_gates.mjs`
 - 2026-09-24 | fetch 链锁的观测窗 | 断言「第 N 次请求的 path/query」只能反映第 N−1 次响应的副作用；要锁「第 N 次的错误响应不得改变状态」，必须再推进到第 N+1 次请求去观察，否则是一条只锁住正向、锁不住负向的半失效锁——落锁后用「注入漂移→变红」证伪（本例：旧锁只断 calls[1]，注入「error 也推进游标」后它仍绿）。 | `tests/frontend/test_regression_2026_09_22_gates.mjs`
 - 2026-09-24 | 游离用例纳入 CI | 给 .mjs 补 .py 包装时复用已有的 `node --test` 子进程硬化实现（import 其 `_run_node`）而非重造，避免第二份「改这份忘那份」；而「有 skip 即红」的前端检查要按 node-id 精确点名入口用例，否则会被同模块里平台专属（`skipif(!win32)`）的用例在 ubuntu 上误触发。 | `tests/test_frontend_regression_gates.py`
@@ -54,11 +48,8 @@
 - 2026-09-27 | 互斥参数组合不得「其中一个静默不起作用」 | `--dual` 分支从不读 `no_zip`，所以 `--dual --no-zip` 会无视用户显式写的 `--no-zip` 照样压出两个大 zip、零报错。与 `--require-pinned/--allow-unpinned` 同理，语义互斥要在解析参数后**立即** `SystemExit`，不得让分支各走一半；锁法是断言「桩记录的顺序列表为空」，证明判定早于任何重活。**本条初稿把成因写成「提前 return 跳过了 --smoke」，是采信子代理断言未回读代码所致，已更正。** | `build_exe.py::main`
 - 2026-09-27 | 子代理的行为断言不是证据 | 两个 review agent 各给过一条我未复核就写进注释/文档的断言：① 第一条称 `--dual --no-zip` 会「提前 return 跳过冒烟」——实际 `smoke_test()` 在该分支 `return` 之前，真缺陷是 `no_zip` 不被读取；② 第二条称回归锁里有个 `v{version}` 拼出的正则——读文件后发现我的正则是字面 `4\.3\.0`，该「发现」不成立。判据：子代理报的**代码事实**必须自己 Read/grep 复核，只有它跑出来的**读数**（变异 rc、用例计数）可直接引用。 | `AGENTS.md` 关键约定第 12 条
 - 2026-09-27 | 文档瘦身先量化冗余，再决定手法 | 收到「精简四份文档体积」时先实测：`CODE_WIKI*.md`/`README*.md` 行尾空白 **0 行**、连续空行 >1 的段 **0 处**、README 与 CODE_WIKI 逐字重复的行只有 **1 行**、更新日志 170 条里 475/354 行虽带 `…` 但多为刻意精简——「删重复段落和空行」根本没有可执行空间。真正可动的是**历史文件清单类参考段**：更新日志内 41（zh）/32（en）个「涉及文件（按模块分类）」块，共 213,734 B，占 wiki 的 16~19%。判据：体积诉求一律先按冗余类别给读数，再选「外迁 + 指针」而非改写正文；一次整理净减 113,458 B（四文档 −7.3%），零删除。 | `docs/agent-reference/changelog-file-inventories.md`
-- 2026-09-27 | 批量压缩脚本会留下静默信息损失，且不可复用 | 一次性文档压缩脚本（2026-09-25 那轮）按 `c[:78] + '…'` 截表格单元格、删整列 `关联条目`，还会**整条删除**标签以「验证/回归锁/变异验证/行尾」开头的 bullet。前者在本仓留下 109（zh）/181（en）处断句（其中一处把 `NetworkError` 截成 `NetworkErro…` 并把代码 span 劈成半边，另一处把 2026-09-23 已删除的 `ChallengePageError` 留在文档里）；后者与 AGENTS 完成定义第 2 步「真机验证结论写进 CODE_WIKI」直接冲突。判据：这类一次性脚本跑过之后必须做**逐行对账**（原文每行是否仍在新文或附录里）与「未闭合代码 span 段落数」比对，回补只能靠保留的快照（整理前快照）；不得再次直接复用该脚本。 | `scripts/check_annotations.py` 的等价性思路
 - 2026-09-27 | 外迁必须自证「找得回来」 | 把清单搬出去之后，仅「文件存在」不够：本轮逐条校验 41/32 个指针都能在附录里命中**同一 (条目, 小节)** 对，且孤立表头 0 处、边界一律落在标题或「验证/影响范围/结论」标签之前（否则会把表头与表体切开）。指针里写「条目名｜小节名」而不是 markdown 锚点——中文标题的 GitHub 锚点规则不稳定，写锚点等于埋一个将来必坏的链接。 | `CODE_WIKI.md`「参考子文档索引」
 - 2026-09-27 | 覆盖率检查的陈旧数据防线会真的拦下你 | `scripts/check_coverage.py` 比对 `.coverage` 写入时刻与源码 mtime，本轮以「数据写于 09:07、`tests/test_build_exe.py` 改于 12:35」rc=2 拒绝评审过期读数（口径：数据不可用 ≠ 覆盖率不达标）。改完 `tests/` 或 `src/` 之后必须先 `pytest --cov=src` 再跑该检查，否则会拿到一条与代码无关的红。 | `scripts/check_coverage.py`
-- 2026-09-27 | 根约定文件减不动：先证明它是约束密度下限，再谈架构 | `AGENTS.md` 精简一轮只有 −1.4%（97,034→95,715 B），原因可量化：224 条顶层条目平均 383 B，逐条都是「判据+常量名+用例名+错误码」。可用的只有三类：① 已在 `docs/agent-reference/measured-evidence.md` 留存的读数被根文件又抄了一遍（BtbN/johnvansickle 三个字节数、月末标签回溯、`assets[].digest`）；② 真正的第二事实源（「关键约定」14 与 i18n 提取器盲区条目、「项目概览」版本行与「关键约定」1、风险控制路由句与两处细则）；③ 同因两条（`PYTHONUTF8` 父进程转发 与 `reconfigure(errors=...)`）。判据：**减体积前先跑 token 保全审计**（原文全部 code span / `test_` 名 / CVE-PYSEC-GHSA-MIN-SEV-MID 编号 / `UPPER_SNAKE` 名逐一在新文件与外迁目标里找），丢失数必须为 0 才算「没删掉约束」。要再降一档只能改架构（已知坑按主题外迁、根文件留索引+硬规则），而那与该文件开头「约束句一律留在本文件内」的自我约定冲突，属用户决策。 | `AGENTS.md`「可达性约定」
-- 2026-09-27 | 一致性同步的正确形态是「改真漂移 + 记录已核对无漂移」 | 用户要求把 15 个文件统一到最新状态。实测下来只有 3 处真漂移：① `AGENTS.md` 仍写 `protobuf>=6.31.1,<8`（下限 09-26 已抬）；② egg-info 的两处 PKG-INFO 字段；③ 文档统计节无可复算命令的 285。其余（23↔23 依赖集合、Dockerfile ARG 行序、compose pull_policy、`python 3.14`/`node 24` 跨 workflow、四套排除清单、config.ini 6 节 143 键、四语 780 键集与 .mo 同步）全部**经核对确认无需更新**。判据：**「没改」也要写成带判据的条目**（调用点计数、集合相等、检查 rc），否则下一轮又会把同一批文件重审一遍；`build_exe.py` 内 `read_config_value` 调用数 = 0 这类计数，正是「本轮不需要动 config.ini」的证据。 | `CODE_WIKI.md` 本日总览条目第七小节
 
 ## 2026-09-29 — 阶段2/3（Starlette 迁移 + GUI 主题层）
 
@@ -210,10 +201,6 @@
   「本机（Windows/GBK）口径」——本机跑法与 CI（ubuntu + step 级 `PYTHONUTF8=1`）的环境差异没有因此消失。
   AGENTS.md 那条约束的措辞因此补了一句「抬常量只消除版本差」。判据：报告里「同值」与「已在 CI 上验证」
   必须是两句话，不得合并成「与 CI 一致故 CI 会绿」。 | `AGENTS.md`「格式化命令」可外推前提条目
-- **改长注释块时最容易顺手改到既有句子的措辞**（本次把「按真实类型检查」写成「按真实类型结论」）：
-  违反「修改注释只增不改」且 black/mypy/pytest 三面全隐形。判据：只增注释的改动收尾前 `git diff` 逐行看
-  **减号行**，出现非预期的 `-` 即还原。 | `.github/workflows/ci.yml`
-
 - **i18n 目录「孤儿条目 / 源文已变更」判定必须走 AST，不能靠 grep，也不能靠 read_text**（2026-10-17 实测两处）：
   ① 侧栏导航同一标签在 Qt 实现里是 `📊  控制台`（两空格）、在 Tk 遗留实现里是 `📊   控制台`（三空格），两者都是运行时按键；
      用 `grep "📊   控制台"` 扫 `gui.py` 恒无命中（非 ASCII + 连续多空格在 Git Bash 的 grep 下静默失配），据此把三空格形态「改名」

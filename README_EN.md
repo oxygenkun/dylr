@@ -768,7 +768,7 @@ ruff check --fix .
 pytest
 ```
 
-> **Comment convention**: module/function docs uniformly use `#` line comments, not triple-quoted `"""` docstrings; functional multiline string literals (templates/SQL) use single quotes + line concatenation instead of `"""`.
+> **Comment convention**: see the code style rules in [AGENTS.md](AGENTS.md).
 
 > **Quality gates**: Ruff formats code and sorts imports; pytest requires zero warnings. There is no permanent type-checker gate. The authoritative command list is in AGENTS.md.
 
@@ -1063,7 +1063,6 @@ This project is open-sourced under the [MIT License](LICENSE). Stars and Forks a
 - **Test coverage push (09-21)**: `src/` coverage **73.28% → 82.03%** (tests only, zero product-code changes), plus a layered allowlist (table empty by default, fails when it expires).
 - **Four-language catalogs kept complete and verified**: 594 → **780 entries**, with all four catalogs matching key by key and no empty values; the `.mo` is recompiled whenever they change.
 - **Metadata single-source sync**: `AGENTS.md` dependency count and lower-bound wording, the `CODE_WIKI*.md` dependency tables (16 → 23 entries), `DouyinLiveRecorder.egg-info` regenerated, `_probe_*.py` added to `.dockerignore`, and `[Cookie] ttwid` added to `config/config.ini`.
-- **Type stubs & comment governance**: 7 `.pyi` files under `typings/execjs/` got complete annotations and two abstract-base stubs dropped `six` (switched to `metaclass=ABCMeta`); multiple repo-wide comment-refinement batches (including one 68-file round), and `tool/check_annotations.py` gained a third blind spot (newline form).
 - **Leftovers of deleted modules cleaned up**: `src/weverse_auth.py` / `tests/test_weverse_auth.py` (deleted 2026-09-23) were removed from structure trees and dependency notes, and their 3 orphan translations were dropped from the four catalogs.
 - **Cross-file consistency sync (09-27)**: `requirements.txt` vs `pyproject.toml [project.dependencies]` — 23 vs 23 package-name sets equal, with all three extras groups matching; `python_build = 3.14` and `node_version = 24` identical in `ci.yml` and `build-release.yml`; the 14 local tool directories and 6 runtime artifact directories present without gaps across `.gitignore`, `.dockerignore`, every pyproject tool exclude and `.coveragerc-concurrency`. The only edit this round was completing the truncated inline comment on `websockets>=14.0` (no specifier changed).
 - **`AGENTS.md` size pass (09-27)**: readings that already existed in `docs/agent-reference/measured-evidence.md` were replaced by pointers and three genuine duplications merged, taking the file from 97,034 to 95,715 B (-1.4%); a token-preservation audit proves no constraint was lost (0 losses among test names, error codes, and constant / environment-variable names).

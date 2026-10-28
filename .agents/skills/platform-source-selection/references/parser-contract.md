@@ -6,4 +6,4 @@
 
 JSON 复用 _loads_dict / _safe_loads 与 _dig 等 helper；HTML/WAF/截断响应保留现有告警和空字典契约。裸 json.loads 例外以 test_spider_hardening.py 的棘轮为准，不复制旧调用数量。
 
-装饰器上方放说明注释便于阅读；Python 允许装饰器与 def 间有注释，注释不会改变绑定关系。挪函数或装饰器时检查实际返回值及熔断样本变化。
+挪函数或装饰器时检查实际返回值及熔断样本变化。

@@ -1,5 +1,8 @@
-#!/usr/bin/env python3
-# -*- encoding: utf-8 -*-
+# Author: Hmily
+# GitHub: https://github.com/ihmily
+# Date: 2023-07-17 23:52:05
+# Update: 2025-10-23 19:48:05
+# Copyright (c) 2023-2025 by Hmily, All Rights Reserved.
 
 # DouyinLiveRecorder 主程序入口（CLI 录制 + Web 录制引擎）
 #
@@ -14,12 +17,6 @@
 # - start_record(url_data, count_variable, room_state)：单个直播间的录制线程主体
 # - check_subprocess(...)：启动并守护一次 ffmpeg 录制子进程
 # - get_status()：录制引擎状态快照，供 Web API 读取
-#
-# Author: Hmily
-# GitHub: https://github.com/ihmily
-# Date: 2023-07-17 23:52:05
-# Update: 2025-10-23 19:48:05
-# Copyright (c) 2023-2025 by Hmily, All Rights Reserved.
 
 # stdout/stderr 必须最先统一为 UTF-8：冻结后的 exe 作为 Web 子进程时 stdout 是管道，
 # Python 会回退到 GBK 区域编码，而父进程按 UTF-8 读取 → 中文乱码。

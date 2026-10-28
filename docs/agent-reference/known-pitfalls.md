@@ -91,7 +91,7 @@ Web 安全拒绝启动必须早于 stdio 重定向，保留日志兜底；重定
 
 ## 装饰器与平台兜底契约
 
-返回 dict 用 trace_error_decorator，返回 str/tuple/None 用 trace_error_decorator_or_none，调用方解包前判空。说明注释放装饰器上方是风格约定；注释不会改变 Python 的装饰器绑定。平台 JSON 兜底走 _loads_dict / _safe_loads 和现有取值 helper，裸 loads 棘轮不得扩大；装饰器变化须核对熔断失败样本语义。
+返回 dict 用 trace_error_decorator，返回 str/tuple/None 用 trace_error_decorator_or_none，调用方解包前判空。平台 JSON 兜底走 _loads_dict / _safe_loads 和现有取值 helper，裸 loads 棘轮不得扩大；装饰器变化须核对熔断失败样本语义。
 
 ## Web 面板与接口层
 

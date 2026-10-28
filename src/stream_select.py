@@ -1,14 +1,5 @@
 # -*- coding: utf-8 -*-
-# 流地址选择 / 校验 / 文本工具（独立模块）
-#
-# 负责：URL 片段判定（contains_url）、文件名清洗（clean_name）、画质中文名 ↔ 代码映射
-# （get_quality_code）、按平台返回录制请求头（get_record_headers）、流地址可达性校验
-# （_validate_stream_url）、从解析结果中挑选本轮实际录制地址（select_source_url）、
-# 抖音接口限流（_douyin_rate_limit）。
-#
-# 部分函数需读取 main 的少量配置全局变量（rstr / clean_emoji / hls_collection_enabled /
-# hls_collection_exclude_platforms / douyin_* 限流变量），通过 `import main` 在运行时惰性读取，
-# 避免循环导入与 __main__ 二次执行。
+# 流地址选择、可达性校验与录制请求头。
 
 import random
 import re
@@ -23,30 +14,23 @@ from loguru import logger
 from src import http_config as _http_config
 from src import i18n, main, utils
 
-# 类 URL 片段匹配模式（模块级编译一次）：主循环每解析一行 URL 配置就调用 contains_url，
-# 80+ 房间时每轮上百次；预编译省掉每次走 re 模块模式串缓存查表的开销。
 _URL_PATTERN = re.compile(r"(https?://)?(www\.)?[a-zA-Z0-9-]+(\.[a-zA-Z0-9-]+)+(:\d+)?(/.*)?")
 
 
-# 判断 string 中是否包含类 URL 片段（用于区分配置行里的画质字段与网址）；返回布尔值
+# 用于区分配置行里的画质字段与网址。
 def contains_url(string: str) -> bool:
     return _URL_PATTERN.search(string) is not None
 
 
-# 文件名长度上限（字符数）。main.py 把平台 API 下发、长度不可控的标题拼进保存路径，
-# 叠加较深的保存目录极易突破 Windows MAX_PATH(260)，届时 makedirs / ffmpeg 输出都会失败，
-# 错误却只表现为一句笼统的「录制出错」。
+# 限制标题长度，为 Windows 保存路径预留空间。
 _MAX_NAME_CHARS = 60
 
-# Windows 保留设备名：同名文件/目录在 Windows 上无法创建（即使带扩展名），
-# 用保留名做主播名时行为是「目录创建失败 → 录制静默失败」。
+# Windows 保留设备名需避开，以保证保存路径可移植。
 _WINDOWS_RESERVED_NAMES = frozenset(
     ["CON", "PRN", "AUX", "NUL"] + [f"COM{i}" for i in range(1, 10)] + [f"LPT{i}" for i in range(1, 10)]
 )
 
 
-# 清洗 input_text 为合法文件名（过滤非法字符、控制字符、保留设备名、超长截断、可选去表情、
-# & 换下划线）；返回清洗结果，全空时返回"空白昵称"
 def clean_name(input_text: str) -> str:
     cleaned_name = re.sub(main.rstr, "_", input_text.strip()).strip("_")
     # 控制字符（0x00-0x1F）不在 rstr 的字符集内，但同样会让写盘失败
@@ -56,17 +40,13 @@ def clean_name(input_text: str) -> str:
         cleaned_name = utils.remove_emojis(cleaned_name, "_").strip("_")
     # Windows 特殊字符清理：& 在 cmd 中会触发命令分隔，统一替换为下划线
     cleaned_name = cleaned_name.replace("&", "_")
-    # 保留设备名加后缀（CON → CON_），否则 Windows 上无法创建同名目录
     if cleaned_name and cleaned_name.split(".")[0].upper() in _WINDOWS_RESERVED_NAMES:
         cleaned_name = cleaned_name + "_"
-    # 超长截断按字符数（非字节），中文名不会被腰斩成半个字符；
-    # 截断后可能留下结尾下划线，再 strip 一次。
     if len(cleaned_name) > _MAX_NAME_CHARS:
         cleaned_name = cleaned_name[:_MAX_NAME_CHARS].strip("_")
     return cleaned_name or "空白昵称"
 
 
-# 把中文画质名 qn 映射为内部画质代码，未知值回退 "OD"。
 # 蓝光细粒度档位（蓝光4M/8M/20M/30M）：虎牙/斗鱼按各自专属档位表处理（见 src/stream.py），
 # 其他平台经 get_quality_index 折叠到 BD 槽位。
 def get_quality_code(qn: str) -> str:
@@ -82,13 +62,11 @@ def get_quality_code(qn: str) -> str:
         "标清": "SD",
         "流畅": "LD",
     }
-    # 未知画质回退到 OD，避免返回 None 导致后续比较逻辑出错
     return quality_zh_to_en.get(qn, "OD")
 
 
 # 桌面 Chrome UA：虎牙/B站 等国内 CDN 会拒绝移动端 UA（返回 403），录制拉流必须用桌面 UA。
 # 校验探针与 ffmpeg 录制共用同一 UA（见 get_record_user_agent），否则校验「假绿」。
-# 版本对齐全库基准 Chrome/141（见 room.DESKTOP_UA），避免 UA 指纹过旧被风控标记。
 DESKTOP_UA = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/141.0.0.0 Safari/537.36"
 )
@@ -123,9 +101,7 @@ _RECORD_HEADER_RULES: dict[str, str] = {
 }
 
 
-# 按 platform 返回录制拉流所需的请求头字典（合并 base 头与可选 cookie），无头时返回 None。
-# base 头按平台给 referer/origin；cookies 为登录态 Cookie（B站需 buvid3），空值不注入。
-# 校验探针与 ffmpeg 录制共用本函数，保证两端请求头完全一致。
+# 校验探针与 ffmpeg 录制共用请求头，避免探针通过而录制被拒绝。
 def get_record_headers(platform: str, live_url: str, cookies: str | None = None) -> dict[str, str] | None:
     header_dict: dict[str, str] = {}
     rule = _RECORD_HEADER_RULES.get(platform)
@@ -145,7 +121,6 @@ def get_record_headers(platform: str, live_url: str, cookies: str | None = None)
 _DESKTOP_UA_PLATFORMS = ("虎牙直播", "B站直播")
 
 
-# 校验探针与 ffmpeg 录制共用：虎牙/B站 用桌面 Chrome UA，其余返回 None（沿用现有移动 UA）。
 def get_record_user_agent(platform: str) -> str | None:
     if platform in _DESKTOP_UA_PLATFORMS:
         return DESKTOP_UA
@@ -167,7 +142,6 @@ _probe_last_seen: dict[str, float] = {}
 _probe_throttle_lock = threading.Lock()
 
 
-# 计算一次带随机抖动的重试间隔（节奏指纹依据见 _GET_RECHECK_INTERVAL 注释）；返回间隔秒数。
 def _recheck_delay() -> float:
     return _GET_RECHECK_INTERVAL + random.uniform(0, _GET_RECHECK_JITTER)
 
