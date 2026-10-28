@@ -19,7 +19,6 @@
 | DLR 开发手册 | `.agents/skills/dlr-dev-playbook/` | 新功能设计、测试编写、运行日志排障、跨平台故障或语法审查 | 按场景加载参考步骤 |
 | ffmpeg 命令构造 | `.agents/skills/ffmpeg-command-construction/` | 修改 ffmpeg 录制命令、保存类型、输入输出参数或分段容器映射 | 构造入口与专项验证 |
 | 平台选源流程 | `.agents/skills/platform-source-selection/` | 修改平台解析、选源、探针、画质映射或新增平台 | 选源与解析配方 |
-| 运行时钉定验证 | `.agents/skills/runtime-pin-verification/` | 修改运行时下载源、钉定、签名或发布获取链路 | 来源核验与联动修改 |
 
 `.agents/skills/` 必须入库：gitignore 用 `.agents/*` + `!.agents/skills/` 反选，不能忽略整个 `.agents/` 后再反选；Docker 仍排除整个 `.agents/`。技能 shell 脚本由该目录 `.gitattributes` 钉 LF。
 
@@ -137,7 +136,8 @@ ffmpeg 按退出码上报成功/失败，禁止轮末无条件成功。解析成
 - 版本唯一声明在 pyproject；入口直接读取 pyproject.toml，Docker 经 APP_VERSION 注入；文档版本按需同步。
 - 布尔解析复用 config_bool.parse_config_bool，读取写回复用 config_io.read_config_bool；前端 parseConfigBool 保持同一 token 集合，未知值走默认且不覆写用户原文。
 - 改公共符号前用 rg 搜索调用点、测试、资源和 standalone 孪生实现；删符号后不留悬空调用。src/main.py 内部的 main 是函数，不作模块前缀使用。
-- JS 文件增删与 utils._JS_SHA256_EXPECTED 同步；migu.js 返回完整签名 URL，调用方不再拼过时参数。
+- 外部可执行资源的下载地址、版本与校验值统一维护在 `src/external_resources.json`；更新采用上游公布的哈希或已钉公钥签名，不增加独立检查脚本或重复配置清单。运行期仅直接下载，不调用包管理器、不维护 TOFU/备用源；Docker 使用镜像内组件。
+- JS 文件增删与 `src/external_resources.json` 的 `javascript_sha256` 同步；migu.js 返回完整签名 URL，调用方不再拼过时参数。
 - 启动缓存清理只限程序顶层与 src 直接含 .py 的目录下 pyc/pyo；不递归全仓。基线用版本 + 路径/源码内容哈希，不能用 size/mtime；冻结或开关关闭时零 I/O，基线失败仍清理并告警。
 - 停止时日志归档复用 log_archive.archive_runtime_logs；Windows 改名前关闭句柄，测试按现有开关早退，不重开测试对真实日志的副作用。
 

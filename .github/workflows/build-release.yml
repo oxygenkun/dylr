@@ -258,60 +258,7 @@ jobs:
         with:
           node-version: ${{ needs.prepare.outputs.node_version }}
 
-      # ── ffmpeg：冒烟测试需要（main.py 启动即检查）──────────────────────
-      # 冒烟跑在 lite 产物上（不含内置运行时），故四平台都用系统包管理器装一份。
-      # full 版本内置的 ffmpeg 由 tool/build_exe.py --dual 在打包阶段单独下载。
-      - name: Install ffmpeg (Windows)
-        if: matrix.platform == 'windows'
-        uses: ./.github/actions/retry
-        with:
-          label: choco 安装 ffmpeg
-          backoff: "15"
-          command: choco install ffmpeg -y --no-progress
-
-      # 两个 Linux 分支按**家族**判定而不是精确等于：linux-arm64 与 linux-x64 需要同一条
-      # 包管理器安装链，差别只在 runner 架构（tool/build_exe.py 自己按 runtime_slot_key() 取对应产物）。
-      - name: Install ffmpeg (Linux)
-        if: startsWith(matrix.platform, 'linux')
-        uses: ./.github/actions/retry
-        with:
-          label: apt 安装 ffmpeg
-          backoff: "15"
-          command: >-
-            sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq -o Acquire::Retries=3
-            && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq
-            -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold
-            --no-install-recommends ffmpeg
-
-      # GitHub 的 macOS runner 预置了未受信的 aws/tap，Homebrew 新的 tap 信任机制
-      # 会因此报错。先显式信任该 tap（幂等、失败不阻断，无需重试），安装步骤内的
-      # HOMEBREW_NO_REQUIRE_TAP_TRUST=1 再兜底关闭整个校验。
-      # HOMEBREW_* 写在命令内而非 step env：复合动作对调用方 step 级 env 的可见性
-      # 无官方保证，显式 export 行为最确定。
-      - name: Trust preinstalled Homebrew tap (macOS)
-        if: matrix.platform == 'macos'
-        shell: bash
-        run: |
-          export HOMEBREW_NO_REQUIRE_TAP_TRUST=1 HOMEBREW_NO_AUTO_UPDATE=1
-          brew trust aws/tap || true
-
-      - name: Install ffmpeg (macOS)
-        if: matrix.platform == 'macos'
-        uses: ./.github/actions/retry
-        with:
-          label: brew 安装 ffmpeg
-          backoff: "15"
-          command: >-
-            export HOMEBREW_NO_REQUIRE_TAP_TRUST=1 HOMEBREW_NO_AUTO_UPDATE=1
-            && brew install ffmpeg
-
-      # P-2（2026-09-22 批准引入 gnupg）：tool/build_exe.py 会对 evermeet 的 ffmpeg 产物做官方 GPG
-      # 签名核验（配置见 build_exe._RUNTIME_GPG_SIGNATURES），且**发布路径 fail-closed**——
-      # gpg 不可用即终止构建，不会退化成「跳过核验照样出包」。
-      # 仅 macOS 需要：gyan.dev / BtbN 实测不公布签名文件，那两路无物可验，
-      # 将来若给它们换了会公布签名的来源，在此按同样形态补一步即可。
-      # [2026-09-26] macOS 两槽的 ffmpeg 没有公布哈希可比对，本步的验签从「补强层」升格为该槽
-      # **唯一的完整性判据**（build_exe 的官方签名档）：gpg 缺失不再只是少一道保险，而是整槽无校验。
+      # macOS FFmpeg 归档使用配置中的 GPG 签名和公钥指纹校验。
       - name: Install gnupg (macOS)
         if: matrix.platform == 'macos'
         uses: ./.github/actions/retry
@@ -336,14 +283,12 @@ jobs:
           command: >-
             uv sync --locked --no-dev --extra build
 
-      # --require-pinned：显式表达「发布路径缺钉定即终止」（tool/build_exe.py 在 CI 下本来也
-      # 会因 GITHUB_ACTIONS=true 默认开启，这里写出来是为了让发布命令自解释）。
-      # 钉定与签名直接使用 tool/build_exe.py 内置表，由构建入口校验。
+      # 打包和运行期共用直接下载器；缺少校验值或验证失败均终止构建。
       - name: Build executables + smoke test
         shell: bash
         run: |
           set -euo pipefail
-          python tool/build_exe.py --smoke --dual --require-pinned 2>&1 | tee build_exe.log
+          python tool/build_exe.py --smoke --dual 2>&1 | tee build_exe.log
           echo "Dist after build:"
           ls -la dist || true
 

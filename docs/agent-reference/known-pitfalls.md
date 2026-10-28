@@ -82,10 +82,9 @@ Web 安全拒绝启动必须早于 stdio 重定向，保留日志兜底；重定
 
 ## 构建产物、依赖与运行时基线
 
-- 新增出站二进制/脚本下载点须登记 tests/test_ffmpeg_install.py 的 DOWNLOAD_SOURCES 与 DOWNLOAD_MODULES，官方源优先于镜像，TOFU 源默认关闭且开启/跳过均告警。
-- 发布运行时必须 fail-closed 钉定；来源、签名和平台变更按 runtime-pin skill 核验，不能把 CI 实测哈希直接回填成信任基线。发布、运行期安装、JS 三类校验互不代替，新增远程执行代码须归类。
-- 在线 pin-source 默认 off；verify 不写期望值，adopt 只采用自身签名已验证且指纹已钉定的清单，同源 digest 不等于来源认证。
-- Linux 发布 URL 与运行期直下 URL 同步，版本更换同步钉定；运行期不 import build_exe。安装先找到 ffmpeg/ffprobe 两件再改目标，缺件零副作用；master_allowed 由调用方传入。
+- 外部资源下载元数据统一维护在 `src/external_resources.json`，不在安装器、构建脚本或测试中复制来源清单；只按配置直接下载，保留哈希/签名校验，不调用包管理器、不探源、不降级为 TOFU。
+- 发布运行时必须 fail-closed 钉定；来源、签名和平台变更直接核对统一资源配置及受影响的下载路径，不能把 CI 实测哈希直接回填成信任基线。发布、运行期安装、JS 三类校验互不代替，新增远程执行代码须归类。
+- Linux 发布与运行期直下共用资源配置，版本更换同步钉定；运行期不 import build_exe。仅安装实际使用的 ffmpeg / node 可执行文件，校验或解压失败不覆盖原安装；Docker 使用镜像内运行时，禁止自动下载。
 - Apple Silicon 优先现有原生 ffmpeg，PATH 判定使用注入前快照并按 realpath 排除自身；standalone 孪生规则同步。
 - 主线安全修复核对 standalone 的协议、内网、脱敏、终止、布尔与签名副本，报告同步或不适用原因。
 - Docker ARG 在使用前声明；compose 保持 pull_policy: build，不恢复 latest 拉取兜底。不在不可信输入工作流中运行浮动 ref 的第三方动作。

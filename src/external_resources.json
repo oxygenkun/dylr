@@ -1,0 +1,73 @@
+{
+  "pins": {
+    "windows-x64": {
+      "ffmpeg": "60f467265b1e312373dbcd92200c2618a74850f98d3d078e94296bb3fa2047ba",
+      "node": "f9683a19877e12a9b167305c8db71040d812876359de21f0d2e97c3f321f80c3"
+    },
+    "linux-x64": {
+      "ffmpeg": "182c1b509720e939bb47bfb47dc29cc0c298640401128e3dce8627d10707eb5a",
+      "node": "28ea0a438de9a13bd7891fd758eee6c7819ee8af5442dfd8d45bd65e56d4228c"
+    },
+    "linux-arm64": {
+      "ffmpeg": "e2dd447c8a47849c5812d87e54a47b20ae0f3603d38989440f4a5fe1af8755b1",
+      "node": "b7e7991d5407815adfa74a2a9cd4db683552c8ce32ff4a295c22e972849c3f5d"
+    },
+    "macos-x64": {
+      "ffmpeg": "PINNED-OFFICIAL-GPG-SIGNATURE",
+      "node": "495e3f273c645f3c4677d438304cdfc701729ea5dec5728f5c8e76a2dece4b91"
+    },
+    "macos-arm64": {
+      "ffmpeg": "PINNED-OFFICIAL-GPG-SIGNATURE",
+      "node": "6a9724d9b50a5f22b4816cded441b5a8d9ddae546191a5e5b7efa5a5e2ee26d5"
+    }
+  },
+  "signatures": {
+    "macos-x64": {
+      "ffmpeg": [
+        "https://evermeet.ca/ffmpeg/ffmpeg-9.0.2.zip.sig",
+        "20F6EA3E0CFD6B4C53447A73476C4B611A660874"
+      ]
+    },
+    "macos-arm64": {
+      "ffmpeg": [
+        "https://evermeet.ca/ffmpeg/ffmpeg-9.0.2.zip.sig",
+        "20F6EA3E0CFD6B4C53447A73476C4B611A660874"
+      ]
+    }
+  },
+  "ffmpeg": {
+    "windows-x64": "https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip",
+    "macos-x64": "https://evermeet.ca/ffmpeg/ffmpeg-9.0.2.zip",
+    "macos-arm64": "https://evermeet.ca/ffmpeg/ffmpeg-9.0.2.zip",
+    "linux-x64": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-08-31-13-27/ffmpeg-n9.0.1-11-ge47273f4d9-linux64-gpl-9.0.tar.xz",
+    "linux-arm64": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-08-31-13-27/ffmpeg-n9.0.1-11-ge47273f4d9-linuxarm64-gpl-9.0.tar.xz"
+  },
+  "javascript_sha256": {
+    "crypto-js.min.js": "9d13c4dba10bbf2b04d6c4e21c2246abf43be0fd356596c402d08eb4f9f0aecd",
+    "haixiu.js": "e6ad6ce966868c56e08f3ae78056467ecdba38060692e47d536ad2210ac354c5",
+    "liveme.js": "7fad3e96f646f118877c6f3e4ae5bd3c2571c02fb5580952c2edd67aba6dde38",
+    "migu.js": "6fff6ed4612203d7d37e62beb9e234920aaefe8f99977b08d9200a9937d847a2",
+    "x-bogus.js": "41b3f4def2486df1008730e74590352fbe29a0f411509cbecc108b8eebf4a529"
+  },
+  "node": {
+    "version": "v24.22.0",
+    "dist": "https://nodejs.org/dist/"
+  },
+  "gpg_keyserver": "hkps://keys.openpgp.org",
+  "migu": {
+    "hosts": [
+      "www.miguvideo.com",
+      "app-sc.miguvideo.com"
+    ],
+    "settings": "https://app-sc.miguvideo.com/common/v1/settings/H5_DetailPage",
+    "wasm": "https://www.miguvideo.com/mgs/player/prd/{version}/dist/mgprtcl.wasm",
+    "factor": "https://www.miguvideo.com/gateway/app-management/videox/staticcache/v2/factor/{app_id}/{terminal}"
+  },
+  "docker": {
+    "ffmpeg_version": "7.1.5",
+    "ffmpeg_url": "https://ffmpeg.org/releases/ffmpeg-{version}.tar.xz",
+    "ffmpeg_sha256": "de668509caf9e35e3cd162473441fdb29538c6d96ed080292b3cf9e6fc5d558f",
+    "nodesource_url": "https://deb.nodesource.com/setup_24.x",
+    "nodesource_sha256": "6e3d580f5bd7ccf2aa1e8df8d35c60d78e873c3ff8beb282c9bebd914904ad72"
+  }
+}

@@ -18,7 +18,6 @@ import sys
 import tempfile
 import threading
 import traceback
-import zipfile
 from collections import OrderedDict
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
@@ -27,6 +26,7 @@ from typing import Callable, ParamSpec, TypeVar, cast
 from urllib.parse import parse_qs, urlparse
 
 from src import i18n
+from src.external_resources import RESOURCES
 
 # 工具函数模块 - 提供通用工具函数，包括配置文件读写、文件操作、字符串处理等
 
@@ -71,23 +71,13 @@ _js_compile_lock = threading.Lock()
 #
 # 默认**只告警不阻断**：平台改版时用户/维护者必须能自行更新脚本，强制校验会把正当更新变成
 # 「程序不可用」。CI / 加固部署可设 DLR_JS_STRICT_HASH=1，届时哈希不符拒绝执行。更新脚本后
-# 必须把新哈希同步到此处（注明来源版本/日期）。[历史注] 2026-09-20 移除 laixiu / taobao-sign
+# 必须把新哈希同步到 src/external_resources.json。[历史注] 2026-09-20 移除 laixiu / taobao-sign
 # 两条（全仓零调用点，且后者注释里留有真实抓包凭据）。
 # MIN-2266 ① 把「表与目录一一对应」升级为常驻检查：tests/test_utils.py::
 # test_every_executable_js_is_pinned 断言两侧集合**相等**（未登记的 .js 与表里残留的已删键都判红）。
 # 本表无「白名单外的例外」：vendored 的 crypto-js.min.js 也照样登记——将来若确需不钉定的脚本，
 # 须在此注明理由并同步放宽那条用例，不要靠 _check_js_hash 的静默分支。
-_JS_SHA256_EXPECTED: dict[str, str] = {
-    # 口径：对 .js 的**原始字节**求 SHA256（rb 读取，不受 CRLF/LF 转换影响）；脚本内容一变即须重算。
-    # 2026-10-02 pre-commit 的 end-of-file-fixer 给 crypto-js / x-bogus 尾部各补一个换行（内容零改动、
-    # 仅尾字节），2026-09-21 与 2026-10-18 两轮又因脱敏 / 去死代码重算了 haixiu / liveme / migu，
-    # 均为非行为改动，签名链路未动。
-    "crypto-js.min.js": "9d13c4dba10bbf2b04d6c4e21c2246abf43be0fd356596c402d08eb4f9f0aecd",
-    "haixiu.js": "e6ad6ce966868c56e08f3ae78056467ecdba38060692e47d536ad2210ac354c5",
-    "liveme.js": "7fad3e96f646f118877c6f3e4ae5bd3c2571c02fb5580952c2edd67aba6dde38",
-    "migu.js": "65d9ebedad8a7ddd830175c989440c2d5b3770bc3913f965af6930d2a9e2c39a",
-    "x-bogus.js": "41b3f4def2486df1008730e74590352fbe29a0f411509cbecc108b8eebf4a529",
-}
+_JS_SHA256_EXPECTED: dict[str, str] = RESOURCES["javascript_sha256"]
 
 
 # 「未登记」告警的每文件名一次去重（MIN-2266 ①）：run_node_script_async 每次调用都算哈希
@@ -131,7 +121,7 @@ def _check_js_hash(js_path: str, raw: bytes) -> None:
     logger.warning(
         i18n.tr(
             "签名脚本 {name} 的 SHA256 与钉定值不符（期望 {expected}，实际 {actual}）；"
-            "若你刚更新过该脚本请同步更新 utils._JS_SHA256_EXPECTED，否则请核查文件是否被篡改",
+            "若你刚更新过该脚本请同步更新 src/external_resources.json，否则请核查文件是否被篡改",
             name=name,
             expected=shown_expected,
             actual=actual,
@@ -321,6 +311,8 @@ async def run_node_script_async(script_path: str, *args: str, timeout: float = 3
         with open(script_path, "rb") as f:
             raw = f.read()
         _check_js_hash(script_path, raw)
+        if Path(script_path).name == "migu.js":
+            raw = f"const DLR_MIGU_RESOURCES = {json.dumps(RESOURCES['migu'])};\n".encode() + raw
         argv = ["node", "-", *args]
         if _NODE_TREE_KILL_VIA_TASKKILL:
             # Windows：不传 start_new_session（CPython 的 Windows 侧那是 unused_start_new_session，
@@ -511,76 +503,10 @@ def trace_error_decorator_or_none(func: Callable[P, R]) -> Callable[P, R]:
 
 def check_md5(file_path: str | Path) -> str:
     # 整文件读入算 MD5。唯一生产用途是 config_io 的热加载变更检测（比对 config.ini /
-    # URL_config.ini 这类小文件）；下载产物的完整性校验一律用下方 sha256_of_file。
+    # URL_config.ini 这类小文件），不用于下载产物的完整性校验。
     with open(file_path, "rb") as fp:
         file_md5 = hashlib.md5(fp.read()).hexdigest()
     return file_md5
-
-
-# 分块计算文件 SHA256：用于下载产物完整性校验。整读几百 MB 二进制会瞬时占用大量内存，分块
-# （1MB/块）保持内存恒定。ffmpeg_install 与 node_install 原先各写一份逐字重复的实现，收敛到
-# 此处作为唯一实现（同 unzip_file 的治理思路）。
-def sha256_of_file(path: str | Path) -> str:
-    h = hashlib.sha256()
-    with open(path, "rb") as f:
-        for chunk in iter(lambda: f.read(1024 * 1024), b""):
-            h.update(chunk)
-    return h.hexdigest()
-
-
-# 校验本地缓存的压缩包是否完整可用：os.path.exists 只能证明文件存在，无法区分「下载完整」与
-# 「下载被中断的残缺文件」。zipfile.is_zipfile 会读尾部 End Of Central Directory 记录，残缺包
-# （无 EOCD）返回 False——足以拦住最常见的中断残留形态，且开销极小（不解压全文）。
-# node_install 原先只判 exists()，于是残缺 zip 会被当成「已下载」并把错误哈希固化成基线、此后
-# 永久失败且不自愈；收敛到 utils 后两条安装路径共用同一判据。
-def is_valid_zip(path: str | Path) -> bool:
-    # 模块顶已导入 zipfile，不在此重复 import（本函数不是导入期敏感的路径）
-    try:
-        return bool(zipfile.is_zipfile(path))
-    except OSError, ValueError:
-        return False
-
-
-def unzip_file(zip_path: str | Path, extract_to: str | Path, delete: bool = True) -> None:
-    # 解压 ZIP 到指定目录（含 Zip Slip 目录穿越校验 + 解压炸弹防护）。node_install /
-    # ffmpeg_install 共用同一份实现——原先两处逐字重复，任一处打安全补丁都会漏掉另一处。
-    if not os.path.exists(extract_to):
-        os.makedirs(extract_to)
-
-    extract_root = os.path.realpath(extract_to)
-    # 解压炸弹防护（审查 H-1）：恶意压缩包可声明极小尺寸但解压后膨胀到磁盘满 / OOM。
-    # 上限：单文件 4GB、累计 8GB、压缩比 100x（正常压缩比通常 <10x，FFmpeg 二进制 ~70MB）；
-    # 宁可误拦合法大包（用户改 max_total_size 重试），不可放过炸弹。
-    _MAX_ENTRY_SIZE = 4 * 1024 * 1024 * 1024
-    _MAX_TOTAL_SIZE = 8 * 1024 * 1024 * 1024
-    _MAX_RATIO = 100
-
-    total_uncompressed = 0
-    with zipfile.ZipFile(zip_path, "r") as zip_ref:
-        # 防止 Zip Slip 目录穿越攻击：校验每个成员解压后的真实路径
-        for member in zip_ref.namelist():
-            member_path = os.path.realpath(os.path.join(extract_root, member))
-            if not member_path.startswith(extract_root + os.sep) and member_path != extract_root:
-                raise ValueError(f"Unsafe path in zip file: {member}")
-            info = zip_ref.getinfo(member)
-            if info.file_size > _MAX_ENTRY_SIZE:
-                raise ValueError(f"Zip entry too large (bomb?): {member} declared {info.file_size} bytes")
-            total_uncompressed += info.file_size
-            # 压缩比校验：恶意包可仅写 1 字节并循环引用，未压缩累计总和炸出数 TB；
-            # 物理大小阈值取磁盘占用超 10MB 才有意义（小包算压缩比误差大）
-            if info.compress_size > 0 and info.file_size > 10 * 1024 * 1024:
-                ratio = info.file_size / info.compress_size
-                if ratio > _MAX_RATIO:
-                    raise ValueError(
-                        f"Zip compression ratio too high (bomb?): {member} ratio={ratio:.1f}x "
-                        f"({info.compress_size} -> {info.file_size})"
-                    )
-            if total_uncompressed > _MAX_TOTAL_SIZE:
-                raise ValueError(f"Zip total uncompressed size too large (bomb?): {total_uncompressed} bytes")
-        zip_ref.extractall(extract_to)
-
-    if delete and os.path.exists(zip_path):
-        os.remove(zip_path)
 
 
 def dict_to_cookie_str(cookies_dict: Mapping[str, object]) -> str:

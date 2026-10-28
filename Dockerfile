@@ -68,9 +68,10 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # NodeSource；--disable-autodetect 关掉全部自动探测的外部库，下面再显式开需要的三个。
 FROM python:3.14-slim-bookworm AS ffmpeg-builder
 
-ARG FFMPEG_VERSION=7.1.5
-ARG FFMPEG_SHA256=de668509caf9e35e3cd162473441fdb29538c6d96ed080292b3cf9e6fc5d558f
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN --mount=type=bind,source=src/external_resources.json,target=/tmp/external_resources.json \
+    resource_env="$(python -c 'import json, shlex; r = json.load(open("/tmp/external_resources.json"))["docker"]; print("\n".join(k.upper() + "=" + shlex.quote(v.format(version=r["ffmpeg_version"])) for k, v in r.items()))')" \
+    && eval "$resource_env" \
+    && apt-get update && apt-get install -y --no-install-recommends \
         build-essential \
         ca-certificates \
         nasm \
@@ -82,7 +83,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         libmp3lame-dev \
         curl \
         xz-utils \
-    && curl -fsSL "https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz" -o /tmp/ffmpeg.tar.xz \
+    && curl -fsSL "${FFMPEG_URL}" -o /tmp/ffmpeg.tar.xz \
     && echo "${FFMPEG_SHA256}  /tmp/ffmpeg.tar.xz" | sha256sum -c - \
     && mkdir -p /usr/src/ffmpeg \
     && tar -xJf /tmp/ffmpeg.tar.xz -C /usr/src/ffmpeg --strip-components=1 \
@@ -130,6 +131,7 @@ LABEL maintainer="y123ao6 <zmzx0690@agent.qq.com>" \
 # 运行时行为：无缓冲、不写字节码、UTF-8 输出、时区、彩色终端、venv 入 PATH
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
+    DOUYIN_SKIP_RUNTIME_CHECK=1 \
     PYTHONIOENCODING=utf-8 \
     TZ=${TZ} \
     TERM=xterm-256color \
@@ -138,15 +140,12 @@ ENV PYTHONUNBUFFERED=1 \
 # 运行时依赖：ffmpeg（录制与转码）、tzdata（配合 TZ）、curl（取 NodeSource 脚本）、
 #   procps（提供 pgrep，供下方 HEALTHCHECK 判活）、ca-certificates（HTTPS 抓取根证书）、
 #   nodejs 24 LTS（PyExecJS / exejs 跑各平台 JS 签名脚本；2026-08 实测兼容 Node 24.19.0，
-#   全部签名脚本 + migu.js 重写版通过，与 src/node_install.py 拉取的最新稳定版同代）。
+#   全部签名脚本 + migu.js 重写版通过；应用启动不下载运行时）。
 # apt-get upgrade -y：牺牲一点可重现性换及时安全补丁。
 # NodeSource 脚本「先下载 → 校验 SHA256 → 一致才执行」：原写法 `curl -fsSL <url> | bash -`
 #   无哈希校验，源站或 CDN 被替换即以 root 权限在构建期执行任意代码（构建期无运行时隔离，
-#   危害等同生产 RCE）；此处钉哈希，与 src/ffmpeg_install.py 的 trust-on-first-use 互补。
-# 升级 NodeSource 主版本必须同步改下面两个变量，否则构建失败（fail-closed）；
-#   当前哈希对应 2026-09-12 抓取的 setup_24.x（3907 字节）。
-ARG NODESOURCE_SETUP_URL=https://deb.nodesource.com/setup_24.x
-ARG NODESOURCE_SETUP_SHA256=6e3d580f5bd7ccf2aa1e8df8d35c60d78e873c3ff8beb282c9bebd914904ad72
+#   危害等同生产 RCE）；此处固定校验值，配置统一在 src/external_resources.json。
+# 下载版本、地址和 SHA256 统一维护在 src/external_resources.json 的 docker 节。
 # ffmpeg 本体改由阶段1 自编（原因与配置见阶段1 的「自建精简 FFmpeg」段），这里只装它按
 # so 名依赖的三个编码库：libx264（H.264 转码）、libx265（HEVC 编码，预留）、libmp3lame
 # （MP3 转码）。三者合计约 19MB，取代原先 apt ffmpeg 的 493MB 依赖闭包。
@@ -155,7 +154,10 @@ ARG NODESOURCE_SETUP_SHA256=6e3d580f5bd7ccf2aa1e8df8d35c60d78e873c3ff8beb282c9be
 # 的 nodejs 包里两坨运行期死重量装完即删：/usr/include/node（node-gyp 头文件，67MB）与
 # npm + corepack（约 17MB）。删除必须放在 apt-get upgrade 之后——否则升级 nodejs 会重新解包
 # 把这两坨带回来；紧跟的 `node -e` 自检保证删完 node 本体仍可执行。
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN --mount=type=bind,source=src/external_resources.json,target=/tmp/external_resources.json \
+    resource_env="$(python -c 'import json, shlex; r = json.load(open("/tmp/external_resources.json"))["docker"]; print("\n".join(k.upper() + "=" + shlex.quote(v.format(version=r["ffmpeg_version"])) for k, v in r.items()))')" \
+    && eval "$resource_env" \
+    && apt-get update && apt-get install -y --no-install-recommends \
     libx264-164 \
     libx265-199 \
     libmp3lame0 \
@@ -163,8 +165,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     curl \
     procps \
     ca-certificates \
-    && curl -fsSL "${NODESOURCE_SETUP_URL}" -o /tmp/nodesource_setup.sh \
-    && echo "${NODESOURCE_SETUP_SHA256}  /tmp/nodesource_setup.sh" | sha256sum -c - \
+    && curl -fsSL "${NODESOURCE_URL}" -o /tmp/nodesource_setup.sh \
+    && echo "${NODESOURCE_SHA256}  /tmp/nodesource_setup.sh" | sha256sum -c - \
     && bash /tmp/nodesource_setup.sh \
     && rm -f /tmp/nodesource_setup.sh \
     && apt-get install -y nodejs \

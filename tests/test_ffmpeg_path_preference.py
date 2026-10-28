@@ -521,12 +521,3 @@ def test_standalone_resolves_ffmpeg_through_the_twin(monkeypatch: pytest.MonkeyP
     found = standalone.find_ffmpeg()
     assert calls, "find_ffmpeg 没有调用判据，说明复制的函数是死代码"
     assert found == str(scripts_dir / "ffmpeg" / exe), f"判据返回「包内优先」时结果变了: {found}"
-
-
-def test_both_copies_cross_reference_each_other() -> None:
-    # 「两处同改」全靠注释互相点名来兑现（scheduler 副本先例的教训：只有副本侧指回、
-    # 主实现侧没有回指，就会有人只改一边）。这条锁的是这条防线的存在本身。
-    src_text = Path(ffmpeg_install.__file__).read_text(encoding="utf-8")
-    twin_text = STANDALONE_SOURCE.read_text(encoding="utf-8")
-    assert "douyin_live_recorder_standalone.py" in src_text, "主实现侧没有指向副本的回指注释"
-    assert "src/ffmpeg_install" in twin_text, "副本侧没有指回主实现"

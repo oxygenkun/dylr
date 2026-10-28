@@ -62,8 +62,7 @@ Upstream project: [ihmily/DouyinLiveRecorder](https://github.com/ihmily/DouyinLi
    > The architecture segment for Linux arm64 reads **`aarch64`** — that is what `platform.machine().lower()` actually
    > returns on that architecture, **not** `arm64`; the package comes out of the four-platform release matrix
    > (`windows` / `linux` / `linux-arm64` / `macos`). On Linux a lite package is fetched in this order:
-   > `yum` → `apt` → the official month-end build downloaded directly (verified against the asset digest published by
-   > `api.github.com`); only when all of those fail does the app ask you to install ffmpeg manually.
+   > Missing runtimes are downloaded directly using the shared resource manifest; failures require manual installation.
 2. After extracting, add live-room URLs to `URL_config.ini` inside the `config` folder
 3. Run `DouyinLiveRecorder.exe` to start recording
 
@@ -101,22 +100,18 @@ docker build --build-arg APP_VERSION="$(python -c "import tomllib;print(tomllib.
 docker run -d -v ./config:/app/config -v ./downloads:/app/downloads -v ./logs:/app/logs -v ./backup_config:/app/backup_config douyin-live-recorder
 ```
 
-> Inside the container, FFmpeg and Node.js are provided by the image itself (installed via apt) — no need to mount the local `ffmpeg/`, `node/` directories;
+> Inside the container, FFmpeg and Node.js are provided by the image itself (no startup downloads) — no need to mount the local `ffmpeg/`, `node/` directories;
 > `config/`, `downloads/`, `logs/`, and `backup_config/` are persisted via volume mounts.
 > If you would rather not build locally, a prebuilt multi-architecture image (`linux/amd64` + `linux/arm64`) is published
 > on GHCR — see the "Pull the prebuilt multi-arch image (GHCR)" subsection of the "🐋 Docker Deployment" chapter below.
 
 ### Installing ffmpeg manually (Windows user guide)
 
-On Windows the app downloads ffmpeg from the official gyan.dev source at startup — **that is the only
-automatic route on Windows** (no mirror fallback is offered, because mirror artefacts have no official digest to check
-against). If the automatic install fails (usually gyan.dev unreachable, a proxy/firewall blocking it, or a
-SHA256 baseline mismatch), install it yourself in three steps:
+When FFmpeg is missing, Windows downloads the archive configured in `src/external_resources.json` and verifies its integrity. If this fails, install it manually:
 
 1. **Download the official zip**: <https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip>
    To verify it yourself, compare against the official digest document for that same zip,
-   <https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip.sha256> (this is exactly what the
-   automatic installer checks).
+   <https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip.sha256> (maintainers use it to update the pinned resource manifest).
 2. **Take the `bin` folder out of the zip, put it in the app directory and rename it to `ffmpeg`**:
 
 | How you run the app | Required final layout |
@@ -126,27 +121,17 @@ SHA256 baseline mismatch), install it yourself in three steps:
 
    - **Do not** leave it as `ffmpeg\bin\ffmpeg.exe` — the app adds only the `ffmpeg\` directory itself to the
      lookup path and does not search sub-directories.
-   - Put `ffprobe.exe` from the same folder in there too (the release-package self-check requires both
-     ffmpeg and ffprobe to be present and runnable).
 3. **Verify**: run `ffmpeg -version` inside that `ffmpeg\` directory — a version banner means it works.
    Restart the app; the install took effect once `logs\streamget.log` no longer reports "ffmpeg is not installed.".
 
 Installing system-wide works equally well (`winget install Gyan.FFmpeg`, Chocolatey, or any build you trust) —
 the app also looks the binary up on `PATH`.
 
-**When the error is a SHA256 baseline rejection** (the log says to delete something matching
-`_ffmpeg_official*.zip.sha256` and retry): delete those sidecar files **in the app directory** and restart.
-The sidecar records the digest seen on first download, while the gyan.dev URL is a rolling address — once
-upstream ships a new build the old baseline necessarily mismatches, and removing it lets the app re-record a
-baseline for the new build. (Its strength equals the write permissions of that directory, so it is not an
-independent trust root and does not replace the official digest document.)
+Automatic downloads use fixed hashes or signatures from the resource manifest. They no longer record TOFU sidecars. If verification fails, install manually or ask the maintainer to verify the upstream release and update the manifest.
 
-> Scope: **full** release packages already bundle ffmpeg, so normally nothing has to be installed; **lite**
-> packages and the single-file script do not, and need either the automatic install or the steps above.
-> On macOS the automatic install uses Homebrew; on Linux the order is `yum` → `apt` → the official month-end
-> build downloaded directly (verified against the asset digest published by `api.github.com`, which has to be
-> reachable) — install manually through your distribution if all three routes fail. For the Apple Silicon choice
-> between the bundled build and a native one, see the FAQ below.
+> Full packages bundle FFmpeg and Node.js. Lite packages and source runs download missing components directly into the app directory; the standalone tool requires user-provided runtimes.
+> Docker uses image-provided components and never auto-downloads them. Automatic FFmpeg installation on macOS requires gpg; users without it can install FFmpeg manually.
+> Apple Silicon still prefers an existing native system FFmpeg.
 
 ## 🎈 Supported Platforms
 
@@ -188,9 +173,9 @@ DouyinLiveRecorder/
 │   ├── logger.py              # Loguru logging config
 │   ├── proxy.py               # proxy detection
 │   ├── ttwid.py               # Douyin visitor ttwid fetch/cache
+│   ├── runtime_install.py # Shared direct FFmpeg / Node.js download and integrity checks
 │   ├── node_install.py        # Node.js auto-install/init
 │   ├── ffmpeg_install.py      # FFmpeg install script
-│   ├── ffmpeg_master_download.py  # FFmpeg master builds (per-platform fetch + verification)
 │   ├── ffmpeg_proc.py         # ffmpeg subprocess management (extracted from main.py)
 │   ├── video_postprocess.py   # post-recording processing (remux/transcode)
 │   ├── notify.py              # live-status message push (extracted from main.py)
@@ -760,12 +745,8 @@ ports:
 ### Environment requirements
 
 - Python >= 3.14
-- FFmpeg (downloaded automatically from the official source on Windows at startup; on Linux the app tries
-  `yum` → `apt` → the official month-end build, on macOS it uses Homebrew — the package-manager routes need
-  root/administrator, so install manually when all of them fail)
-- Node.js (downloaded and unpacked into the program directory automatically on Windows; on Linux the app uses
-  `yum` (RHEL-family, requires EPEL) or `apt`, on macOS it uses Homebrew — the package-manager routes need
-  root/administrator, so install manually when they fail)
+- FFmpeg and Node.js: use existing executables or download directly from the resource manifest into the app directory. Install manually if downloading fails.
+- Automatic macOS FFmpeg downloads require gpg; Docker already includes its runtimes.
 
 ### Install dev dependencies
 
@@ -873,7 +854,7 @@ Or look for the "FFmpeg PATH priority" line in the debug log (written to `logs/s
 when `config.ini` has `是否启用日志文件 = 是`), which states explicitly whether the program is
 "yielding to the native system ffmpeg <path>" or "still prepending the bundled directory <path>".
 
-> Docker is unaffected by this policy: the image installs ffmpeg via apt, and on Apple Silicon
+> Docker is unaffected by this policy: the image already provides ffmpeg, and on Apple Silicon
 > the Linux arm64 container is built/run for the host architecture, so it is native already.
 
 **Q: Shows "Node.js missing" or "execjs"-related errors**

@@ -601,7 +601,7 @@
   "Web 模式：录制引擎已因磁盘空间不足停止，Web 面板继续服务": "Web mode: recording engine stopped due to insufficient disk space; the web panel keeps serving",
   "[{record_name}]等待录制槽位期间检测到停止信号，放弃本轮录制": "[{record_name}] stop signal detected while waiting for a recording slot; aborting this round",
   "已清理零字节的直下残留文件: {save_path}": "Removed zero-byte leftover file from direct download: {save_path}",
-  "签名脚本 {name} 的 SHA256 与钉定值不符（期望 {expected}，实际 {actual}）；若你刚更新过该脚本请同步更新 utils._JS_SHA256_EXPECTED，否则请核查文件是否被篡改": "SHA256 of signing script {name} differs from the pinned value (expected {expected}, got {actual}); if you just updated the script, update utils._JS_SHA256_EXPECTED accordingly, otherwise check whether the file was tampered with",
+  "签名脚本 {name} 的 SHA256 与钉定值不符（期望 {expected}，实际 {actual}）；若你刚更新过该脚本请同步更新 src/external_resources.json，否则请核查文件是否被篡改": "SHA256 of signing script {name} differs from the pinned value (expected {expected}, got {actual}); if you just updated the script, update src/external_resources.json accordingly, otherwise check whether the file was tampered with",
   "HLS 分片探测异常(按列表可达处理): {url} - {type_name}: {e}": "HLS segment probe exception (treated as playlist reachable): {url} - {type_name}: {e}",
   "HLS 分片探测解析异常(按列表可达处理): {url} - {type_name}: {e}": "HLS segment probe parse exception (treated as playlist reachable): {url} - {type_name}: {e}",
   "HLS 分片探测重试通过({status_code})，先前拒绝为偶发: {url}": "HLS segment probe retry passed ({status_code}), the earlier rejection was transient: {url}",
@@ -1158,4 +1158,6 @@
   "[私信自动录制]达到每日添加上限 {limit}，跳过 {anchor}": "[DM auto-record] Daily add limit {limit} reached; skipping {anchor}",
   "[私信自动录制]已添加直播间: {url}": "[DM auto-record] Added live room: {url}",
   "[私信自动录制]跳过 {anchor}（{reason}）{url}": "[DM auto-record] Skipped {anchor} ({reason}) {url}",
-  "读取 URL 配置失败，跳过追加: {e}": "Failed to read URL config; append skipped: {e}"}
+  "读取 URL 配置失败，跳过追加: {e}": "Failed to read URL config; append skipped: {e}",
+  "运行时 {name} 下载或安装失败，请手动安装: {error}": "Failed to download or install {name}; please install it manually: {error}"
+}

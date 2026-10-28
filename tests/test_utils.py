@@ -3,16 +3,16 @@
 import ast
 import builtins
 import configparser
+import hashlib
 import inspect
+import json
 import os
 import signal
 import stat
 import subprocess
 import sys
-import tempfile
 import threading
 import time
-import zipfile
 from collections.abc import Generator
 from pathlib import Path
 from types import SimpleNamespace
@@ -40,7 +40,6 @@ from src.utils import (
     run_node_script_async,
     trace_error_decorator,
     trace_error_decorator_or_none,
-    unzip_file,
     update_config,
 )
 
@@ -422,38 +421,6 @@ class TestTraceErrorGuard:
         assert await boom() is None
 
 
-class TestUnzipFile:
-    # 正常解压：文件落位，且默认 delete=True 时源 zip 被清理（node/ffmpeg 安装缓存场景）
-    def test_unzip_and_delete(self, tmp_path: Path) -> None:
-        zip_file = tmp_path / "pkg.zip"
-        with zipfile.ZipFile(zip_file, "w") as zf:
-            zf.writestr("inner.txt", "payload")
-        dest = tmp_path / "out"
-        unzip_file(zip_file, dest)
-        assert (dest / "inner.txt").read_text(encoding="utf-8") == "payload"
-        assert not zip_file.exists()
-
-    # delete=False 保留源 zip（共享缓存复用场景）
-    def test_keep_zip_when_delete_false(self, tmp_path: Path) -> None:
-        zip_file = tmp_path / "pkg.zip"
-        with zipfile.ZipFile(zip_file, "w") as zf:
-            zf.writestr("a.txt", "1")
-        dest = tmp_path / "out"
-        unzip_file(zip_file, dest, delete=False)
-        assert (dest / "a.txt").exists()
-        assert zip_file.exists()
-
-    # Zip Slip 目录穿越必须被拒绝：成员经 ../ 逃逸出目标目录时抛 ValueError 且不落盘
-    def test_zip_slip_rejected(self, tmp_path: Path) -> None:
-        zip_file = tmp_path / "evil.zip"
-        with zipfile.ZipFile(zip_file, "w") as zf:
-            zf.writestr("../escape.txt", "pwn")
-        dest = tmp_path / "out"
-        with pytest.raises(ValueError, match="Unsafe path"):
-            unzip_file(zip_file, dest)
-        assert not (dest / "escape.txt").exists()
-
-
 class TestReadConfigValueErrors:
     # ini 内容非法（缺 section 头）时 config.read 抛解析异常 → 必须返回 None 并打印原因，
     # 而非让解析异常击穿调用方（注意：目录路径等 OSError 会被 configparser.read 吞掉，走不到这里）
@@ -805,15 +772,19 @@ class TestUrlConfigWritePaths:
 # ── MID-62：run_node_script_async 校验与执行的必须是同一份内容 ──
 class TestRunNodeScriptNoToctou:
     @pytest.mark.asyncio
-    async def test_verified_bytes_are_the_executed_bytes(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    @pytest.mark.parametrize("script_name", ["sign.js", "migu.js"])
+    async def test_verified_bytes_are_the_executed_bytes(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, script_name: str
+    ) -> None:
         # 旧实现「读文件算哈希 → 把**路径**交给 node」：node 会独立二次读盘，
         # 两步之间换掉文件内容即绕过钉定表（check-then-use）。
         # 现改为把校验过的那一份字节经 stdin 交给 node（argv 位置保持不变）。
         # [L-19 2026-10-19 适配] 执行原语从 subprocess.run 换成自管 Popen + communicate(input=…)，
         # 「把校验过的字节交给 node」这条契约因此落在 communicate 的 input 实参上（旧形态落在
         # run 的 input 关键字上），argv 与篡改时序的断言逐字保留、不改松。
-        script = tmp_path / "sign.js"
+        script = tmp_path / script_name
         original = b"console.log('orig')"
+        monkeypatch.setattr(utils_module, "_JS_SHA256_EXPECTED", {script_name: hashlib.sha256(original).hexdigest()})
         _ = script.write_bytes(original)
         captured: dict[str, object] = {}
 
@@ -852,7 +823,10 @@ class TestRunNodeScriptNoToctou:
         result = await run_node_script_async(str(script), "https://example/x", timeout=5)
         assert result == "ok"
         assert captured["cmd"] == ["node", "-", "https://example/x"]
-        assert captured["input"] == original, "交给 node 的不是校验过的那份字节（TOCTOU 回归）"
+        expected = original
+        if script_name == "migu.js":
+            expected = f"const DLR_MIGU_RESOURCES = {json.dumps(utils_module.RESOURCES['migu'])};\n".encode() + original
+        assert captured["input"] == expected, "交给 node 的不是校验过的脚本及配置（TOCTOU 回归）"
         assert captured["timeout"] == 5, "内层超时预算必须真的传给了 communicate（缺了它 node 卡住即整轮挂死）"
         assert checked == [original]
 

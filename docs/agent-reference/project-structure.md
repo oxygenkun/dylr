@@ -50,6 +50,8 @@
 │   ├── ffmpeg_proc.py   # FFmpeg 进程封装
 │   ├── video_postprocess.py # 录制后处理
 │   ├── logger.py        # 日志（loguru）
+│   ├── external_resources.json # 外部资源下载地址、版本、哈希与签名的统一配置
+│   ├── external_resources.py   # 运行期读取资源配置
 │   ├── utils.py         # 工具函数
 │   ├── proxy.py         # 代理支持
 │   ├── ttwid.py         # 抖音 ttwid 获取
@@ -58,9 +60,8 @@
 │   ├── web_config.py    # Web 配置
 │   ├── log_archive.py   # 运行日志归档（停止录制流程收尾：四日志按时间戳改名）
 │   ├── startup_cleanup.py # 启动期陈旧字节码缓存清理（白名单根 + 内容哈希哨兵）
-│   ├── ffmpeg_install.py # FFmpeg 自动安装
-│   ├── ffmpeg_master_download.py # FFmpeg master 构建下载器（Windows 专属，TOFU 默认关闭）
-│   ├── ffmpeg_linux_download.py  # Linux 运行期 ffmpeg 直下（月末不可变标签 + 双趟拷贝）
+│   ├── runtime_install.py # FFmpeg / Node.js 共用直接下载、校验与安装
+│   ├── ffmpeg_install.py # FFmpeg 启动检查与 PATH 优先级
 │   ├── node_install.py  # Node.js 自动安装
 │   ├── platforms/       # 平台专属实现（douyin/douyu/huya/bilibili/twitch + _xbogus/_tars）
 │   ├── proto/           # protobuf（__init__.py + douyin.proto + douyin_pb2.py + douyin_pb2.pyi 存根）

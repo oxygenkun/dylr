@@ -218,9 +218,8 @@ DouyinLiveRecorder/
 │   ├── utils.py                        # 工具函数库
 │   ├── logger.py                       # Loguru 日志配置
 │   ├── proxy.py                        # 代理检测
+│   ├── runtime_install.py # Shared direct FFmpeg / Node.js download and integrity checks
 │   ├── node_install.py                # Node.js 自动安装/初始化
-│   ├── ffmpeg_master_download.py       # FFmpeg master 构建下载器（按平台/架构拉取 + 校验，含挑战页识别与 TOFU）
-│   ├── ffmpeg_linux_download.py        # Linux 运行期 ffmpeg 直下（月末不可变标签 + 双趟拷贝，缺件时 dest 零改动）
 │   ├── ttwid.py                        # 抖音访客 ttwid 获取
 │   ├── web_api.py                      # Web 管理面板 Starlette 应用
 │   ├── web_models.py                   # Web 请求体校验层（纯标准库 dataclass + parse，替代 pydantic）
@@ -1588,6 +1587,25 @@ python tool/smoke_test.py -c tool/smoke_web.json -r smoke_report.html -f html
 - **修改内容** · `docs/agent-reference/project-structure.md`、`docs/agent-reference/session-learnings.md` — 目录树同步新增模块与测试文件；经验条目追加（ADS 夹具、保留设备名实测、用例数增量归因、offscreen 探针的退出形态、先测后改的冗余度量、锚点优于行号、`strict=True` 下的重复键）
 - **新增功能** · `CODE_WIKI.md`、`CODE_WIKI_EN.md` — 本「按模块分类的改动总览」章节（中英同结构、同条目数、逐条对应），以及逐批更新日志条目随改动追加并保持双语一一对应
 ## 更新日志
+
+### 2026-10-28 — 运行时改为直接下载
+
+- 新增共用的 `src/runtime_install.py`，启动和发布打包均按统一资源配置直接下载固定版本、校验后仅安装所需可执行文件。保留 SHA256 / GPG、HTTPS、归档成员安全和缺件不覆盖已有安装的保障。
+- 业务未使用 ffprobe，取消其单独下载和打包要求；现有用户文件保留。
+- 删除 brew / apt / yum、发行版识别、镜像探测、master 兜底、在线版本页及 TOFU 旁路基准；删除发布期环境注入/免校验模式和未落地的源码构建证据框架。下载失败直接提示手动安装。移除未再使用的 distro、tqdm 依赖。
+- Docker 使用镜像内 FFmpeg / Node.js，通过现有 `DOUYIN_SKIP_RUNTIME_CHECK=1` 禁止自动下载；CI 冒烟使用 full 产物，删除 runner 上额外安装 FFmpeg 的步骤。macOS FFmpeg 仍按上游签名验签，需要 gpg；用户可自行提供 FFmpeg。
+
+### 2026-10-28 — 合并 FFmpeg 下载模块
+
+- Windows 官方源、master 备用源和 Linux 原生归档安装统一放入 `src/ffmpeg_install.py`，删除两个独立下载模块。共用构建标识、哈希/ZIP 校验、超时/重试参数及 Windows 子进程辅助函数；删除薄封装、无用返回值、恒真分支和过时修复流水注释。
+- 平台分流、来源优先级、TOFU 开关、校验失败处理及安装后的可执行性验证保持原有行为；测试直接导入合并后的模块，并取消重复实现对比及共享调用台账。
+
+### 2026-10-28 — 统一外部资源配置
+
+- FFmpeg、ffprobe、Node.js、咪咕 wasm、JS 哈希及 Docker 源码/安装脚本下载元数据统一维护在 `src/external_resources.json`。安装器、发布打包与 Docker 直接消费该文件；冻结产物包含该配置。
+- 发布 Node.js 版本与哈希同时固定，不再自动追踪最新 LTS。升级在配置中同步修改实际归档、上游公布的 SHA256 或签名及公钥指纹；不新增独立检查脚本、下载域名登记表或同步副本检查。
+- 移除默认关闭的在线钉定复核/采用层（`--pin-source` 及 `DLR_RUNTIME_PIN_*` 参数）、专用测试和 `runtime-pin-verification` skill；下载后的完整性、签名、归档安全校验及真实失败路径回归仍保留。既有运行期首次信任降级行为不变。
+- Python 依赖由 `pyproject.toml` / `uv.lock` 管理，容器基础镜像及系统包由 Dockerfile/包管理器管理，平台业务 API 不迁入资源配置。
 
 ### 2026-10-28 — 清理低价值与不完整的机械检查
 

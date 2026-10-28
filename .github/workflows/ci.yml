@@ -334,13 +334,15 @@ jobs:
             echo "available=false" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: Install ffmpeg (apt)
+      - name: Download configured FFmpeg
         uses: ./.github/actions/retry
         with:
-          label: apt 安装 ffmpeg
+          label: 直接下载 FFmpeg
           command: >-
-            sudo env DEBIAN_FRONTEND=noninteractive apt-get update -qq -o Acquire::Retries=3
-            && sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends ffmpeg
+            python -c 'from pathlib import Path; from src.runtime_install import install_runtime; install_runtime("ffmpeg", Path.cwd())'
+
+      - name: Add FFmpeg to PATH
+        run: echo "$GITHUB_WORKSPACE/ffmpeg" >> "$GITHUB_PATH"
 
       # pytest-asyncio 由 pyproject [tool.pytest.ini_options] asyncio_mode = "auto" 驱动；
       # pytest-cov 必装：tool/check_coverage.py 依赖其产出的 .coverage 数据文件。
@@ -554,13 +556,15 @@ jobs:
           # 无 package.json / lock 文件，开启 npm 缓存会直接报错，故不设置 cache
 
       # PATH 探测先行（fail fast）：二进制不可用时不必再装 Python 依赖
-      - name: Install ffmpeg (apt)
+      - name: Download configured FFmpeg
         uses: ./.github/actions/retry
         with:
-          label: apt 安装 ffmpeg
+          label: 直接下载 FFmpeg
           command: >-
-            sudo env DEBIAN_FRONTEND=noninteractive apt-get update -qq -o Acquire::Retries=3
-            && sudo env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends ffmpeg
+            python -c 'from pathlib import Path; from src.runtime_install import install_runtime; install_runtime("ffmpeg", Path.cwd())'
+
+      - name: Add FFmpeg to PATH
+        run: echo "$GITHUB_WORKSPACE/ffmpeg" >> "$GITHUB_PATH"
 
       - name: Verify binaries are discoverable
         run: |
@@ -576,11 +580,11 @@ jobs:
 
       - name: Verify src/ffmpeg_install.py detection
         run: |
-          python -c "from src.ffmpeg_install import check_ffmpeg_installed; assert check_ffmpeg_installed(), 'ffmpeg not detected'; print('check_ffmpeg_installed() passed')"
+          python -c "from src.ffmpeg_install import check_ffmpeg; assert check_ffmpeg(), 'ffmpeg not detected'; print('check_ffmpeg() passed')"
 
       - name: Verify src/node_install.py detection
         run: |
-          python -c "from src.node_install import check_nodejs_installed; assert check_nodejs_installed(), 'node not detected'; print('check_nodejs_installed() passed')"
+          python -c "from src.node_install import check_node; assert check_node(), 'node not detected'; print('check_node() passed')"
 
   # ── 6. 构建验证（PyInstaller 打包 + 三入口冒烟）──────────────────────────
   # 与 build-release.yml 共用同一 tool/build_exe.py，但用 --no-runtime --no-zip 跳过

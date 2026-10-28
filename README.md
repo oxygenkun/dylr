@@ -59,8 +59,7 @@
 
    > Linux arm64 的架构段写作 **`aarch64`**——那是 `platform.machine().lower()` 在该架构上的实际取值，
    > **不是** `arm64`；该包由四平台发布矩阵（`windows` / `linux` / `linux-arm64` / `macos`）产出。
-   > Linux 上 lite 包的自动获取顺序是 `yum` → `apt` → 官方月末构建直下（后者按 GitHub 公布的
-   > asset digest 校验，需 `api.github.com` 可达；全链路都失败时才会提示手动安装）。
+   > lite 包缺少 FFmpeg / Node.js 时按统一资源配置直接下载，失败后可手动安装；不调用系统包管理器。
 2. 解压后，在 `config` 文件夹内的 `URL_config.ini` 中添加直播间地址
 3. 运行 `DouyinLiveRecorder.exe` 开始录制
 
@@ -105,9 +104,7 @@ docker run -d -v ./config:/app/config -v ./downloads:/app/downloads -v ./logs:/a
 
 ### 手动安装 ffmpeg（Windows 用户指南）
 
-Windows 版会在启动时自动从官方源 gyan.dev 下载 ffmpeg——**这是 Windows 上唯一的自动下载路径**（不设镜像兜底，
-因为镜像产物没有可核对的官方摘要）。自动安装失败时（多为 gyan.dev 不可达、代理/防火墙拦截，
-或 SHA256 基线校验被拒），照下面三步手动安装即可。
+Windows 启动时缺少 FFmpeg，会按 `src/external_resources.json` 中的地址和校验值直接下载。下载或校验失败时，可按以下步骤手动安装。
 
 1. **下载官方 zip**：<https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip>
    需要自行核对来源时，比对该 zip 的官方摘要文档
@@ -120,22 +117,17 @@ Windows 版会在启动时自动从官方源 gyan.dev 下载 ffmpeg——**这�
 | 源码运行 / 单文件版脚本 | `<项目根>\ffmpeg\ffmpeg.exe` |
 
    - **不要**保留成 `ffmpeg\bin\ffmpeg.exe`——程序只把 `ffmpeg\` 这一层目录加入查找路径，不会进子目录寻找。
-   - 请把同目录下的 `ffprobe.exe` 一并放入（发布包出包自检要求 ffmpeg 与 ffprobe 都在且可执行）。
 3. **验证**：在 `ffmpeg\` 目录里执行 `ffmpeg -version`，能打印版本号即成功。随后重启程序，
    日志（`logs\streamget.log`）中不再出现「未安装 ffmpeg。」即为生效。
 
 也可以改用系统级安装（`winget install Gyan.FFmpeg`、Chocolatey，或任何你信任的构建）把它装进
 系统 `PATH`——程序同样按 `PATH` 查找，两种放法等效。
 
-**报错是 SHA256 基线校验被拒时**（日志会写出「请删除 …`_ffmpeg_official*.zip.sha256`… 后重试」）：
-删除**程序目录**下匹配 `_ffmpeg_official*.zip.sha256` 的旁路文件，再重启程序。该文件记录的是首次
-下载时核对到的摘要，而 gyan.dev 的下载链接是滚动地址——上游发布新构建后旧基线必然失配，删掉它等于
-让程序按新构建重新记账。（其校验强度等同于该目录的写权限，不是独立的信任根，故不能替代官方摘要文档。）
+自动下载使用配置中的固定哈希或签名，不再记录首次信任旁路文件。校验失败时请手动安装，或由维护者核对上游发布后更新资源配置。
 
-> 适用范围：**full 版**发布包已内置 ffmpeg，一般无需任何安装；**lite 版**与单文件版不含，需自动安装
-> 或按上文手动安装。macOS 走 Homebrew；Linux 依次为 `yum` → `apt` → 官方月末构建直下（按 `api.github.com`
-> 公布的 asset digest 校验，需该域名可达）；三条都失败时按各自发行版方式手动安装。
-> Apple Silicon 上「包内那份」与「系统原生那份」的取舍见下方常见问题。
+> full 包已内置 FFmpeg 和 Node.js。lite / 源码运行缺少组件时直接下载到程序目录；单文件工具需自行提供运行时。
+> Docker 使用镜像内的组件，不执行自动下载。macOS 的 FFmpeg 归档使用 GPG 验签；没有 gpg 时可手动安装 FFmpeg。
+> Apple Silicon 仍优先使用系统已有的原生 FFmpeg。
 
 ## 🎈 已支持平台
 
@@ -177,9 +169,9 @@ DouyinLiveRecorder/
 │   ├── logger.py              # Loguru 日志配置
 │   ├── proxy.py               # 代理检测
 │   ├── ttwid.py               # 抖音访客 ttwid 获取/缓存
+│   ├── runtime_install.py # FFmpeg / Node.js 共用直接下载与校验
 │   ├── node_install.py        # Node.js 自动安装/初始化
 │   ├── ffmpeg_install.py      # FFmpeg 安装脚本
-│   ├── ffmpeg_master_download.py  # FFmpeg master 构建（按平台拉取并校验）
 │   ├── ffmpeg_proc.py         # ffmpeg 子进程管理（抽离自 main.py）
 │   ├── video_postprocess.py   # 录制后处理（转封装/转码）
 │   ├── notify.py              # 直播状态消息推送（抽离自 main.py）
@@ -748,10 +740,8 @@ ports:
 ### 环境要求
 
 - Python >= 3.14
-- FFmpeg (Windows 版启动时自动从官方源下载；Linux 依次为 `yum` → `apt` → 官方月末构建直下、macOS 走 Homebrew，
-  包管理器路线需 root/管理员，三条都失败时手动安装)
-- Node.js (Windows 下自动下载并解压到程序目录；Linux 按发行版走 `yum`（RHEL 系，需 EPEL）或 `apt`、macOS 走 Homebrew，
-  包管理器路线需 root/管理员，失败时手动安装)
+- FFmpeg 和 Node.js：优先使用已有程序，否则按资源配置直接下载到程序目录；失败时自行安装。
+- macOS 自动下载 FFmpeg 需要 gpg 验证签名；Docker 已内置运行时。
 
 ### 安装开发依赖
 
@@ -832,7 +822,7 @@ brew install ffmpeg
 
 # Windows：full 版运行包已自带 ffmpeg，无需安装；
 # lite 版 / 单文件版若自动安装失败，按「快速开始 → 手动安装 ffmpeg（Windows 用户指南）」放置
-# 为 <程序目录>\ffmpeg\ffmpeg.exe（+ ffprobe.exe）即可，不要留在 ffmpeg\bin\ 子目录下。
+# 为 <程序目录>\ffmpeg\ffmpeg.exe即可，不要留在 ffmpeg\bin\ 子目录下。
 ```
 
 **Q: Apple Silicon（M 系列芯片）Mac 上实际用的是哪一份 ffmpeg？**

@@ -39,7 +39,7 @@ const DEFAULT_FACTOR = { sv: '119', factor: 'BjfS7eNf3OIROs2T1E8hHQ==' };
 // 运维该怎么做：把这三处 fetch 当作高信任面看待，出网白名单只放 https://*.miguvideo.com；
 // 升级胶水层后先核对来源再更新 _JS_SHA256_EXPECTED，CI / 加固部署里设 DLR_JS_STRICT_HASH=1；
 // 若 ddCalcu 集中变空或大面积 403，优先怀疑上游内容变化（本文件的护栏会先抛明确错误）。
-const TRUSTED_MIGU_HOSTS = new Set(['www.miguvideo.com', 'app-sc.miguvideo.com']);
+const TRUSTED_MIGU_HOSTS = new Set(DLR_MIGU_RESOURCES.hosts);
 
 // playerVersion 只允许出现在 URL 路径段里的字符集：挡住 ../（换路径）、#（截断请求）、
 // @（把 host 换成别的）、以及空白/控制字符。长度上界防的是「整段 HTML 被塞进版本号」。
@@ -119,7 +119,7 @@ function readPlayerVersion(settingsData) {
 async function fetchEncryptionFactor() {
     const appId = 'miguvideo';
     const terminal = 'www';
-    const api = `https://www.miguvideo.com/gateway/app-management/videox/staticcache/v2/factor/${appId}/${terminal}`;
+    const api = DLR_MIGU_RESOURCES.factor.replace('{app_id}', appId).replace('{terminal}', terminal);
     try {
         const resp = await fetch(assertTrustedHttpsUrl(api, 'migu 加密因子接口'), {
             headers: {
@@ -231,14 +231,14 @@ async function getDdCalcu(inputUrl) {
     // 第一步：获取 playerVersion（决定 wasm 下载地址）
     // 信任边界见文件头「远程取用的信任边界」：以下两步取回的内容**都没有**被哈希钉定，
     // 被钉定的只是本文件自身；这里只做事前形状/协议/体积护栏，失败一律明确抛错。
-    const settingsUrl = assertTrustedHttpsUrl('https://app-sc.miguvideo.com/common/v1/settings/H5_DetailPage', 'migu 设置接口');
+    const settingsUrl = assertTrustedHttpsUrl(DLR_MIGU_RESOURCES.settings, 'migu 设置接口');
     const settingsResp = await fetch(settingsUrl);
     if (!settingsResp.ok) throw new Error(`migu 设置接口 http ${settingsResp.status}`);
     const playerVersion = readPlayerVersion(await settingsResp.json());
 
     // 第二步：下载并实例化 WASM 模块
     const wasmUrl = assertTrustedHttpsUrl(
-        `https://www.miguvideo.com/mgs/player/prd/${playerVersion}/dist/mgprtcl.wasm`,
+        DLR_MIGU_RESOURCES.wasm.replace('{version}', playerVersion),
         'migu wasm 下载地址'
     );
     const wasmResp = await fetch(wasmUrl);

@@ -218,9 +218,8 @@ DouyinLiveRecorder/
 │   ├── utils.py                        # 工具函数库
 │   ├── logger.py                       # Loguru 日志配置
 │   ├── proxy.py                        # 代理检测
+│   ├── runtime_install.py # Shared direct FFmpeg / Node.js download and integrity checks
 │   ├── node_install.py                # Node.js 自动安装/初始化
-│   ├── ffmpeg_master_download.py       # FFmpeg master-build downloader (per-platform/arch fetch + verification, challenge-page aware, TOFU)
-│   ├── ffmpeg_linux_download.py        # Linux 运行期 ffmpeg 直下（月末不可变标签 + 双趟拷贝，缺件时 dest 零改动）
 │   ├── ttwid.py                        # 抖音访客 ttwid 获取
 │   ├── web_api.py                      # Web 管理面板 Starlette 应用
 │   ├── web_models.py                   # Web 请求体校验层（纯标准库 dataclass + parse，替代 pydantic）
@@ -1570,6 +1569,25 @@ python tool/smoke_test.py -c tool/smoke_web.json -r smoke_report.html -f html
 - **Modified** · `docs/agent-reference/project-structure.md`, `docs/agent-reference/session-learnings.md` — The directory tree synced with the new modules and test files; lessons appended (the ADS fixture, the reserved-name measurement, the case-count attribution, the offscreen probe exit shape, measuring redundancy before editing, anchors over line numbers, and duplicate keys under `strict=True`)
 - **Added** · `CODE_WIKI.md`, `CODE_WIKI_EN.md` — This module-classified change overview section (identical bilingual structure, matching entry counts, one-to-one correspondence), plus the per-batch changelog entries appended alongside each change and kept in one-to-one bilingual correspondence
 ## Changelog
+
+### 2026-10-28 — Direct runtime downloads only
+
+- Startup and release builds share `src/runtime_install.py`: download configured versions, validate them and install only required executables. Keep SHA256/GPG, HTTPS, safe member handling and complete-archive checks before replacing existing files.
+- Stop separately downloading or requiring ffprobe, which has no application caller; preserve existing user files.
+- Remove brew/apt/yum, distro detection, mirror probes, master fallback, version-page scraping and TOFU sidecars. Remove release hash overrides, unverified modes and the unused source-build evidence framework. Failures request manual installation. Drop unused distro/tqdm dependencies.
+- Docker uses image-provided FFmpeg/Node.js with the existing `DOUYIN_SKIP_RUNTIME_CHECK=1` setting disabling auto-downloads. Release smoke uses the full package, so runner-side FFmpeg installation is removed. macOS FFmpeg still requires gpg for upstream signature verification; users may supply FFmpeg manually.
+
+### 2026-10-28 — Merge FFmpeg download modules
+
+- Consolidate Windows official/master and Linux native archive installation in `src/ffmpeg_install.py`; delete both separate download modules. Share build identity, hash/ZIP checks, timeout/retry settings and Windows process helpers. Remove forwarding wrappers, unused return values, an always-true branch and historical repair commentary.
+- Preserve platform routing, source priority, TOFU gates, failure handling and post-install execution checks. Tests import the merged module directly; duplicate-implementation comparisons and the shared call ledger are removed.
+
+### 2026-10-28 — Centralize external resource configuration
+
+- `src/external_resources.json` is the shared source for FFmpeg, ffprobe, Node.js, migu wasm, JavaScript hashes and Docker source/installer downloads. Runtime installers, release builds and Docker consume it directly; frozen applications include the manifest.
+- Release Node.js versions and hashes are pinned together instead of following the latest LTS. Update archive URLs and upstream hashes or signatures/key fingerprints in the manifest; no separate checker, download-host registry or duplicate-table parity check is needed.
+- Remove the optional online pin verification/adoption layer (`--pin-source` and `DLR_RUNTIME_PIN_*` settings), its dedicated tests and the `runtime-pin-verification` skill. Preserve download integrity, signature and archive safety checks and failure-path regressions, including existing runtime TOFU fallback behavior.
+- Python dependencies remain in `pyproject.toml` / `uv.lock`; container base images and system packages remain managed by Dockerfile/package managers. Platform business APIs are outside this manifest.
 
 ### 2026-10-28 — Remove low-value and incomplete mechanical checks
 
