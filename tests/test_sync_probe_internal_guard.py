@@ -1,41 +1,19 @@
-# WP-J（2026-09-30，方案 1-A）同步流地址探针的内网收口回归锁。
-#
-# 背景（上一轮 M-1 在同步侧的补齐）：逐跳重定向复检当时只接在 src/async_http.py 的 _build_client
-# 单点上，而 src/stream_select.py 的同步探针自建两支 httpx.Client（_validate_stream_url 的 owns_client
-# 分支、select_source_url 的整轮共用分支），两处都 follow_redirects=True 却都不经 _build_client。
-# 更前面的缺口是：同步侧连**初始 URL** 的内网/回环/云元数据判定都没有——internal_stream_target_reason
-# 此前唯一的调用点是 async_http.get_response_status；stream_select 只有 _is_recordable_url 的协议
-# **形态**白名单（挡 file:///concat:，挡不住 http://127.0.0.1:6379）。于是一个被劫持/被 MITM 的平台
-# 接口回传内网地址，同步探针就照着去连，并把该跳的 status_code / content-type 回显进轮转日志
-# （= 稳定的内网端口观测口，MIN-2219 的跳转形态）。
-#
-# 打桩边界（AGENTS「测试不得自实现被测逻辑（假绿）」）：只替换两处——
-#   ① 传输层：httpx.MockTransport 造 3xx 链并登记实际发出的请求（判定链、钩子、退避、content-type
-#      启发式、末位放行一律走真实生产代码）；
-#   ② DNS seam：web_config._resolve_host_ips（src/async_http.py 的 _internal_stream_target_reason
-#      注释里写明的唯一打桩口径，同 tests/test_regression_2026_09_29_wp_b_netguard.py 与
-#      tests/test_regression_2026_09_22_net.py）。
-# 本文件不重写任何内网判定规则；内网目标一律写成 IP 字面量，判定不依赖解析、不受本桩影响。
-# 变异验证（摘掉生产实现，对应用例应变红）逐条做过：① 初始判定 ② 逐跳钩子 ③ 末位/退避不放行
-# ④ _confirm_get_ok 与 _probe_hls_segment 的 except RedirectHopRejected: raise ⑤ _accept_source 的
-# 落地复核，实跑读数见交付报告。
+"""同步探针与异步 HTTP 共用目标规则，并在发送前检查初始地址和重定向。"""
 
-import ast
-import inspect
 import types
 from collections.abc import Callable, Iterator
 from pathlib import Path
-from typing import Any, TypeGuard
+from typing import Any
 
 import httpx
 import pytest
 from loguru import logger
 
-import src.main as main
-import src.stream_select as ss
-from src import web_config
+import src.streams.selection as ss
+from src.network import targets
+from src.recording import state
 
-_STREAM_SELECT_PATH = Path(__file__).resolve().parent.parent / "src" / "stream_select.py"
+_STREAM_SELECT_PATH = Path(__file__).resolve().parent.parent / "src" / "streams/selection.py"
 
 # 与 tests/test_regression_2026_09_29_wp_b_netguard.py 同一个公网解析结果（示例 IP，只作 DNS seam
 # 的返回值，不参与任何判定规则）。
@@ -75,7 +53,7 @@ def _hermetic_probe_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     ss._probe_last_seen.clear()
     with ss._probe_backoff_lock:
         ss._probe_backoff.clear()
-    monkeypatch.setattr(web_config, "_resolve_host_ips", lambda host: [_PUBLIC_IP])
+    monkeypatch.setattr(targets, "resolve_host_ips", lambda host: [_PUBLIC_IP])
     yield
     ss._probe_last_seen.clear()
     with ss._probe_backoff_lock:
@@ -85,7 +63,7 @@ def _hermetic_probe_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 @pytest.fixture
 def no_recheck_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
     # 「隔 _recheck_delay() 重试一次再定罪」的用例用：只把间隔归零，重试语义完全保留。
-    # 沿既有口径（tests/test_stream_select.py 用 patch("src.stream_select.time") 达到同样效果），
+    # 沿既有口径（tests/test_stream_select.py 用 patch("src.streams.selection.time") 达到同样效果），
     # 这里收窄到单个属性，避免替换整个 time 模块波及全进程。
     monkeypatch.setattr(ss, "_recheck_delay", lambda: 0.0)
 
@@ -99,7 +77,7 @@ def _stub_dns(monkeypatch: pytest.MonkeyPatch, ips: list[str]) -> list[str]:
         looked_up.append(host)
         return ips
 
-    monkeypatch.setattr(web_config, "_resolve_host_ips", _resolve)
+    monkeypatch.setattr(targets, "resolve_host_ips", _resolve)
     return looked_up
 
 
@@ -232,15 +210,26 @@ class TestInitialUrlInternalTargetRejected:
         assert ss._validate_stream_url(_FLV_START) is True
         assert seen == [_FLV_START, _FLV_START]
 
-    def test_rtmp_candidate_is_not_blocked_by_the_internal_gate(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # 初始判定用 internal_stream_target_reason 而**不是**带 scheme 白名单的
-        # redirect_hop_rejection_reason：本模块的候选允许 rtmp/rtmps（MID-19 / _ALLOWED_STREAM_SCHEMES，
-        # 斗鱼 rtmp 拼接、部分海外平台仍下发 rtmp），协议形态由 _is_recordable_url 把关。
-        # 把初始判定写成「非 http(s) 即拒」会整体误杀 rtmp 候选——本条就是那条退化的见证。
-        _install_mock_transport(monkeypatch, _ok_handler())
-        rtmp = "rtmp://dylive.rtmp.douyucdn.cn/live/100rT.flv?wsAuth=1"
+    @pytest.mark.parametrize("scheme", ["rtmp", "rtmps"])
+    def test_rtmp_candidate_is_not_blocked_by_the_internal_gate(
+        self, monkeypatch: pytest.MonkeyPatch, scheme: str
+    ) -> None:
+        seen = _install_mock_transport(monkeypatch, _ok_handler())
+        rtmp = f"{scheme}://dylive.rtmp.douyucdn.cn/live/100rT.flv?wsAuth=1"
         assert ss._is_recordable_url(rtmp) is True
         assert ss.select_source_url({"flv_url": rtmp, "record_url": ""}) == rtmp
+        assert ss._validate_stream_url(f"{scheme}://cdn.example.com:invalid/live") is False
+        assert seen == []
+
+    @pytest.mark.parametrize("scheme", ["rtmp", "rtmps"])
+    def test_internal_rtmp_target_is_rejected_without_http_probe(
+        self, monkeypatch: pytest.MonkeyPatch, scheme: str
+    ) -> None:
+        seen = _install_mock_transport(monkeypatch, _ok_handler())
+        rtmp = f"{scheme}://127.0.0.1/live/room"
+        assert ss.select_source_url({"flv_url": rtmp, "record_url": rtmp}) is None
+        assert ss._validate_stream_url(rtmp, last_resort=True) is False
+        assert seen == []
 
 
 class TestRedirectHopRecheck:
@@ -252,7 +241,7 @@ class TestRedirectHopRecheck:
     ) -> None:
         seen = _install_mock_transport(monkeypatch, _redirect_handler(internal_target))
         assert ss._validate_stream_url(_M3U8_START) is False
-        assert seen == [_M3U8_START, internal_target]
+        assert seen == [_M3U8_START]
 
     @pytest.mark.parametrize("internal_target", _INTERNAL_TARGETS)
     def test_public_to_internal_redirect_unreachable_even_as_last_resort(
@@ -262,7 +251,7 @@ class TestRedirectHopRecheck:
         # （见 tests/test_hop_guard_wiring_locks.py 的 AST 顺序锁）。
         seen = _install_mock_transport(monkeypatch, _redirect_handler(internal_target))
         assert ss._validate_stream_url(_M3U8_START, last_resort=True) is False
-        assert seen == [_M3U8_START, internal_target]
+        assert seen == [_M3U8_START]
 
     def test_rejected_hop_does_not_become_evidence(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # 落地跳刻意回 200 + video/mp2t + 金丝雀正文：没有逐跳防线时探针据此判「可达」，并把该跳的
@@ -275,7 +264,7 @@ class TestRedirectHopRecheck:
             assert ss._validate_stream_url(_M3U8_START) is False
         finally:
             logger.remove(handler_id)
-        assert seen == [_M3U8_START, _INTERNAL_M3U8]
+        assert seen == [_M3U8_START]
         joined = "\n".join(lines)
         assert "INTERNAL-PORT-CANARY" not in joined, "被拒那一跳的响应体不得回流"
         assert "video/mp2t" not in joined, "被拒那一跳的 content-type 不得作为校验细节被回显"
@@ -284,7 +273,7 @@ class TestRedirectHopRecheck:
         # 命中即停止跟随：被拒之后不得再发第三跳，否则探针就成了 3xx 链上的跳板。
         seen = _install_mock_transport(monkeypatch, _redirect_handler(_INTERNAL_M3U8, after_landing=_AFTER_LANDING))
         assert ss._validate_stream_url(_M3U8_START) is False
-        assert seen == [_M3U8_START, _INTERNAL_M3U8], "被拒之后仍继续跟随重定向"
+        assert seen == [_M3U8_START], "被拒之后仍继续跟随重定向"
 
     def test_flv_get_recheck_hop_rejection_is_not_swallowed(
         self, monkeypatch: pytest.MonkeyPatch, no_recheck_sleep: None
@@ -303,7 +292,7 @@ class TestRedirectHopRecheck:
         seen = _install_mock_transport(monkeypatch, _handler)
         assert ss._validate_stream_url(_FLV_START, last_resort=True) is False
         # 三跳：HEAD 公网(200 video) → GET 复核(公网 302) → GET 落地内网（钩子在此命中）
-        assert seen == [_FLV_START, _FLV_START, _INTERNAL_M3U8]
+        assert seen == [_FLV_START, _FLV_START]
 
     def test_hls_playlist_get_hop_rejection_is_not_swallowed(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # _probe_hls_segment 的**外层** except 口径同样是「解析异常 → 按列表可达处理」：
@@ -323,7 +312,7 @@ class TestRedirectHopRecheck:
         seen = _install_mock_transport(monkeypatch, _handler)
         assert ss._validate_stream_url(_M3U8_START, last_resort=True) is False
         # 三跳：HEAD 列表(200) → GET 列表(302) → GET 落地内网（钩子在此命中）
-        assert seen == [_M3U8_START, _M3U8_START, _INTERNAL_M3U8]
+        assert seen == [_M3U8_START, _M3U8_START]
 
     def test_hls_segment_hop_rejection_is_not_swallowed(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # 播放列表 200、分片 302 落到内网：_probe_hls_segment 内层 except 的口径是「探测异常 → 按列表
@@ -345,7 +334,7 @@ class TestRedirectHopRecheck:
 
         seen = _install_mock_transport(monkeypatch, _handler)
         assert ss._validate_stream_url(_M3U8_START, last_resort=True) is False
-        assert _INTERNAL_M3U8 in seen
+        assert _INTERNAL_M3U8 not in seen
 
     def test_public_to_public_redirect_still_reachable(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # 反向锁（防「顺手把重定向一律禁掉」的退化）：公网→公网的合法链路必须照旧判可达——真实 CDN
@@ -383,7 +372,7 @@ class TestProxyExemptionIsInherited:
         dns_calls = _stub_dns(monkeypatch, [_PUBLIC_IP])
         seen = _install_mock_transport(monkeypatch, _redirect_handler(_INTERNAL_M3U8))
         assert ss._validate_stream_url(_M3U8_START, proxy_addr=_PROXY) is False
-        assert seen == [_M3U8_START, _INTERNAL_M3U8]
+        assert seen == [_M3U8_START]
         assert dns_calls == []
 
     def test_proxied_domain_that_resolves_private_is_not_convicted(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -409,8 +398,8 @@ class TestSourceUrlHandoff:
 
     def test_internal_record_url_on_reuse_path_is_not_returned(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _install_mock_transport(monkeypatch, _ok_handler("application/vnd.apple.mpegurl"))
-        monkeypatch.setattr(main, "hls_collection_enabled", True)
-        monkeypatch.setattr(main, "hls_collection_exclude_platforms", ())
+        monkeypatch.setattr(state, "hls_collection_enabled", True)
+        monkeypatch.setattr(state, "hls_collection_exclude_platforms", ())
         # record_url 与序列候选逐字相同 → 走 probed 复用分支（MID-18），一次探针都不发
         result = ss.select_source_url(
             {"m3u8_url": _INTERNAL_M3U8, "flv_url": "", "record_url": _INTERNAL_M3U8}, None, "斗鱼直播"
@@ -426,258 +415,6 @@ class TestSourceUrlHandoff:
     def test_no_internal_url_survives_the_round(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # 收束断言：一轮选源里只要地址是内网，任何分支都不得返回非 None。
         _install_mock_transport(monkeypatch, _redirect_handler(_INTERNAL_M3U8))
-        monkeypatch.setattr(main, "hls_collection_enabled", True)
-        monkeypatch.setattr(main, "hls_collection_exclude_platforms", ())
+        monkeypatch.setattr(state, "hls_collection_enabled", True)
+        monkeypatch.setattr(state, "hls_collection_exclude_platforms", ())
         assert ss.select_source_url({"m3u8_url": _M3U8_START, "flv_url": _FLV_START, "record_url": ""}) is None
-
-
-class TestProbeClientShape:
-    # 工厂本身的形态：只加钩子，不改复用/keepalive/参数组合（AGENTS「HTTP 客户端复用与连接管理」）。
-
-    def test_probe_client_builds_client_with_one_sync_response_hook(self) -> None:
-        client = ss._probe_client(5, None, True)
-        try:
-            assert len(client.event_hooks["response"]) == 1
-            # request 钩子刻意不挂：本层逐跳复检口径是 response.url（见 async_http._build_hop_guard 的
-            # 残余风险登记）。多挂一支 request 钩子 = 每跳两次判定/两次 getaddrinfo，未取。
-            assert client.event_hooks["request"] == []
-            guard = client.event_hooks["response"][0]
-            # 「为什么必须是两个工厂而不是一个」的行为见证：同步 Client 走裸 hook(response)，
-            # 钩子若是协程函数则判定永不生效（返回的协程从未被 await，还会甩 RuntimeWarning）。
-            assert not inspect.iscoroutinefunction(guard)
-        finally:
-            client.close()
-
-    def test_sync_hook_rejects_internal_landing_when_invoked_directly(self) -> None:
-        # 钩子语义锁：同步钩子被**直接调用**（不经 httpx）时也必须抛内部控制流异常。
-        # 与上一条合起来钉住「同步形态工厂」而不是「异步形态被塞进来」——后者在这里表现为
-        # 返回协程、不抛异常。钩子看的是 response.url，而 httpx 里它就是**发出这一跳的那个请求**
-        # 的 URL（302 的 Location 由 httpx 变成下一跳的请求），故构造 request 时用落地地址。
-        import src.async_http as async_http
-
-        guard = async_http.build_sync_hop_guard(None)
-        internal_response = httpx.Response(
-            200, headers={"content-type": "video/mp2t"}, request=httpx.Request("GET", _INTERNAL_M3U8)
-        )
-        with pytest.raises(async_http.RedirectHopRejected):
-            guard(internal_response)
-        # 公网落地必须放行（反向锁，防「任何重定向都拒」把真实 CDN 整片误杀）
-        public_response = httpx.Response(
-            200,
-            headers={"content-type": "video/x-flv"},
-            request=httpx.Request("GET", "https://final.example.com/live.flv"),
-        )
-        assert guard(public_response) is None
-
-    def test_async_guard_factory_still_returns_coroutine(self) -> None:
-        # 两侧形态互不替换的最后一道锁：异步工厂仍返回协程函数（改成普通函数会让 AsyncClient
-        # 的 `await hook(response)` 当场 TypeError）。
-        import src.async_http as async_http
-
-        assert inspect.iscoroutinefunction(async_http._build_hop_guard(None))
-
-
-def _descendants(node: ast.AST) -> Iterator[ast.AST]:
-    # 含嵌套函数在内的全部后代（与 tests/test_stream_select.py 的 _scope_nodes 相反，
-    # 这里刻意要下沉——落地闸门 _accept_source 就是 select_source_url 内的嵌套函数）。
-    for child in ast.iter_child_nodes(node):
-        yield child
-        yield from _descendants(child)
-
-
-def _is_httpx_client_call(node: ast.AST) -> TypeGuard[ast.Call]:
-    # 返回 TypeGuard 而非 bool：取到 .keywords 的结构锁需要 ast.Call 收窄，写 bool 会逼每个
-    # 调用点各补一遍 isinstance（判据多出一份可漂移形态）。与 tests/test_stream_select.py 同口径。
-    return (
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Attribute)
-        and node.func.attr == "Client"
-        and isinstance(node.func.value, ast.Name)
-        and node.func.value.id == "httpx"
-    )
-
-
-def _is_probe_client_call(node: ast.AST) -> bool:
-    return isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "_probe_client"
-
-
-def _enclosing_functions(tree: ast.AST) -> dict[int, str]:
-    # 返回 {id(node): 最内层所属函数名}——「只接一处」的漏接形态靠这个归属关系现形。
-    owners: dict[int, str] = {}
-
-    def _visit(node: ast.AST, current: str) -> None:
-        for child in ast.iter_child_nodes(node):
-            name = child.name if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) else current
-            owners[id(child)] = name
-            _visit(child, name)
-
-    _visit(tree, "<module>")
-    return owners
-
-
-def _local_nodes(func: ast.FunctionDef) -> list[ast.AST]:
-    # 函数体内、不进入嵌套函数定义（与 _scope_nodes 同口径，避免嵌套函数里的调用被算到外层）。
-    out: list[ast.AST] = []
-    stack: list[ast.AST] = [func]
-    while stack:
-        node = stack.pop()
-        out.append(node)
-        for child in ast.iter_child_nodes(node):
-            if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)):
-                continue
-            stack.append(child)
-    return out
-
-
-def _named_defs(tree: ast.AST) -> dict[str, ast.FunctionDef]:
-    return {n.name: n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
-
-
-def _hop_handler_linenos(func: ast.FunctionDef) -> tuple[list[int], list[int]]:
-    # 返回该函数内 (except RedirectHopRejected 的行号, except Exception 的行号)。
-    # PEP 758 的 `except A, B:` 是 ast.Tuple、`except X as e:` 的 except 类型仍是 ast.Name，
-    # 故只看 ast.Name 形态即可（本仓宽 except 一律写 except Exception as e）。
-    hop: list[int] = []
-    broad: list[int] = []
-    for node in _descendants(func):
-        if not isinstance(node, ast.ExceptHandler) or not isinstance(node.type, ast.Name):
-            continue
-        if node.type.id == "RedirectHopRejected":
-            hop.append(node.lineno)
-        elif node.type.id == "Exception":
-            broad.append(node.lineno)
-    return hop, broad
-
-
-class TestHopGuardWiringLocks:
-    # ⑥ 结构锁（AST，不依赖执行）：两处自建 client 都挂了钩子、都过了初始判定、内部控制流异常
-    #    在每个吞异常的出口之前放行。防后来者只接一处。
-
-    def test_single_httpx_client_construction_inside_probe_client(self) -> None:
-        tree = ast.parse(_STREAM_SELECT_PATH.read_text(encoding="utf-8-sig"))
-        owners = _enclosing_functions(tree)
-        constructions = [n for n in ast.walk(tree) if _is_httpx_client_call(n)]
-        assert len(constructions) == 1, (
-            f"本模块的 httpx.Client 构造必须收敛为 _probe_client 内唯一一处，实扫到 "
-            f"{[owners.get(id(n), '?') for n in constructions]}"
-        )
-        assert owners.get(id(constructions[0])) == "_probe_client"
-
-    def test_construction_passes_sync_hop_guard_hook(self) -> None:
-        tree = ast.parse(_STREAM_SELECT_PATH.read_text(encoding="utf-8-sig"))
-        call = next(n for n in ast.walk(tree) if _is_httpx_client_call(n))
-        hook_kw = next((kw for kw in call.keywords if kw.arg == "event_hooks"), None)
-        assert hook_kw is not None, "_probe_client 没把 event_hooks 交给 httpx.Client（逐跳复检静默失效）"
-        dumped = ast.dump(hook_kw.value)
-        assert "build_sync_hop_guard" in dumped, "response 钩子必须出自 async_http 的同步工厂（判定只有一个事实源）"
-        assert "redirect_hop_rejection_reason" in ast.dump(tree) or "internal_stream_target_reason" in ast.dump(tree)
-
-    def test_probe_client_is_called_from_both_probe_sites(self) -> None:
-        tree = ast.parse(_STREAM_SELECT_PATH.read_text(encoding="utf-8-sig"))
-        owners = _enclosing_functions(tree)
-        sites = {owners.get(id(n), "<module>") for n in ast.walk(tree) if _is_probe_client_call(n)}
-        assert sites == {
-            "_validate_stream_url",
-            "select_source_url",
-        }, f"两处自建探针客户端必须都出自工厂（只接一处即本锁变红），实到: {sorted(sites)}"
-
-    def test_factory_and_judgement_use_function_level_import_only(self) -> None:
-        # 导入环约束：stream_select 有模块级 import main、main 又 from src.stream_select import ...，
-        # 模块级出边会改变各模块的初始化顺序（依据见 src/async_http.py:518-521 的同名说明）。
-        tree = ast.parse(_STREAM_SELECT_PATH.read_text(encoding="utf-8-sig"))
-        assert not any(
-            isinstance(n, (ast.Import, ast.ImportFrom))
-            and ("async_http" in getattr(n, "module", "") or any("async_http" in a.name for a in n.names))
-            for n in tree.body
-        ), "src/stream_select.py 不得模块级 import src.async_http（本仓存在 stream_select↔main 导入环）"
-        defs = _named_defs(tree)
-        for name in (
-            "_probe_client",
-            "_validate_stream_url",
-            "select_source_url",
-            "_confirm_get_ok",
-            "_probe_hls_segment",
-        ):
-            imported = [
-                a.name
-                for n in _descendants(defs[name])
-                if isinstance(n, ast.ImportFrom) and (n.module or "").endswith("async_http")
-                for a in n.names
-            ]
-            assert imported, f"{name} 缺函数内 import（沿 async_http.py:518 的同一手法）"
-
-    def test_hop_rejection_is_reraised_before_every_probe_swallowing_except(self) -> None:
-        # 内部控制流异常一旦被 except Exception 吞掉，就落进「维持 HEAD 结论 / 按列表可达 / 退避放行」
-        # 这些既有兜底——那几条分支会把内网落地判成可用甚至交给 ffmpeg。Python 按顺序匹配处理器，
-        # 所以「存在」不够，必须**在前**。
-        tree = ast.parse(_STREAM_SELECT_PATH.read_text(encoding="utf-8-sig"))
-        defs = _named_defs(tree)
-        for name in ("_confirm_get_ok", "_probe_hls_segment"):
-            hop, broad = _hop_handler_linenos(defs[name])
-            assert len(hop) == len(broad), f"{name}: 每条吞异常的 except Exception 都要配一条在前的 RedirectHopRejected"
-            for hop_line, broad_line in zip(sorted(hop), sorted(broad)):
-                assert hop_line < broad_line, (
-                    f"{name}: except RedirectHopRejected 写在 except Exception 之后（永不命中）"
-                )
-        hop, broad = _hop_handler_linenos(defs["_validate_stream_url"])
-        assert hop and broad, "_validate_stream_url 缺少 RedirectHopRejected / Exception 出口"
-        assert min(hop) < min(broad), "_validate_stream_url: 内网落地异常被宽 except 抢先吞掉"
-
-    def test_internal_gate_precedes_first_emit(self) -> None:
-        # 「构造之后、发第一个请求之前」的初始判定，钉成行序判据：判定早于本作用域内第一次探针发出。
-        tree = ast.parse(_STREAM_SELECT_PATH.read_text(encoding="utf-8-sig"))
-        defs = _named_defs(tree)
-        targets = {
-            "_validate_stream_url": ("head",),
-            "select_source_url": ("_validate_stream_url",),
-        }
-        for name, emit_names in targets.items():
-            func = defs[name]
-            # 判定调用允许落在嵌套函数里（select_source_url 的落地闸门就在 _accept_source 内），
-            # 但发出点只算本作用域（嵌套函数的调用属另一个作用域的行序关系）
-            judged = [
-                n.lineno
-                for n in _descendants(func)
-                if isinstance(n, ast.Call)
-                and isinstance(n.func, ast.Name)
-                and n.func.id in ("internal_stream_target_reason", "redirect_hop_rejection_reason")
-            ]
-            assert judged, f"{name}: 没有初始 URL 内网判定调用"
-            emitted: list[int] = []
-            for n in _local_nodes(func):
-                if not isinstance(n, ast.Call):
-                    continue
-                if isinstance(n.func, ast.Attribute) and n.func.attr in emit_names:
-                    emitted.append(n.lineno)
-                elif isinstance(n.func, ast.Name) and n.func.id in emit_names:
-                    emitted.append(n.lineno)
-            assert emitted, f"{name}: 找不到探针发出点 {emit_names}，判据失效"
-            assert min(judged) < min(emitted), f"{name}: 内网判定排在探针之后（被拒地址已经发出去了）"
-
-    def test_accept_source_has_the_landing_gate(self) -> None:
-        # 交付 ffmpeg 前的落地复核（_accept_source 内的第二道判定）——probed 复用分支零探针，
-        # 只有这道闸门挡得住。摘掉它，tests 的 TestSourceUrlHandoff 与本条 AST 锁同时变红。
-        tree = ast.parse(_STREAM_SELECT_PATH.read_text(encoding="utf-8-sig"))
-        accept = _named_defs(tree)["_accept_source"]
-        judged = [
-            n.lineno
-            for n in _descendants(accept)
-            if isinstance(n, ast.Call)
-            and isinstance(n.func, ast.Name)
-            and n.func.id in ("internal_stream_target_reason", "redirect_hop_rejection_reason")
-        ]
-        assert judged, "select_source_url 的 _accept_source 没有落地复核（内网地址可经复用分支进 ffmpeg -i）"
-        form_gate = [
-            n.lineno
-            for n in _descendants(accept)
-            if isinstance(n, ast.Call) and isinstance(n.func, ast.Name) and n.func.id == "_is_recordable_url"
-        ]
-        assert form_gate, "_accept_source 的形态白名单被删（两者管的东西不同，都要在）"
-
-    def test_async_hop_guard_comment_no_longer_claims_sync_side_is_unwired(self) -> None:
-        # 「更正考古」锁：async_http._build_hop_guard 里那条「同步探针侧仍未接线、属另一个文件的改动
-        # 范围、不在这里顺手改」已被本次接线证伪——按 AGENTS 的例外条款，须改正原文并留一条带日期的
-        # 历史注。这条锁防的是「代码接了、注释仍说不接线」的下一次会话误信形态。
-        source = Path(__file__).resolve().parent.parent.joinpath("src", "async_http.py").read_text(encoding="utf-8")
-        assert "build_sync_hop_guard" in source, "同步形态钩子工厂必须存在（判定只有一个事实源）"
-        assert "不在这里顺手改" not in source, "证伪的「不在本次范围」陈述必须改正原文"

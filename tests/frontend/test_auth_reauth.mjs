@@ -4,7 +4,7 @@
 // 是否真的不提交、DOM 是否残留），而非源码形状。test_regression_2026_09_22_gates.mjs 里
 // MID-2241 那条是源码级断言，正是 M-26 实证的「钉字面量 → 契约反转时空过」形态，故在此补行为侧。
 //
-// 【与后端契约同源】src/web_api.py::update_config 的 MID-2241 段：认证当前开启时写 [Web]
+// 【与后端契约同源】src/api/routes.py::update_config 的 MID-2241 段：认证当前开启时写 [Web]
 // web_auth_enable / web_password 必须带能过 verify_web_password 的 reauth_password，否则 403；
 // 其余键不受影响。本文件锁三条前端行为：① 认证两键的 PUT 携带 reauth_password（缺了必然 403）；
 // ② 其余键的 PUT 不带该字段（M-22 修的正是循环外粘变量把口令复制进本次保存的每个请求）；

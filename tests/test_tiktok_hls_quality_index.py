@@ -1,7 +1,7 @@
 # M-11 回归锁（2026-09-29 审查）：TikTok 选档时 FLV 与 HLS 两个列表必须各自基于「用户请求档」的
 # 原始索引独立钳制，不得把被 FLV 长度钳过的索引再喂给 HLS。
 #
-# 被测生产实现：src/stream.py::get_tiktok_stream_url 的 flv_quality_index / m3u8_quality_index
+# 被测生产实现：src/streams/stream.py::get_tiktok_stream_url 的 flv_quality_index / m3u8_quality_index
 # 两行（主选档）与探针失败后的 fallback_base 回退段；对照实现是同文件上方抖音分支的
 # flv_idx / m3u8_idx 两行。
 #
@@ -13,7 +13,7 @@
 # actual_quality 回采到高档后 main.py 的降级告警恒不触发（高档不属于「降级」，见下方
 # TestDowngradeWarningConvention），于是「选流畅实拉原画」完全静默、白烧带宽。
 #
-# 打桩边界：只替换网络层探针 src.stream.get_response_status（真实实现要打真机 CDN）；
+# 打桩边界：只替换网络层探针 src.streams.stream.is_reachable（真实实现要打真机 CDN）；
 # 档位排序、_pad_list 补齐、空地址过滤、索引钳制与 bitrate_to_quality 回采全部走生产代码。
 # 变异验证：把上述两行改回原式后，本文件 HLS-only 选档、不等长独立钳制、回退基准三组用例立即变红。
 
@@ -24,16 +24,15 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 # 先完整初始化 main，打破 stream_select<->main 的循环导入（同 tests/test_quality_tiers.py 口径）：
-# src/stream.py::_probe_headers 就地延迟导入 src.stream_select，而 stream_select 顶层又 `import main`；
+# src/streams/stream.py::_probe_headers 就地延迟导入 src.streams.selection，而 stream_select 顶层又 `import main`；
 # 单文件跑本用例时若不先把 main 装好，延迟导入拿到的是半初始化的 stream_select →
 # ImportError 被 trace_error_decorator 吞成「未开播」，断言会表现为 is_live=False 的假因。
-from src import main  # noqa: F401
-from src.stream import bitrate_to_quality, get_tiktok_stream_url, is_downgrade
+from src.streams.stream import bitrate_to_quality, get_tiktok_stream_url, is_downgrade
 
 _HOST = "https://tiktok.example.com"
 
 # 档位标签 → 码率：取值必须让 bitrate_to_quality 反查回同名档位，否则下面的参数化断言自证失效。
-# 9000→OD 4000→BD 2000→UHD 1000→HD 800→SD 600→LD（容量序见 src/stream.py::bitrate_to_quality）
+# 9000→OD 4000→BD 2000→UHD 1000→HD 800→SD 600→LD（容量序见 src/streams/stream.py::bitrate_to_quality）
 _TIERS: tuple[tuple[str, int], ...] = (
     ("od", 9000),
     ("bd", 4000),
@@ -95,7 +94,7 @@ class TestHlsOnlyQualityIndex:
     ) -> None:
         # 六个 HLS 档位齐全的房间：请求哪一档就必须拉哪一档（修复前一律落 od = 9000kbps）。
         payload = _payload(_streams([t for t, _b in _TIERS], flv=False, hls=True))
-        with patch("src.stream.get_response_status", new_callable=AsyncMock, return_value=True):
+        with patch("src.streams.stream.is_reachable", new_callable=AsyncMock, return_value=True):
             result = await get_tiktok_stream_url(cast(dict[str, object], payload), video_quality=requested)
 
         assert result["is_live"] is True
@@ -111,7 +110,7 @@ class TestHlsOnlyQualityIndex:
     async def test_hls_only_low_tier_does_not_burn_highest_bitrate(self) -> None:
         # 单独固化 M-11 的带宽后果：请求「流畅」时实拉的 HLS 必须是最低码率那一路。
         payload = _payload(_streams([t for t, _b in _TIERS], flv=False, hls=True))
-        with patch("src.stream.get_response_status", new_callable=AsyncMock, return_value=True) as probe:
+        with patch("src.streams.stream.is_reachable", new_callable=AsyncMock, return_value=True) as probe:
             result = await get_tiktok_stream_url(cast(dict[str, object], payload), video_quality="LD")
 
         assert str(result["m3u8_url"]).startswith(f"{_HOST}/ld.m3u8")
@@ -124,7 +123,7 @@ class TestHlsOnlyQualityIndex:
         # 边界：HLS 只有一路时，任何请求档都钳到该唯一档（索引 min(请求, len-1) = 0）。
         payload = _payload(_streams(["sd"], flv=False, hls=True))
         for requested in ("OD", "BD", "UHD", "HD", "SD", "LD"):
-            with patch("src.stream.get_response_status", new_callable=AsyncMock, return_value=True):
+            with patch("src.streams.stream.is_reachable", new_callable=AsyncMock, return_value=True):
                 result = await get_tiktok_stream_url(cast(dict[str, object], payload), video_quality=requested)
             assert str(result["m3u8_url"]).startswith(f"{_HOST}/sd.m3u8"), requested
             assert result["actual_quality"] == "SD", requested
@@ -138,7 +137,7 @@ class TestIndependentClampWhenLengthsDiffer:
         # 请求 LD(5)：FLV 侧钳到自身末档 hd.flv，HLS 侧必须仍是 ld.m3u8。
         # 修复前 quality_index 先被钳成 2，HLS 也随之落到 uhd.m3u8（高档）。
         data = {tag: _entry(tag, bitrate, flv=(tag in ("bd", "uhd", "hd")), hls=True) for tag, bitrate in _TIERS}
-        with patch("src.stream.get_response_status", new_callable=AsyncMock, return_value=True):
+        with patch("src.streams.stream.is_reachable", new_callable=AsyncMock, return_value=True):
             result = await get_tiktok_stream_url(cast(dict[str, object], _payload(data)), video_quality="LD")
 
         assert str(result["m3u8_url"]).startswith(f"{_HOST}/ld.m3u8")
@@ -149,7 +148,7 @@ class TestIndependentClampWhenLengthsDiffer:
     async def test_flv_only_room_clamps_to_requested_index(self) -> None:
         # FLV-only（HLS 侧过滤后为空）：m3u8 通道为空、FLV 按请求档取，且不受 HLS 长度影响。
         data = {tag: _entry(tag, bitrate, flv=True, hls=False) for tag, bitrate in _TIERS}
-        with patch("src.stream.get_response_status", new_callable=AsyncMock, return_value=True):
+        with patch("src.streams.stream.is_reachable", new_callable=AsyncMock, return_value=True):
             result = await get_tiktok_stream_url(cast(dict[str, object], _payload(data)), video_quality="LD")
 
         assert result["m3u8_url"] == ""
@@ -165,7 +164,7 @@ class TestEmptyListsBoundary:
         # 条目有 vbitrate/resolution（因此原始列表非空、过不了上方 len==0 的早退），
         # 但 flv/hls 一路都没有 → 过滤后两侧皆空，只能给出空地址交由上层判无候选。
         data = {tag: _entry(tag, bitrate, flv=False, hls=False) for tag, bitrate in _TIERS}
-        with patch("src.stream.get_response_status", new_callable=AsyncMock, return_value=True) as probe:
+        with patch("src.streams.stream.is_reachable", new_callable=AsyncMock, return_value=True) as probe:
             result = await get_tiktok_stream_url(cast(dict[str, object], _payload(data)), video_quality="LD")
 
         assert result["is_live"] is True
@@ -179,7 +178,7 @@ class TestEmptyListsBoundary:
         # get_video_quality_url 对 vbitrate==0 或无 resolution 的条目一律不收录 → 原始列表即空 →
         # 早退 is_live=False（不得为无流房间伪造 is_live=True 误导调度器）。
         data = {"only_meta": {"main": {"sdk_params": json.dumps({"vbitrate": 0})}, "hls": f"{_HOST}/x.m3u8"}}
-        with patch("src.stream.get_response_status", new_callable=AsyncMock, return_value=True):
+        with patch("src.streams.stream.is_reachable", new_callable=AsyncMock, return_value=True):
             result = await get_tiktok_stream_url(cast(dict[str, object], _payload(data)), video_quality="LD")
         assert result["is_live"] is False
 
@@ -189,7 +188,7 @@ class TestFallbackBaseIsRawIndex:
 
     async def test_probe_failure_steps_from_requested_index(self) -> None:
         data = {tag: _entry(tag, bitrate, flv=(tag in ("bd", "uhd", "hd")), hls=True) for tag, bitrate in _TIERS}
-        with patch("src.stream.get_response_status", new_callable=AsyncMock, return_value=False):
+        with patch("src.streams.stream.is_reachable", new_callable=AsyncMock, return_value=False):
             result = await get_tiktok_stream_url(cast(dict[str, object], _payload(data)), video_quality="LD")
 
         # 请求 LD(5) → 回退基准 fallback_base = max(5-1, 0) = 4 → HLS 取 sd（索引 4）。
@@ -199,7 +198,7 @@ class TestFallbackBaseIsRawIndex:
 
     async def test_probe_failure_hls_only_room_stays_on_low_tier(self) -> None:
         data = {tag: _entry(tag, bitrate, flv=False, hls=True) for tag, bitrate in _TIERS}
-        with patch("src.stream.get_response_status", new_callable=AsyncMock, return_value=False):
+        with patch("src.streams.stream.is_reachable", new_callable=AsyncMock, return_value=False):
             result = await get_tiktok_stream_url(cast(dict[str, object], _payload(data)), video_quality="LD")
 
         assert str(result["m3u8_url"]).startswith(f"{_HOST}/sd.m3u8")

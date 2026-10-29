@@ -1,4 +1,4 @@
-# 启动期陈旧字节码缓存清理（src/startup_cleanup.py）回归测试。
+# 启动期陈旧字节码缓存清理（src/app/startup_cleanup.py）回归测试。
 #
 # 覆盖：
 # 1. 扫描根白名单越界防护（downloads/ logs/ tests/ tool/ node/ 及「不含 .py 的目录」必须存活）
@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-import src.startup_cleanup as startup_cleanup
+import src.app.startup_cleanup as startup_cleanup
 
 # __pycache__ 里的替身内容：固定 32 字节的假 .pyc，只为让目录非空、可被统计与删除
 _CACHE_PAYLOAD = b"x" * 32
@@ -30,8 +30,9 @@ def _make_tree(root: Path) -> None:
     (root / "entry.py").write_text("print(1)\n", encoding="utf-8")
     (root / "src").mkdir()
     (root / "src" / "utils.py").write_text("A = 1\n", encoding="utf-8")
-    (root / "src" / "platforms").mkdir()
-    (root / "src" / "platforms" / "__init__.py").write_text("", encoding="utf-8")
+    platforms = root / "src" / "danmaku" / "platforms"
+    platforms.mkdir(parents=True)
+    (platforms / "__init__.py").write_text("", encoding="utf-8")
     # ①类越界：不在白名单根内，但目录里有 .py（真实的 tests/ 与 tool/ 正是这种形态，
     #    本机实测 tests/__pycache__ 有 128 个 .pyc）——只有「正向白名单」这条规则能救它们
     for rel in _OUT_OF_SCOPE_WITH_PY:
@@ -53,7 +54,7 @@ def _cache_dir(dirs_under: Path, names: tuple[str, ...] = ("a.pyc",)) -> Path:
 
 
 # 必须被清理的扫描根内缓存位置（相对 app_root）
-_IN_SCOPE = ("__pycache__", "src/__pycache__", "src/platforms/__pycache__")
+_IN_SCOPE = ("__pycache__", "src/__pycache__", "src/danmaku/platforms/__pycache__")
 # ①类越界位置：目录含 .py 但不属于白名单根
 _OUT_OF_SCOPE_WITH_PY = (
     "logs",

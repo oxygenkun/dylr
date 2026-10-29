@@ -14,6 +14,6 @@ description: 修改平台解析、选源、探针、画质映射或新增平台
 | stream 的请求档位与实际画质 | [画质映射](references/quality-mapping.md) |
 | spider 平台函数与 JSON 兜底 | [解析契约](references/parser-contract.md) |
 
-新增平台先核对 URL 准入与 main 分发表、返回结构、Cookie/代理/UA、画质和脱敏；只测试函数返回值不足以证明房间可进入监控。
+新增平台先核对 URL 准入与 platform_dispatch 分发表、返回结构、Cookie/代理/UA、画质和脱敏；只测试函数返回值不足以证明房间可进入监控。
 
 相关测试从 test_stream_select、test_stream、test_spider、test_spider_hardening、test_platform_dispatch 中选；仅在需要 commit 时运行 pytest 与覆盖率检查，真机验证遵守根文件。

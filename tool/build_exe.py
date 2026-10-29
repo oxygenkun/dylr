@@ -45,7 +45,7 @@ from typing import cast
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.runtime_install import install_runtime  # noqa: E402
+from src.runtime.installer import install_runtime
 
 APP_NAME = "DouyinLiveRecorder"
 DIST_DIR = PROJECT_ROOT / "dist"
@@ -129,7 +129,7 @@ datas = [
     ('src/external_resources.json', 'src'),
     ('src/javascript', 'src/javascript'),   # JS 签名脚本（src/__init__.py 经 __file__ 定位 → _internal/src/javascript）
     *{i18n_datas},   # JSON 翻译目录（由 build_exe.i18n_datas_entries() 生成）
-    ('web', 'web'),                         # Web 面板静态资源（src/web_api.py 经 __file__ 定位 → _internal/web）
+    ('web', 'web'),                         # Web 面板静态资源（src/api/routes.py 经 __file__ 定位 → _internal/web）
 ]
 # 注意：config/ 不在此处（不进 _internal），由 copy_external_binaries 复制到 exe 同级，
 # 以便程序在运行时直接读写配置。ffmpeg/ node/ 同理。
@@ -137,8 +137,7 @@ datas = [
 # venv 仍有残留），防止残留引用把包重新拖回 _internal。
 #
 hidden_common = [
-    'src.i18n',                          # main.py 内部延迟导入
-    'src.async_http',              # main.py 经 __import__ 动态导入
+    'src.support.i18n',                          # main.py 内部延迟导入
     'h2',                            # httpx[http2] 懒加载依赖
     'exejs',                         # PyExecJS 继任者，try/except 条件导入需显式收集
 ]
@@ -261,7 +260,7 @@ def _sanitized_config_text(text: str, *, fallback_header: str = "") -> str:
     # 与运行时读取完全一致，不会出现「面板认为敏感、打包器不认为」的缝。
     import configparser
 
-    from src import web_config
+    from src.api import config as web_config
 
     parser = configparser.ConfigParser(interpolation=None)
     # 保留键名原样大小写，避免写回时把键名改成小写形态。
@@ -333,7 +332,7 @@ def assert_no_credentials_in_release() -> None:
     # SEV-2213 的「产生了就拦住」一侧：make_zip **之前**校验发布目录那两份文件确实不含敏感键的真实值，
     # 命中即非零退出——与 .dockerignore 同源口径。zip 一旦生成就可能已被 copy/上传，事后再删已无意义；
     # 判据也不是「文件是否存在」（文件**必须**存在，用户要能在 exe 同级编辑），而是逐键比对源值。
-    from src import web_config
+    from src.api import config as web_config
 
     assert RELEASE_DIR.is_dir(), f"{RELEASE_DIR} 不存在，无从校验"
     cfg_dst = RELEASE_DIR / "config"
@@ -468,7 +467,7 @@ RUNTIME_ARTIFACT_DIR_NAMES: tuple[str, ...] = ("logs", "backup_config", "downloa
 
 def _clean_runtime_artifacts_from_release() -> list[str]:
     # 压缩前删除发布目录里的运行期产物，返回被删条目的相对路径（供日志打印）。
-    # 为什么必须删：冒烟以 cwd=RELEASE_DIR 连跑 CLI 25s / Web 90s，src/logger.py 会在包根落下
+    # 为什么必须删：冒烟以 cwd=RELEASE_DIR 连跑 CLI 25s / Web 90s，src/support/logger.py 会在包根落下
     # streamget.log / PlayURL.log / web_console.log（含 runner 绝对路径、用户名与告警堆栈），「缺键补写」
     # 还会改写包内 config.ini；随包分发即信息外泄。主修法是「先压缩、后冒烟」（见 main()），本函数是
     # 第二道：清掉上一次构建或本地手工跑过残留在 dist/ 里的同类产物（PyInstaller 的 --clean 只清自己的
@@ -789,7 +788,7 @@ def main() -> None:
         # --dual：PyInstaller 只跑一次，先产 lite 再产 full，避免重复打包。
         run_pyinstaller()
         # 顺序（MID-2254）：lite zip → 下载运行时 → full zip → 冒烟。冒烟必须排在**两个** zip 之后：它以
-        # cwd=RELEASE_DIR 连跑 CLI/Web 共约 120s，期间 src/logger.py 往包根写日志、应用还会「缺键补写」
+        # cwd=RELEASE_DIR 连跑 CLI/Web 共约 120s，期间 src/support/logger.py 往包根写日志、应用还会「缺键补写」
         # 改写包内 config.ini；旧顺序（lite → 冒烟 → full）让对外分发的 full 包带上 runner 绝对路径/用户名/
         # 告警堆栈。「先出包再冒烟」不削弱冒烟：跑的还是 dist/<APP_NAME>/ 那三个 exe 本体（与 zip 内容逐文件
         # 同源），只是不再把运行期写入的产物压进包里；make_zip 内的清理 + 实物断言只是第二道，顺序是第一道。

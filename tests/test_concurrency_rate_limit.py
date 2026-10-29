@@ -3,8 +3,8 @@
 #
 # 教训（2026-09-10 审查）：早期版本在测试内自行实现锁 / 凭证缓存 / 限流器再断言自己，
 # 把 src/ 的实现整个删掉仍全绿（典型假绿）。现改为直接驱动真实入口：
-#   - src.ttwid.get_ttwid()               并发去重（多线程各自 asyncio.run，复刻房间线程模型）
-#   - src.stream_select._throttle_probe() 同 host 探针最小间隔节流（真实限流器）
+#   - src.streams.ttwid.get_ttwid()               并发去重（多线程各自 asyncio.run，复刻房间线程模型）
+#   - src.streams.selection._throttle_probe() 同 host 探针最小间隔节流（真实限流器）
 #
 # 判据必须是「删掉生产实现就会失败」，因此这里只打桩网络层（_fetch_ttwid）与时间常量，
 # 去重与节流逻辑本身一律走真实代码。
@@ -15,9 +15,8 @@ from typing import Any
 
 import pytest
 
-import src.main as main
-import src.stream_select as stream_select
-import src.ttwid as ttwid_module
+import src.streams.selection as stream_select
+import src.streams.ttwid as ttwid_module
 
 
 # 清空 ttwid 进程级缓存，并屏蔽 config.ini 的预置值：否则开发者本地填过 ttwid 时
@@ -73,7 +72,7 @@ class TestTtwidConcurrentDedup:
             t.join(timeout=15)
         # LT-03：join(timeout=15) **返回**不等于线程已退出——去重逻辑挂死时 join 只是超时静默返回，
         # errors 仍为空、fetch_calls 仍为 1，本用例照样判绿。必须逐线程确认 is_alive 为 False，
-        # 才真正钉住「8 线程全部跑完」（口径同 tests/test_async_http_lock.py 的 LT-01）。
+        # 才真正钉住「8 线程全部跑完」（口径同 tests/test_http_pool.py 的 LT-01）。
         for t in threads:
             assert not t.is_alive(), "join 超时后线程仍存活：跨线程去重逻辑挂死，不得判绿"
 

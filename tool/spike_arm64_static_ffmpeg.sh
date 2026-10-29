@@ -39,7 +39,7 @@ fi
 # 版本留空 → 从官方 releases 目录列表自动挑最新**正式release**（排除 git/snapshot 命名）。
 FFMPEG_VERSION="${FFMPEG_VERSION:-}"
 RELEASE_INDEX="${RELEASE_INDEX:-https://ffmpeg.org/releases/}"
-# 依赖只装「项目真用到的编码器」：libx264（src/video_postprocess.py 的转码路径）与
+# 依赖只装「项目真用到的编码器」：libx264（src/recording/postprocess.py 的转码路径）与
 # libmp3lame（main.py 的 mp3 音频路径）。刻意不引 x265/libvpx/openssl@3——每多一个第三方库，
 # 静态链失败或漏进 dylib 的概率就多一分；TLS 走 macOS 自带的 SecureTransport，不需要 openssl。
 BREW_DEPS=(nasm pkg-config x264 lame)

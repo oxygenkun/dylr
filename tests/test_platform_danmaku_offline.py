@@ -9,7 +9,7 @@
 #   - Twitch MI-21：WebSocket 帧边界是消息不是行，跨帧半行必须缓冲后拼回；
 #   - Twitch：color 标签可选（未设色观众不得被丢弃）、纯黑回退白。
 #
-# Mock 口径：只替换各平台模块内的 WsClient / spawn_danmaku_task 全局引用，事件循环保留真实
+# Mock 口径：只替换各平台模块内的 WebSocketClient / spawn_danmaku_task 全局引用，事件循环保留真实
 # asyncio（用短超时，不 sleep 真实 8 秒）。
 
 import asyncio
@@ -22,10 +22,10 @@ from typing import Any, cast
 import brotli
 import pytest
 
-import src.platforms.bilibili as bilibili
-import src.platforms.douyu as douyu
-import src.platforms.twitch as twitch
-from src.base import DanmakuMessageType
+import src.danmaku.platforms.bilibili as bilibili
+import src.danmaku.platforms.douyu as douyu
+import src.danmaku.platforms.twitch as twitch
+from src.danmaku.base import DanmakuMessageType
 
 # 三个平台的「收包 → 解帧 → 分发」三段式同构于 DanmakuBase，故按「平台 × 阶段」而非缺陷编号组织。
 #
@@ -50,13 +50,13 @@ from src.base import DanmakuMessageType
 #   3) B站看门狗与 _auth_ok 成对：每次新连接都要清零 _auth_ok，否则重连后看门狗误判「已认证」而永
 #      不兜底（H-4）。
 #
-# Mock 口径：各平台模块内的 WsClient 换为 FakeWs（只看连接参数与发出的帧），spawn_danmaku_task
+# Mock 口径：各平台模块内的 WebSocketClient 换为 FakeWs（只看连接参数与发出的帧），spawn_danmaku_task
 # 换为记录器或 _noop_spawn；后者必须 close() 传入的协程，否则未 await 的协程在 GC 时抛
 # RuntimeWarning，打爆本仓「0 警告」检查。
 
 
 class FakeWs:
-    # WsClient 的最小替身：记录发出的帧，不触碰网络。
+    # WebSocketClient 的最小替身：记录发出的帧，不触碰网络。
     def __init__(self, **kwargs: Any) -> None:
         self.kwargs = kwargs
         self.sent: list[bytes | str] = []
@@ -78,7 +78,7 @@ class FakeWs:
         self.closed += 1
 
     async def fail(self, reason: str = "") -> None:
-        # MID-2245：认证被拒改走 WsClient.fail() 而不是 close()——close() 的两条
+        # MID-2245：认证被拒改走 WebSocketClient.fail() 而不是 close()——close() 的两条
         # `if self._stopped: break` 出口都不回调 on_close，会让弹幕监控页把该房间
         # 永久停在「已连接 / 0 条」。替身必须实现同一个出口，否则测的是不存在的方法。
         self.closed += 1
@@ -86,7 +86,7 @@ class FakeWs:
 
 
 class WsFactory:
-    # 把每次 WsClient(...) 构造都换成 FakeWs，便于断言连接参数。
+    # 把每次 WebSocketClient(...) 构造都换成 FakeWs，便于断言连接参数。
     # 用工厂而不是直接替成单例：B站会按 host_list 逐个建连，“建了几次、
     # 每次 URL 是什么”本身就是被测行为（单 host 固定会卡死）。
     def __init__(self, on_connect: Any = None) -> None:
@@ -134,7 +134,7 @@ def _douyu_frame(body: str) -> bytes:
 #   TestBilibiliFraming / TestBilibiliMessages / TestBilibiliLifecycle
 #   TestTwitchDecoding / TestTwitchLifecycle
 # 「Lifecycle」三个类只验「连接参数与发送序列」，不验任何网络行为：那部分属于
-# WsClient（见 tests/test_ws_client.py），在这里重测只会把两个模块的回归绑在一起。
+# WebSocketClient（见 tests/test_websocket.py），在这里重测只会把两个模块的回归绑在一起。
 
 
 class TestDouyuFraming:
@@ -250,10 +250,10 @@ class TestDouyuLifecycle:
     # 生命周期类只验「连接参数 + 发送序列 + 停机标志」：
     #   start 要同对两种入参形态（dict / 裸字符串）——main 与 Web 面板送进来的形状不同；
     #   缺 room_id 必须走 on_close 而不是抛异常（否则一个坏配置会抬走整条采集线）；
-    #   stop 必须置 _stopped 并 close，否则房间下线后 WsClient 的重连循环还在跑。
+    #   stop 必须置 _stopped 并 close，否则房间下线后 WebSocketClient 的重连循环还在跑。
     async def test_start_from_dict_builds_client(self, monkeypatch: pytest.MonkeyPatch) -> None:
         factory = WsFactory()
-        monkeypatch.setattr(douyu, "WsClient", factory)
+        monkeypatch.setattr(douyu, "WebSocketClient", factory)
         client = douyu.DouyuDanmaku()
         await client.start({"room_id": "3125893"})
         assert client._room_id == "3125893"
@@ -262,7 +262,7 @@ class TestDouyuLifecycle:
 
     async def test_start_from_plain_string(self, monkeypatch: pytest.MonkeyPatch) -> None:
         factory = WsFactory()
-        monkeypatch.setattr(douyu, "WsClient", factory)
+        monkeypatch.setattr(douyu, "WebSocketClient", factory)
         client = douyu.DouyuDanmaku()
         await client.start("888")
         assert client._room_id == "888"
@@ -291,7 +291,7 @@ class TestDouyuLifecycle:
         client._ws = cast(Any, ws)
         client._room_id = "42"
         await client._join_room()
-        # 斗鱼走二进制帧（WsClient.send 的入参型是 bytes | str），按帧头 12B + 尾 0x00 取回正文
+        # 斗鱼走二进制帧（WebSocketClient.send 的入参型是 bytes | str），按帧头 12B + 尾 0x00 取回正文
         bodies = [cast(bytes, d)[12:-1].decode() for d in ws.sent[:2]]
         assert bodies == [
             "type@=loginreq/roomid@=42/",
@@ -308,7 +308,7 @@ class TestDouyuLifecycle:
 
     async def test_stop_closes_connection(self, monkeypatch: pytest.MonkeyPatch) -> None:
         factory = WsFactory()
-        monkeypatch.setattr(douyu, "WsClient", factory)
+        monkeypatch.setattr(douyu, "WebSocketClient", factory)
         client = douyu.DouyuDanmaku()
         await client.start("1")
         await client.stop()
@@ -442,7 +442,7 @@ class TestBilibiliFraming:
 
 class TestBilibiliMessages:
     # 单条 JSON 弹幕的四种残缺形态（info 不是列表 / 长度不够 / 颜色不可转 /
-    # user_info 太短）都必须「不 emit 也不抛」：抛出去会被 WsClient 当成毒消息
+    # user_info 太短）都必须「不 emit 也不抛」：抛出去会被 WebSocketClient 当成毒消息
     # 计入重连风暴，误 emit 则会在字幕里留下空行。
     def test_danmu_msg_without_info_list_is_ignored(self) -> None:
         got: list[Any] = []
@@ -494,7 +494,7 @@ class TestBilibiliLifecycle:
         # 单 host 固定会卡死：所有候选地址都连不上时要轮流试完才能退出循环。
         # 用官方域形态的 host（SEV-2215 白名单只放行 B站官方域族；非白名单 host 会被跳过而非尝试）。
         factory = WsFactory()
-        monkeypatch.setattr(bilibili, "WsClient", factory)
+        monkeypatch.setattr(bilibili, "WebSocketClient", factory)
         client = bilibili.BilibiliDanmaku()
         await client.start(
             {
@@ -517,7 +517,7 @@ class TestBilibiliLifecycle:
         # 另外：「host_list 全空 + server_host 非空」时 server_host 会被插回首位，
         # 仍能建连（_AUTH_TIMEOUT 分支之外的另一条兼容性）。
         factory = WsFactory()
-        monkeypatch.setattr(bilibili, "WsClient", factory)
+        monkeypatch.setattr(bilibili, "WebSocketClient", factory)
         monkeypatch.setattr(bilibili, "spawn_danmaku_task", _noop_spawn)
         client = bilibili.BilibiliDanmaku()
 
@@ -535,7 +535,7 @@ class TestBilibiliLifecycle:
 
     async def test_stopped_client_stops_trying(self, monkeypatch: pytest.MonkeyPatch) -> None:
         factory = WsFactory()
-        monkeypatch.setattr(bilibili, "WsClient", factory)
+        monkeypatch.setattr(bilibili, "WebSocketClient", factory)
         client = bilibili.BilibiliDanmaku()
         client._stopped = True
         await client.start({"server_host": "a", "room_id": 1})
@@ -617,7 +617,7 @@ class TestBilibiliLifecycle:
         assert rejected == []
 
     async def test_reject_auth_closes_ws_and_invalidates_buvid(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        import src.spider as spider
+        import src.streams.spider as spider
 
         ws = FakeWs()
         client = bilibili.BilibiliDanmaku()
@@ -633,11 +633,11 @@ class TestBilibiliLifecycle:
         assert ws.closed == 1
         # 只断言 closed 会把「退回 close()」这一实现放过去（它同样让 closed 计数 +1），
         # 而监控页残留「已连接 / 0 条」正是 MID-2245 要消灭的形态——必须断言走的是带上报的 fail()。
-        assert ws.fail_reasons and ws.fail_reasons[0], "认证被拒未走 WsClient.fail()，on_close 不会上报"
+        assert ws.fail_reasons and ws.fail_reasons[0], "认证被拒未走 WebSocketClient.fail()，on_close 不会上报"
 
     async def test_reject_auth_survives_buvid_invalidation_failure(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # 缓存失效只是“顺手优化”，失败不得把断开流程带崩——它已经在退出路径上。
-        import src.spider as spider
+        import src.streams.spider as spider
 
         def boom() -> None:
             raise RuntimeError("cache lock lost")
@@ -660,7 +660,9 @@ class TestBilibiliLifecycle:
         await bilibili.BilibiliDanmaku().stop()
 
     def test_header_constant_is_shared(self) -> None:
-        source = (Path(__file__).resolve().parents[1] / "src" / "platforms" / "bilibili.py").read_text(encoding="utf-8")
+        source = (Path(__file__).resolve().parents[1] / "src" / "danmaku" / "platforms" / "bilibili.py").read_text(
+            encoding="utf-8"
+        )
         assert "HEADER_LEN = 16" in source
         assert bilibili.HEADER_LEN == 16
 
@@ -743,7 +745,7 @@ class TestTwitchDecoding:
 class TestTwitchLifecycle:
     async def test_start_from_dict_uses_explicit_proxy(self, monkeypatch: pytest.MonkeyPatch) -> None:
         factory = WsFactory()
-        monkeypatch.setattr(twitch, "WsClient", factory)
+        monkeypatch.setattr(twitch, "WebSocketClient", factory)
         client = twitch.TwitchDanmaku()
         await client.start({"channel": "#abc", "proxy": "http://127.0.0.1:7890"})
         assert client._channel == "abc"
@@ -753,8 +755,8 @@ class TestTwitchLifecycle:
 
     async def test_start_from_string_falls_back_to_system_proxy(self, monkeypatch: pytest.MonkeyPatch) -> None:
         factory = WsFactory()
-        monkeypatch.setattr(twitch, "WsClient", factory)
-        monkeypatch.setattr(twitch, "handle_proxy_addr", lambda p: None if p in (None, "") else str(p))
+        monkeypatch.setattr(twitch, "WebSocketClient", factory)
+        monkeypatch.setattr(twitch, "normalize_proxy_url", lambda p: None if p in (None, "") else str(p))
         monkeypatch.setenv("https_proxy", "http://127.0.0.1:10808")
         client = twitch.TwitchDanmaku()
         await client.start("chan")
@@ -762,8 +764,8 @@ class TestTwitchLifecycle:
 
     async def test_start_without_proxy_connects_directly(self, monkeypatch: pytest.MonkeyPatch) -> None:
         factory = WsFactory()
-        monkeypatch.setattr(twitch, "WsClient", factory)
-        monkeypatch.setattr(twitch, "handle_proxy_addr", lambda p: None)
+        monkeypatch.setattr(twitch, "WebSocketClient", factory)
+        monkeypatch.setattr(twitch, "normalize_proxy_url", lambda p: None)
         for key in ("http_proxy", "https_proxy", "HTTP_PROXY", "HTTPS_PROXY"):
             monkeypatch.delenv(key, raising=False)
         client = twitch.TwitchDanmaku()

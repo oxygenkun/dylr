@@ -12,9 +12,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from src import main  # noqa: F401  先完整初始化 main，打破 stream_select<->main 的循环导入
-from src.stream import get_douyu_stream_url, get_huya_stream_url, get_quality_index
-from src.stream_select import get_quality_code
+from src.streams.selection import get_quality_code
+from src.streams.stream import get_douyu_stream_url, get_huya_stream_url, get_quality_index
 
 # ────────────────────────────────────────────────────────────
 # 中文名 → 代码映射
@@ -44,7 +43,7 @@ class TestGetQualityIndexSubTiers:
     # get_quality_index: 蓝光子档位折叠到 BD 槽位（通用索引平台退化为「蓝光」）。
     @pytest.mark.parametrize("code", ["BD4", "BD8", "BD20", "BD30"])
     def test_sub_tiers_fold_to_bd(self, code: str) -> None:
-        from src.stream import QUALITY_MAPPING
+        from src.streams.stream import QUALITY_MAPPING
 
         name, idx = get_quality_index(code)
         assert name == "BD"
@@ -193,7 +192,7 @@ class TestDouyuSubTiers:
     async def test_bd4_request_rate_and_readback(self) -> None:
         # 蓝光4M：请求 rate=4000，服务端下发 rate=4 → actual=BD4
         json_data = {"anchor_name": "dy", "is_live": True, "room_id": 100}
-        with patch("src.stream.get_douyu_stream_data", new_callable=AsyncMock) as mock:
+        with patch("src.streams.stream.get_douyu_stream_data", new_callable=AsyncMock) as mock:
             mock.return_value = _douyu_flv(rate=4, suffix="_4000")
             result = await get_douyu_stream_url(cast(dict[str, object], json_data), video_quality="BD4")
         mock.assert_awaited_once()
@@ -209,7 +208,7 @@ class TestDouyuSubTiers:
     async def test_bd8_clamped_by_server(self) -> None:
         # 房间无蓝光8M：请求 rate=8200，服务端钳制下发 rate=4 → actual=BD4（触发降级告警链路）
         json_data = {"anchor_name": "dy", "is_live": True, "room_id": 100}
-        with patch("src.stream.get_douyu_stream_data", new_callable=AsyncMock) as mock:
+        with patch("src.streams.stream.get_douyu_stream_data", new_callable=AsyncMock) as mock:
             mock.return_value = _douyu_flv(rate=4, suffix="_4000")
             result = await get_douyu_stream_url(cast(dict[str, object], json_data), video_quality="BD8")
         assert mock.await_args is not None
@@ -221,7 +220,7 @@ class TestDouyuSubTiers:
     async def test_bd30_20_fold_to_bd8(self) -> None:
         # 斗鱼无蓝光30M/20M：按蓝光8M(rate=8200)请求
         json_data = {"anchor_name": "dy", "is_live": True, "room_id": 100}
-        with patch("src.stream.get_douyu_stream_data", new_callable=AsyncMock) as mock:
+        with patch("src.streams.stream.get_douyu_stream_data", new_callable=AsyncMock) as mock:
             mock.return_value = _douyu_flv(rate=8200)
             result = await get_douyu_stream_url(cast(dict[str, object], json_data), video_quality="BD30")
         assert mock.await_args is not None
@@ -232,7 +231,7 @@ class TestDouyuSubTiers:
     async def test_od_success_single_call(self) -> None:
         # 原画可用：单次请求 rate=0，下发 rate=0 → actual=OD
         json_data = {"anchor_name": "dy", "is_live": True, "room_id": 100}
-        with patch("src.stream.get_douyu_stream_data", new_callable=AsyncMock) as mock:
+        with patch("src.streams.stream.get_douyu_stream_data", new_callable=AsyncMock) as mock:
             mock.return_value = _douyu_flv(rate=0)
             result = await get_douyu_stream_url(cast(dict[str, object], json_data), video_quality="OD")
         mock.assert_awaited_once()
@@ -245,7 +244,7 @@ class TestDouyuSubTiers:
         # 原画被限制（游客态 error 响应）：降级链 0 → 8200 → 4000，第三个成功
         json_data = {"anchor_name": "dy", "is_live": True, "room_id": 100}
         error_resp: dict[str, object] = {"error": 20105, "msg": "请登录后观看", "data": {}}
-        with patch("src.stream.get_douyu_stream_data", new_callable=AsyncMock) as mock:
+        with patch("src.streams.stream.get_douyu_stream_data", new_callable=AsyncMock) as mock:
             mock.side_effect = [error_resp, error_resp, _douyu_flv(rate=4, suffix="_4000")]
             result = await get_douyu_stream_url(cast(dict[str, object], json_data), video_quality="OD")
         assert mock.await_count == 3
@@ -258,7 +257,7 @@ class TestDouyuSubTiers:
         # 全部档位失败：保持 is_live=True 但无流地址的既有契约（交由上层告警重试）
         json_data = {"anchor_name": "dy", "is_live": True, "room_id": 100}
         error_resp: dict[str, object] = {"error": 500, "msg": "server error", "data": {}}
-        with patch("src.stream.get_douyu_stream_data", new_callable=AsyncMock, return_value=error_resp):
+        with patch("src.streams.stream.get_douyu_stream_data", new_callable=AsyncMock, return_value=error_resp):
             result = await get_douyu_stream_url(cast(dict[str, object], json_data), video_quality="BD4")
         assert result["is_live"] is True
         assert "flv_url" not in result and "m3u8_url" not in result
@@ -267,7 +266,7 @@ class TestDouyuSubTiers:
     async def test_legacy_od_rate_mapping_unchanged(self) -> None:
         # 旧档位语义不变：超清 → rate=3 → actual=UHD
         json_data = {"anchor_name": "dy", "is_live": True, "room_id": 100}
-        with patch("src.stream.get_douyu_stream_data", new_callable=AsyncMock) as mock:
+        with patch("src.streams.stream.get_douyu_stream_data", new_callable=AsyncMock) as mock:
             mock.return_value = _douyu_flv(rate=3, suffix="_2000")
             result = await get_douyu_stream_url(cast(dict[str, object], json_data), video_quality="UHD")
         assert mock.await_args is not None

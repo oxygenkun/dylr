@@ -2,7 +2,6 @@
 
 import configparser
 import os
-import sys
 import types
 from pathlib import Path
 from typing import Any
@@ -12,9 +11,8 @@ from loguru import logger
 
 # config_io 顶层 `import main`，而 main 又反向导入 config_io；
 # 必须让 main 先进入 sys.modules 才能打破这个导入环。
-import src.main as main
-from src import config_io
-from src.config_io import backup_file  # noqa: E402
+from src.config import io as config_io
+from src.config.io import backup_file
 
 
 def _os_shim(**overrides: Any) -> types.SimpleNamespace:

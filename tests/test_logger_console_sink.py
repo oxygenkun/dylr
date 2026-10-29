@@ -1,6 +1,6 @@
 # 控制台 sink 的重建语义（Web 后台模式日志可见性的根因）：
 # loguru 的 sink 在 add() 时即绑定具体对象，不会随 sys.stderr 被重新赋值而变化。
-# web.py::_enter_background_mode 在 src.logger 导入之后才把 sys.stderr 重定向到
+# web.py::_enter_background_mode 在 src.support.logger 导入之后才把 sys.stderr 重定向到
 # logs/web_console.log 并 SW_HIDE 隐藏控制台窗口——不重建 sink，DEBUG/WARNING 会全部写往
 # 被隐藏的控制台，web_console.log 里只剩 print 输出。
 
@@ -13,7 +13,7 @@ from typing import Iterator
 import pytest
 from loguru import logger
 
-import src.logger as logger_mod
+import src.support.logger as logger_mod
 
 
 @pytest.fixture()

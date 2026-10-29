@@ -1,5 +1,4 @@
-# src/utils.py 工具函数的回归锁：Cookie 拼装、MD5/磁盘查询、配置读写、URL 与代理归一、去重与 emoji 清理、JSONP 解包、节点脚本执行与异常兜底。
-
+# src/support/utils.py 工具函数的回归锁：Cookie 拼装、MD5/磁盘查询、配置读写、URL 与代理归一、去重与 emoji 清理、JSONP 解包、节点脚本执行与异常兜底。
 import ast
 import builtins
 import configparser
@@ -21,26 +20,20 @@ from typing import IO, Any, cast
 import pytest
 from loguru import logger
 
-import src.utils as utils_module
-from src.utils import (
-    ProgramError,
+import src.support.utils as utils_module
+from src.config.files import read_ini_value, remove_duplicate_lines, replace_url, update_config
+from src.network.urls import format_cookies, normalize_proxy_url, parse_jsonp
+from src.recording import state
+from src.runtime import javascript
+from src.runtime.javascript import ProgramError, run_node_script_async
+from src.streams.errors import trace_error_decorator, trace_error_decorator_or_none
+from src.support.utils import (
     atomic_write_text,
     check_disk_capacity,
     check_md5,
-    dict_to_cookie_str,
     get_file_paths,
-    get_query_params,
-    handle_proxy_addr,
-    jsonp_to_json,
     mask_credentials,
-    read_ini_value,
-    remove_duplicate_lines,
     remove_emojis,
-    replace_url,
-    run_node_script_async,
-    trace_error_decorator,
-    trace_error_decorator_or_none,
-    update_config,
 )
 
 
@@ -62,15 +55,15 @@ def log_capture() -> Generator[list[str]]:
 # 守卫空/单/多键值三种形态的拼接正确性。
 class TestDictToCookieStr:
     def test_empty_dict(self) -> None:
-        assert dict_to_cookie_str({}) == ""
+        assert format_cookies({}) == ""
 
     # 单键值须拼成 "k=v" 单一片段
     def test_single_cookie(self) -> None:
-        assert dict_to_cookie_str({"key": "value"}) == "key=value"
+        assert format_cookies({"key": "value"}) == "key=value"
 
     # 多键值须全部出现并以 "; " 连接（顺序无关但分隔符固定）
     def test_multiple_cookies(self) -> None:
-        result = dict_to_cookie_str({"a": "1", "b": "2"})
+        result = format_cookies({"a": "1", "b": "2"})
         assert "a=1" in result
         assert "b=2" in result
         assert "; " in result
@@ -178,7 +171,7 @@ class TestUpdateConfig:
 
 
 class TestDuplicateKeyWriteback:
-    # M-08（2026-10-19）：src/utils.py 的两处解析器改走 config_read.tolerant_config_parser。
+    # M-08（2026-10-19）：src/support/utils.py 的两处解析器改走 config_read.tolerant_config_parser。
     # 旧形态 configparser.ConfigParser(interpolation=None) 的 strict 默认为 True，遇到「同一节内
     # 两行同名键」（2026-10-17 在本仓 config/config.ini 的 [录制设置] 实测到过）时在 read() 就抛
     # DuplicateOptionError → read_ini_value 吞成 warning 返 None、update_config 更早退，
@@ -252,8 +245,8 @@ class TestDuplicateKeyWriteback:
                 imported.append(node.module or "")
             else:
                 imported.extend(alias.name for alias in node.names)
-        assert "src.config_read" not in imported, "config_read 必须在函数内延迟导入，否则 utils 成环"
-        assert "src.utils" not in imported
+        assert "src.config.reader" not in imported, "config_read 必须在函数内延迟导入，否则 utils 成环"
+        assert "src.support.utils" not in imported
 
 
 class TestGetFilePaths:
@@ -289,41 +282,41 @@ class TestRemoveEmojis:
         assert result == "hello [emoji]"
 
 
-# handle_proxy_addr 规范化代理地址，补齐 http 前缀。
+# normalize_proxy_url 规范化代理地址，补齐 http 前缀。
 # 守卫 None/空/有无前缀四种输入。
 class TestHandleProxyAddr:
     # None 代理须返回 None，避免把 None 当字符串传给 requests
     def test_none_returns_none(self) -> None:
-        assert handle_proxy_addr(None) is None
+        assert normalize_proxy_url(None) is None
 
     def test_empty_returns_none(self) -> None:
         # 空串代理视为未配置，返回 None（不应把空串当地址传给 requests）
-        assert handle_proxy_addr("") is None
+        assert normalize_proxy_url("") is None
 
     def test_no_prefix_adds_http(self) -> None:
-        assert handle_proxy_addr("127.0.0.1:8080") == "http://127.0.0.1:8080"
+        assert normalize_proxy_url("127.0.0.1:8080") == "http://127.0.0.1:8080"
 
     def test_with_prefix_kept(self) -> None:
-        assert handle_proxy_addr("https://proxy.com:1080") == "https://proxy.com:1080"
+        assert normalize_proxy_url("https://proxy.com:1080") == "https://proxy.com:1080"
 
 
 class TestJsonpToJson:
     def test_valid_jsonp(self) -> None:
         # 标准 callback({...}) 包裹的 JSONP 须正确提取为 dict
         jsonp = 'callback({"key": "value"});'
-        result = jsonp_to_json(jsonp)
+        result = parse_jsonp(jsonp)
         assert result == {"key": "value"}
 
     def test_dotted_callback_name(self) -> None:
         # 回调名可含点号（命名空间，如 namespace.callback），正则须能匹配带点的名字
         jsonp = 'a.b.callback({"a": 1});'
-        result = jsonp_to_json(jsonp)
+        result = parse_jsonp(jsonp)
         assert result == {"a": 1}
 
     def test_no_callback_raises(self) -> None:
         # 无法定位 callback(...) 包裹的 JSON 时必须抛 "No JSON data" 异常，而非返回 None 误导调用方
-        with pytest.raises(Exception, match="No JSON data"):
-            jsonp_to_json("not a jsonp string")
+        with pytest.raises(ValueError, match="No JSON data"):
+            parse_jsonp("not a jsonp string")
 
 
 class TestReplaceUrl:
@@ -366,25 +359,6 @@ class TestReplaceUrl:
         assert "unrelated content" in content
 
 
-# get_query_params 解析 URL query 参数，支持按 key 过滤。
-# 守卫全量/单 key/缺失三种查询。
-class TestGetQueryParams:
-    def test_all_params(self) -> None:
-        result = get_query_params("https://example.com?a=1&b=2", None)
-        assert "a" in result
-        assert "b" in result
-
-    # 指定 key 时只返回该 key 对应的值列表（支持多值）
-    def test_specific_param(self) -> None:
-        result = get_query_params("https://example.com?a=1&b=2", "a")
-        assert result == ["1"]
-
-    # 缺失的 key 须返回空列表而非 None 或抛出异常
-    def test_missing_param(self) -> None:
-        result = get_query_params("https://example.com?a=1", "missing")
-        assert result == []
-
-
 class TestTraceErrorGuard:
     # trace_error_decorator / trace_error_decorator_or_none 的同步路径此前完全未覆盖，本类补齐。
 
@@ -419,6 +393,44 @@ class TestTraceErrorGuard:
             raise ProgramError("node missing")
 
         assert await boom() is None
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("error_type, level", [(RuntimeError, "error"), (ProgramError, "warning")])
+async def test_error_guard_preserves_logging_and_fresh_fallback(
+    monkeypatch: pytest.MonkeyPatch, asynchronous: bool, error_type: type[Exception], level: str
+) -> None:
+    from src.streams import errors
+
+    logged: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        errors,
+        "logger",
+        SimpleNamespace(
+            warning=lambda message: logged.append(("warning", message)),
+            error=lambda message: logged.append(("error", message)),
+        ),
+    )
+
+    @trace_error_decorator
+    def sync_failure() -> dict[str, bool]:
+        raise error_type("https://example.com/?token=private-value")
+
+    @trace_error_decorator
+    async def async_failure() -> dict[str, bool]:
+        raise error_type("https://example.com/?token=private-value")
+
+    first = await async_failure() if asynchronous else sync_failure()
+    first["is_live"] = True
+    second = await async_failure() if asynchronous else sync_failure()
+
+    assert second == {"is_live": False}
+    assert len(logged) == 2
+    for actual_level, message in logged:
+        assert actual_level == level
+        assert "private-value" not in message
+        assert "***" in message
+        assert ("async_failure" if asynchronous else "sync_failure") in message
 
 
 class TestReadConfigValueErrors:
@@ -589,16 +601,22 @@ class TestAtomicWriteTextDurability:
         _ = target.write_text("old", encoding="utf-8")
         real_replace = os.replace
 
+        real_fsync = os.fsync
+
         def _spy_fsync(fd: int) -> None:
-            assert isinstance(fd, int)
-            order.append("fsync")
+            if stat.S_ISREG(os.fstat(fd).st_mode):
+                order.append("fsync")
+            real_fsync(fd)
 
         def _spy_replace(src: str, dst: str) -> None:
-            order.append("replace")
+            if dst == str(target):
+                order.append("replace")
             real_replace(src, dst)
 
-        monkeypatch.setattr(utils_module, "_fsync_file", _spy_fsync)
-        monkeypatch.setattr(utils_module, "_replace", _spy_replace)
+        shim = SimpleNamespace(**vars(os))
+        shim.fsync = _spy_fsync
+        shim.replace = _spy_replace
+        monkeypatch.setattr(utils_module, "os", shim)
         assert atomic_write_text(target, "new content") is True
         assert order == ["fsync", "replace"]
         assert target.read_text(encoding="utf-8-sig") == "new content"
@@ -611,14 +629,16 @@ class TestAtomicWriteTextDurability:
         real_replace = os.replace
 
         def _spy_replace(src: str, dst: str) -> None:
-            seen.append(src)
-            # 在替换发生的那一刻读临时文件：必须是某个线程**完整**的内容
-            with real_open(src, "r", encoding="utf-8-sig", newline="") as f:
-                contents.append(f.read())
+            if dst == str(target):
+                seen.append(src)
+                with real_open(src, "r", encoding="utf-8-sig", newline="") as f:
+                    contents.append(f.read())
             real_replace(src, dst)
 
         real_open = builtins.open
-        monkeypatch.setattr(utils_module, "_replace", _spy_replace)
+        shim = SimpleNamespace(**vars(os))
+        shim.replace = _spy_replace
+        monkeypatch.setattr(utils_module, "os", shim)
         target = tmp_path / "same.ini"
         _ = target.write_text("", encoding="utf-8")
         payloads = [f"payload-{i}-" + ("x" * 5000) for i in range(4)]
@@ -656,10 +676,16 @@ class TestAtomicWriteTextDurability:
         target = tmp_path / "cfg.ini"
         _ = target.write_text("keepme", encoding="utf-8")
 
-        def _deny(src: str, dst: str) -> None:
-            raise PermissionError(13, "simulated", dst)
+        real_replace = os.replace
 
-        monkeypatch.setattr(utils_module, "_replace", _deny)
+        def _deny(src: str, dst: str) -> None:
+            if dst == str(target):
+                raise PermissionError(13, "simulated", dst)
+            real_replace(src, dst)
+
+        shim = SimpleNamespace(**vars(os))
+        shim.replace = _deny
+        monkeypatch.setattr(utils_module, "os", shim)
         assert atomic_write_text(target, "gone") is False
         assert target.read_text(encoding="utf-8") == "keepme"
         # 失败路径必须清掉自己留下的临时文件，不在配置目录里留残渣
@@ -683,23 +709,21 @@ class _LockRecorder:
 
 class TestUrlConfigWritePaths:
     def test_replace_url_holds_main_lock(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        from src import main as main_module
 
         f = tmp_path / "URL_config.ini"
         _ = f.write_text("https://old.example/1\n", encoding="utf-8-sig")
         recorder = _LockRecorder()
-        monkeypatch.setattr(main_module, "file_update_lock", recorder)
+        monkeypatch.setattr(state, "file_update_lock", recorder)
         replace_url(f, "https://old.example/1", "https://new.example/1")
         assert recorder.entered == 1
         assert "https://new.example/1" in f.read_text(encoding="utf-8-sig")
 
     def test_remove_duplicate_lines_holds_main_lock(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        from src import main as main_module
 
         f = tmp_path / "URL_config.ini"
         _ = f.write_text("a\na\nb\n", encoding="utf-8-sig")
         recorder = _LockRecorder()
-        monkeypatch.setattr(main_module, "file_update_lock", recorder)
+        monkeypatch.setattr(state, "file_update_lock", recorder)
         remove_duplicate_lines(f)
         assert recorder.entered == 1
         assert f.read_text(encoding="utf-8-sig").split() == ["a", "b"]
@@ -784,7 +808,7 @@ class TestRunNodeScriptNoToctou:
         # run 的 input 关键字上），argv 与篡改时序的断言逐字保留、不改松。
         script = tmp_path / script_name
         original = b"console.log('orig')"
-        monkeypatch.setattr(utils_module, "_JS_SHA256_EXPECTED", {script_name: hashlib.sha256(original).hexdigest()})
+        monkeypatch.setattr(javascript, "_JS_SHA256_EXPECTED", {script_name: hashlib.sha256(original).hexdigest()})
         _ = script.write_bytes(original)
         captured: dict[str, object] = {}
 
@@ -809,9 +833,9 @@ class TestRunNodeScriptNoToctou:
         # subprocess 是 stdlib 模块本体，不得就地改属性（AGENTS 测试约定）→ 浅拷贝 shim 替换
         shim = SimpleNamespace(**vars(subprocess))
         shim.Popen = _FakePopen
-        monkeypatch.setattr(utils_module, "subprocess", shim)
+        monkeypatch.setattr(javascript, "subprocess", shim)
         checked: list[bytes] = []
-        real_check = utils_module._check_js_hash
+        real_check = javascript._check_js_hash
 
         def _spy_check(js_path: str, raw: bytes) -> None:
             checked.append(raw)
@@ -819,13 +843,13 @@ class TestRunNodeScriptNoToctou:
             script.write_bytes(b"console.log('evil')")
             real_check(js_path, raw)
 
-        monkeypatch.setattr(utils_module, "_check_js_hash", _spy_check)
+        monkeypatch.setattr(javascript, "_check_js_hash", _spy_check)
         result = await run_node_script_async(str(script), "https://example/x", timeout=5)
         assert result == "ok"
         assert captured["cmd"] == ["node", "-", "https://example/x"]
         expected = original
         if script_name == "migu.js":
-            expected = f"const DLR_MIGU_RESOURCES = {json.dumps(utils_module.RESOURCES['migu'])};\n".encode() + original
+            expected = f"const DLR_MIGU_RESOURCES = {json.dumps(javascript.RESOURCES['migu'])};\n".encode() + original
         assert captured["input"] == expected, "交给 node 的不是校验过的脚本及配置（TOCTOU 回归）"
         assert captured["timeout"] == 5, "内层超时预算必须真的传给了 communicate（缺了它 node 卡住即整轮挂死）"
         assert checked == [original]
@@ -914,7 +938,7 @@ def _node_subprocess_shim(popen_cls: type) -> SimpleNamespace:
 class TestRunNodeScriptTimeoutBudget:
     def test_signature_exposes_a_positive_timeout(self) -> None:
         # 与姊妹函数 run_js_async 同口径：预算存在、可关键字覆盖、默认值为正
-        param = inspect.signature(utils_module.run_node_script_async).parameters["timeout"]
+        param = inspect.signature(javascript.run_node_script_async).parameters["timeout"]
         assert param.kind is inspect.Parameter.KEYWORD_ONLY
         assert isinstance(param.default, (int, float))
         assert cast("float", param.default) > 0
@@ -927,8 +951,8 @@ class TestRunNodeScriptTimeoutBudget:
         # 本用例就永久 await 到超时被 pytest-asyncio 掐掉而转红。
         script = tmp_path / "sign.js"
         script.write_bytes(b"console.log(1)")
-        utils_module._js_unpinned_warned.add("sign.js")  # 不打「未登记」告警，保持 0 警告口径
-        monkeypatch.setattr(utils_module, "subprocess", _node_subprocess_shim(_HangingPopen))
+        javascript._js_unpinned_warned.add("sign.js")  # 不打「未登记」告警，保持 0 警告口径
+        monkeypatch.setattr(javascript, "subprocess", _node_subprocess_shim(_HangingPopen))
         started = time.monotonic()
         with pytest.raises(TimeoutError):
             await run_node_script_async(str(script), "u", timeout=0.2)
@@ -941,7 +965,7 @@ class TestRunNodeScriptTimeoutBudget:
     ) -> None:
         script = tmp_path / "sign.js"
         script.write_bytes(b"console.log(1)")
-        utils_module._js_unpinned_warned.add("sign.js")
+        javascript._js_unpinned_warned.add("sign.js")
         run_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
 
         shim = _node_subprocess_shim(_TimeoutPopen)
@@ -951,10 +975,10 @@ class TestRunNodeScriptTimeoutBudget:
             return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
 
         shim.run = fake_run
-        monkeypatch.setattr(utils_module, "subprocess", shim)
-        monkeypatch.setattr(utils_module, "_NODE_TREE_KILL_VIA_TASKKILL", via_taskkill)
+        monkeypatch.setattr(javascript, "subprocess", shim)
+        monkeypatch.setattr(javascript, "_NODE_TREE_KILL_VIA_TASKKILL", via_taskkill)
         posix_calls: list[int] = []
-        monkeypatch.setattr(utils_module, "_kill_posix_process_group", lambda pid: posix_calls.append(pid))
+        monkeypatch.setattr(javascript, "_kill_posix_process_group", lambda pid: posix_calls.append(pid))
 
         with pytest.raises(subprocess.TimeoutExpired):
             await run_node_script_async(str(script), "u", timeout=1.0)
@@ -985,15 +1009,15 @@ class TestRunNodeScriptTimeoutBudget:
         # （FileNotFoundError），回收失败**不得**改写超时语义——异常必须照原样上抛。
         script = tmp_path / "sign.js"
         script.write_bytes(b"console.log(1)")
-        utils_module._js_unpinned_warned.add("sign.js")
+        javascript._js_unpinned_warned.add("sign.js")
         shim = _node_subprocess_shim(_TimeoutPopen)
 
         def deny(*args: object, **kwargs: object) -> None:
             raise FileNotFoundError("taskkill not found")
 
         shim.run = deny
-        monkeypatch.setattr(utils_module, "subprocess", shim)
-        monkeypatch.setattr(utils_module, "_NODE_TREE_KILL_VIA_TASKKILL", True)
+        monkeypatch.setattr(javascript, "subprocess", shim)
+        monkeypatch.setattr(javascript, "_NODE_TREE_KILL_VIA_TASKKILL", True)
         captured: list[str] = []
         sink_id = logger.add(lambda msg: captured.append(str(msg)), format="{message}", level="WARNING")
         try:
@@ -1014,7 +1038,7 @@ class TestRunNodeScriptTimeoutBudget:
         # killpg 只有让子进程自成会话才收得到整棵树，故 POSIX 分支必须带上它。
         script = tmp_path / "sign.js"
         script.write_bytes(b"console.log(1)")
-        utils_module._js_unpinned_warned.add("sign.js")
+        javascript._js_unpinned_warned.add("sign.js")
         seen: list[dict[str, object]] = []
 
         class _RecordingPopen(_HangingPopen):
@@ -1022,9 +1046,9 @@ class TestRunNodeScriptTimeoutBudget:
                 super().__init__(argv, **kwargs)
                 seen.append(kwargs)
 
-        monkeypatch.setattr(utils_module, "subprocess", _node_subprocess_shim(_RecordingPopen))
+        monkeypatch.setattr(javascript, "subprocess", _node_subprocess_shim(_RecordingPopen))
         for via_taskkill, expected in ((True, False), (False, True)):
-            monkeypatch.setattr(utils_module, "_NODE_TREE_KILL_VIA_TASKKILL", via_taskkill)
+            monkeypatch.setattr(javascript, "_NODE_TREE_KILL_VIA_TASKKILL", via_taskkill)
             with pytest.raises(TimeoutError):
                 await run_node_script_async(str(script), "u", timeout=0.2)
             # 判据取**值**而不是「键在不在」：只判 in 的话 `start_new_session=False` 这种
@@ -1036,7 +1060,7 @@ class TestRunNodeScriptTimeoutBudget:
         # win32 不导出它们），必须用 sys.platform **字面量**早返回门控，否则本机 mypy（win32）红；
         # 门控条件写反（!= "win32"）静态检查发现不了、Windows 上会真去调 killpg。
         # 剥掉注释行：函数上方的解释性注释里也写了 sys.platform/win32，不剥会被自己的注释误判。
-        src = inspect.getsource(utils_module._kill_posix_process_group)
+        src = inspect.getsource(javascript._kill_posix_process_group)
         body = "\n".join(line for line in src.splitlines() if not line.strip().startswith("#"))
         assert 'if sys.platform == "win32":' in body, body
         assert 'sys.platform != "win32"' not in body, "门控条件写反＝Windows 上真去调 killpg"
@@ -1049,8 +1073,8 @@ class TestRunNodeScriptTimeoutBudget:
         os_shim = SimpleNamespace(**vars(os))
         os_shim.getpgid = lambda pid: int(pid) + 1
         os_shim.killpg = lambda pgid, sig: calls.append((pgid, int(sig)))
-        monkeypatch.setattr(utils_module, "os", os_shim)
-        utils_module._kill_posix_process_group(4242)
+        monkeypatch.setattr(javascript, "os", os_shim)
+        javascript._kill_posix_process_group(4242)
         if sys.platform == "win32":
             assert calls == [], "win32 门控失效：Windows 上真去调了 killpg"
         else:
@@ -1059,7 +1083,7 @@ class TestRunNodeScriptTimeoutBudget:
     def test_node_execution_does_not_use_subprocess_run(self) -> None:
         # 结构锁：subprocess.run 的超时分支会在 kill 后再调一次不带超时的 communicate()——
         # 那是 L-19 的根因，不得被「顺手改回 run」的重构复活。run 只允许出现在回收 taskkill 那一处。
-        src = inspect.getsource(utils_module.run_node_script_async)
+        src = inspect.getsource(javascript.run_node_script_async)
         body = "\n".join(line for line in src.splitlines() if not line.strip().startswith("#"))
         assert "subprocess.run" not in body, "run_node_script_async 本体不得再用 subprocess.run 执行 node"
         assert "proc.communicate(" in body and "timeout=timeout" in body, body
@@ -1070,10 +1094,10 @@ class TestJsPinTable:
     def test_dead_scripts_are_unpinned(self) -> None:
         # laixiu.js / taobao-sign.js 在全仓 *.py 内除钉定表外零调用点（来秀已用纯 Python
         # calculate_sign 重写、淘宝签名无入口），且 taobao-sign.js 注释里留有真实抓包样本。
-        assert "laixiu.js" not in utils_module._JS_SHA256_EXPECTED
-        assert "taobao-sign.js" not in utils_module._JS_SHA256_EXPECTED
+        assert "laixiu.js" not in javascript._JS_SHA256_EXPECTED
+        assert "taobao-sign.js" not in javascript._JS_SHA256_EXPECTED
         # 其余 5 份仍在用，一条都不能少
-        assert set(utils_module._JS_SHA256_EXPECTED) == {
+        assert set(javascript._JS_SHA256_EXPECTED) == {
             "crypto-js.min.js",
             "haixiu.js",
             "liveme.js",
@@ -1085,7 +1109,7 @@ class TestJsPinTable:
         js_dir = Path(__file__).resolve().parents[1] / "src" / "javascript"
         if not js_dir.is_dir():  # pragma: no cover
             pytest.skip("src/javascript 不存在")
-        for name in utils_module._JS_SHA256_EXPECTED:
+        for name in javascript._JS_SHA256_EXPECTED:
             assert (js_dir / name).is_file(), f"钉定表引用了不存在的脚本 {name}"
 
     # MIN-2266 ①：上面两条只锁「表 == 硬编码 5 项」与「表里的键都有文件」，
@@ -1097,7 +1121,7 @@ class TestJsPinTable:
         if not js_dir.is_dir():  # pragma: no cover - 冻结包内可能不含源码
             pytest.skip("src/javascript 不存在")
         on_disk = sorted(p.name for p in js_dir.glob("*.js"))
-        pinned = sorted(utils_module._JS_SHA256_EXPECTED)
+        pinned = sorted(javascript._JS_SHA256_EXPECTED)
         # 相等而非子集：只判「盘上的都在表里」会让表里残留已删脚本（反向漂移）无人发现。
         # 本仓刻意不设白名单——vendored 的 crypto-js.min.js 也照样钉了哈希；确需例外时
         # 须在 utils._JS_SHA256_EXPECTED 上方注明理由并同步放宽本断言，见该处注释。
@@ -1107,8 +1131,8 @@ class TestJsPinTable:
         # 「未登记」不得再是静默分支：首见必须告警（MIN-2266 ①）。
         # 把告警改回 `return`（原实现）会让本用例变红——它就是那条变异验证要抓的形态。
         name = "evil-injected.js"
-        utils_module._js_unpinned_warned.discard(name)
-        utils_module._check_js_hash(str(tmp_path / name), b"console.log(1)")
+        javascript._js_unpinned_warned.discard(name)
+        javascript._check_js_hash(str(tmp_path / name), b"console.log(1)")
         assert any(name in line for line in log_capture), f"未登记的 {name} 未产生任何告警：{log_capture}"
         assert any("未登记" in line for line in log_capture), "告警文案须说明「未登记」而非「哈希不符」"
 
@@ -1116,7 +1140,7 @@ class TestJsPinTable:
         # 去重：run_node_script_async 每次都校验，未登记脚本若每条都告警会按房间数×轮数刷屏，
         # 把真线索淹掉（与「主播未开播的正常轮次刻意静默」同一口径）。
         name = "noisy-unpinned.js"
-        utils_module._js_unpinned_warned.discard(name)
-        utils_module._check_js_hash(str(tmp_path / name), b"a")
-        utils_module._check_js_hash(str(tmp_path / name), b"b")
+        javascript._js_unpinned_warned.discard(name)
+        javascript._check_js_hash(str(tmp_path / name), b"a")
+        javascript._check_js_hash(str(tmp_path / name), b"b")
         assert sum(1 for line in log_capture if name in line) == 1, log_capture

@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# 2026-09-22 审查报告 / 组 E（src/spider.py + src/platforms/bilibili.py）修复的回归锁。
+# 2026-09-22 审查报告 / 组 E（src/streams/spider.py + src/danmaku/platforms/bilibili.py）修复的回归锁。
 #
 # 判据一律落在「失效形态本身」而不是「调用了某个函数」：
 #   SEV-2204  快手 playUrls 只含 h265 / "h264": null 时必须仍判开播并给出 h265 候选；
@@ -14,7 +14,7 @@
 #   MIN-2203  buvid spi 空结果重试前必须有一次 await sleep（零间隔连击被判红）；
 #   MIN-2222  百度 data 取稳定键名 room_id 而非首个键。
 #
-# 原则：只打桩传输层（spider.async_req / WsClient），_loads_dict、_dig 系列、_warn_api_abnormal
+# 原则：只打桩传输层（spider.http.request / WebSocketClient），_loads_dict、_dig 系列、_warn_api_abnormal
 # 与各平台解析逻辑一律走真实代码。
 
 import asyncio
@@ -25,7 +25,8 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from src import spider as sp
+from src.network import targets
+from src.streams import spider as sp
 
 WAF_HTML = "<html><head><title>Access Protected</title></head><body>cf-browser-verification</body></html>"
 
@@ -58,7 +59,7 @@ def _fake_logger() -> types.SimpleNamespace:
 
 
 def _fake_req(payloads: dict[str, Any], default: str = WAF_HTML) -> AsyncMock:
-    # 按 URL 子串路由的 async_req 替身；值可为 str 或 list（同 URL 多次请求依次取用）。
+    # 按 URL 子串路由的 request 替身；值可为 str 或 list（同 URL 多次请求依次取用）。
     queue: dict[str, list[Any]] = {
         key: (value if isinstance(value, list) else [value]) for key, value in payloads.items()
     }
@@ -97,7 +98,9 @@ class TestKuaishouPlayUrlsCodec:
     async def test_h265_only_still_live_with_candidate(self) -> None:
         # 失效形态①：HEVC-only 房间只含 h265 键。旧实现落入「20241128 已失效」的 list 死分支
         # → 候选恒 [] → is_live 保持 False 且零日志。修复后必须判开播并给出 h265 候选。
-        with patch.object(sp, "async_req", new=_fake_req({"live.kuaishou.com": _kuaishou_html(_H265_ONLY_PLAYURLS)})):
+        with patch.object(
+            sp.http, "request", new=_fake_req({"live.kuaishou.com": _kuaishou_html(_H265_ONLY_PLAYURLS)})
+        ):
             result = await sp.get_kuaishou_stream_data("https://live.kuaishou.com/u/testuser")
         assert result["is_live"] is True
         assert result["flv_url_list"] == [{"url": "https://cdn/h265.flv"}]
@@ -106,7 +109,9 @@ class TestKuaishouPlayUrlsCodec:
     async def test_h264_null_falls_back_to_h265(self) -> None:
         # 失效形态②："h264": null。旧实现 `"adaptationSet" not in None` 抛 TypeError →
         # 被 @trace_error_decorator 吞成未开播。修复后必须跳过 null 候选、落到 h265。
-        with patch.object(sp, "async_req", new=_fake_req({"live.kuaishou.com": _kuaishou_html(_H264_NULL_PLAYURLS)})):
+        with patch.object(
+            sp.http, "request", new=_fake_req({"live.kuaishou.com": _kuaishou_html(_H264_NULL_PLAYURLS)})
+        ):
             result = await sp.get_kuaishou_stream_data("https://live.kuaishou.com/u/testuser")
         assert result["is_live"] is True
         assert result["flv_url_list"] == [{"url": "https://cdn/h265.flv"}]
@@ -118,7 +123,7 @@ class TestKuaishouPlayUrlsCodec:
             '{"h264":{"adaptationSet":{"representation":[{"url":"https://cdn/h264.flv"}]}},'
             '"h265":{"adaptationSet":{"representation":[{"url":"https://cdn/h265.flv"}]}}}'
         )
-        with patch.object(sp, "async_req", new=_fake_req({"live.kuaishou.com": _kuaishou_html(both)})):
+        with patch.object(sp.http, "request", new=_fake_req({"live.kuaishou.com": _kuaishou_html(both)})):
             result = await sp.get_kuaishou_stream_data("https://live.kuaishou.com/u/testuser")
         assert result["flv_url_list"] == [{"url": "https://cdn/h264.flv"}]
 
@@ -129,7 +134,7 @@ class TestKuaishouPlayUrlsCodec:
         logger = _fake_logger()
         body = _kuaishou_html('{"h264":{"adaptationSet":{}}}')
         with (
-            patch.object(sp, "async_req", new=_fake_req({"live.kuaishou.com": body})),
+            patch.object(sp.http, "request", new=_fake_req({"live.kuaishou.com": body})),
             patch.object(sp, "logger", logger),
         ):
             result = await sp.get_kuaishou_stream_data("https://live.kuaishou.com/u/testuser")
@@ -166,7 +171,7 @@ class TestChangliaoYinboLiveId:
             "live.ashx": api,
             "wap.tlclw.com/12345": _changliao_page("https://flv.example", "https://hls.example"),
         }
-        with patch.object(sp, "async_req", new=_fake_req(payloads)):
+        with patch.object(sp.http, "request", new=_fake_req(payloads)):
             result = await sp.get_changliao_stream_url("https://wap.tlclw.com/12345")
         assert result["is_live"] is True
         # 旧实现 _dig_str 把 int 变空串 → 拼出 "https://flv.example/.flv" 这种只有域名的坏地址
@@ -183,7 +188,7 @@ class TestChangliaoYinboLiveId:
             "wap.tlclw.com/12345": _changliao_page("https://flv.example", "https://hls.example"),
         }
         with (
-            patch.object(sp, "async_req", new=_fake_req(payloads)),
+            patch.object(sp.http, "request", new=_fake_req(payloads)),
             patch.object(sp, "logger", logger),
         ):
             result = await sp.get_changliao_stream_url("https://wap.tlclw.com/12345")
@@ -197,7 +202,7 @@ class TestChangliaoYinboLiveId:
         api = '{"data":{"roomInfo":{"nickname":"音播主播","live_stat":1,"liveID":555}}}'
         page = _changliao_page("https://flv.yb", "https://hls.yb")
         payloads = {"live.ashx": api, "wap.ybw1666.com/800005143": page}
-        with patch.object(sp, "async_req", new=_fake_req(payloads)):
+        with patch.object(sp.http, "request", new=_fake_req(payloads)):
             result = await sp.get_yinbo_stream_url("https://wap.ybw1666.com/800005143")
         assert result["is_live"] is True
         assert result["flv_url"] == "https://flv.yb/555.flv"
@@ -210,7 +215,7 @@ class TestChangliaoYinboLiveId:
         page = _changliao_page("https://flv.yb", "https://hls.yb")
         payloads = {"live.ashx": api, "wap.ybw1666.com/800005143": page}
         with (
-            patch.object(sp, "async_req", new=_fake_req(payloads)),
+            patch.object(sp.http, "request", new=_fake_req(payloads)),
             patch.object(sp, "logger", logger),
         ):
             result = await sp.get_yinbo_stream_url("https://wap.ybw1666.com/800005143")
@@ -237,7 +242,7 @@ class TestXhsRedirectCredentialContainment:
                 return "https://evil.example.com/steal"
             return ""
 
-        with patch.object(sp, "async_req", new=AsyncMock(side_effect=_req)):
+        with patch.object(sp.http, "request", new=AsyncMock(side_effect=_req)):
             await sp.get_xhs_stream_url("https://xhslink.com/o/abc", cookies="SESSDATA=SECRET")
 
         # 不得向 evil.example.com 发起任何请求（那正是凭据被递送的目标）
@@ -247,7 +252,7 @@ class TestXhsRedirectCredentialContainment:
     async def test_allowlisted_host_that_resolves_internal_is_rejected(self) -> None:
         # 失效形态：落地页 host 通过了「域族后缀」这一道闸，但 DNS 解析到内网/回环/云元数据（如
         # xiaohongshu.com→127.0.0.1）。仅查后缀会放行，于是把用户 Cookie 送给内网目标；修复后
-        # 必须再过一次 web_config._host_internal_reason。
+        # 必须再过一次 targets.host_rejection_reason。
         sent: list[dict[str, object]] = []
 
         async def _req(*args: object, **kwargs: object) -> Any:
@@ -258,8 +263,8 @@ class TestXhsRedirectCredentialContainment:
             return "<html></html>"
 
         with (
-            patch.object(sp, "async_req", new=AsyncMock(side_effect=_req)),
-            patch.object(sp.web_config, "_host_internal_reason", return_value="解析到内网地址 127.0.0.1"),
+            patch.object(sp.http, "request", new=AsyncMock(side_effect=_req)),
+            patch.object(targets, "host_rejection_reason", return_value="解析到内网地址 127.0.0.1"),
         ):
             await sp.get_xhs_stream_url("https://xhslink.com/o/abc", cookies="SESSDATA=SECRET")
 
@@ -281,7 +286,7 @@ class TestXhsRedirectCredentialContainment:
                 return "https://www.xiaohongshu.com/livestream/123"
             return "<html></html>"
 
-        with patch.object(sp, "async_req", new=AsyncMock(side_effect=_req)):
+        with patch.object(sp.http, "request", new=AsyncMock(side_effect=_req)):
             await sp.get_xhs_stream_url("https://xhslink.com/o/abc", cookies="SESSDATA=SECRET")
 
         landing = [s for s in sent if "www.xiaohongshu.com" in cast(str, s["url"])]
@@ -296,7 +301,7 @@ class TestXhsRedirectCredentialContainment:
 
 class TestBiliDanmakuHostAllowlist:
     def test_helper_rejects_non_official_domains(self) -> None:
-        from src.platforms.bilibili import _bili_danmaku_host_allowed
+        from src.danmaku.platforms.bilibili import _bili_danmaku_host_allowed
 
         assert _bili_danmaku_host_allowed("broadcastlv.chat.bilibili.com")
         assert _bili_danmaku_host_allowed("broadcastlv2.chat.bilibili.com")
@@ -310,7 +315,7 @@ class TestBiliDanmakuHostAllowlist:
     async def test_evil_host_never_connected_and_no_cookie(self) -> None:
         # 失效形态：getDanmuInfo 返回的 host 被直接用作 WS 主机，连接时带上登录 Cookie。
         # 修复后：evil.example.com 被跳过、不建连，且绝不把 Cookie 发给它。
-        from src.platforms.bilibili import BilibiliDanmaku
+        from src.danmaku.platforms.bilibili import BilibiliDanmaku
 
         connected: list[dict[str, object]] = []
 
@@ -322,7 +327,7 @@ class TestBiliDanmakuHostAllowlist:
                 return None
 
         d = BilibiliDanmaku()
-        with patch("src.platforms.bilibili.WsClient", _FakeWs):
+        with patch("src.danmaku.platforms.bilibili.WebSocketClient", _FakeWs):
             await d.start(
                 {
                     "server_host": "evil.example.com",
@@ -343,7 +348,7 @@ class TestBiliDanmakuHostAllowlist:
     @pytest.mark.asyncio
     async def test_all_hosts_untrusted_degrades_without_connect(self) -> None:
         # 全部候选不可信时降级（不建连、不发凭据），而非退回去连不可信 host。
-        from src.platforms.bilibili import BilibiliDanmaku
+        from src.danmaku.platforms.bilibili import BilibiliDanmaku
 
         connected: list[dict[str, object]] = []
         closed: list[str] = []
@@ -356,7 +361,7 @@ class TestBiliDanmakuHostAllowlist:
                 return None
 
         d = BilibiliDanmaku(on_close=lambda reason: closed.append(reason))
-        with patch("src.platforms.bilibili.WsClient", _FakeWs):
+        with patch("src.danmaku.platforms.bilibili.WebSocketClient", _FakeWs):
             await d.start(
                 {
                     "server_host": "evil.example.com",
@@ -384,7 +389,7 @@ class TestSingleStreamSource:
             '{"data":{"user_info":{"name":"微博主播"},"item":{"status":1,"desc":"标题",'
             '"stream_info":{"pull":{"live_origin_hls_url":"https://wb/a.m3u8"}}}}}'
         )
-        with patch.object(sp, "async_req", new=_fake_req({"live_id=1": body})):
+        with patch.object(sp.http, "request", new=_fake_req({"live_id=1": body})):
             result = await sp.get_weibo_stream_data("https://weibo.com/l/show/1")
         assert result["is_live"] is True
         # 第一组候选即真实下发的那一路；第二组是去画质后缀的兜底候选，此处样本无后缀故不同。
@@ -398,7 +403,7 @@ class TestSingleStreamSource:
             '{"data":{"user_info":{"name":"微博主播"},"item":{"status":1,"desc":"标题",'
             '"stream_info":{"pull":{"live_origin_flv_url":"https://wb/a.flv"}}}}}'
         )
-        with patch.object(sp, "async_req", new=_fake_req({"live_id=1": body})):
+        with patch.object(sp.http, "request", new=_fake_req({"live_id=1": body})):
             result = await sp.get_weibo_stream_data("https://weibo.com/l/show/1")
         assert result["is_live"] is True
         assert result["record_url"] == "https://wb/a.flv"
@@ -409,7 +414,7 @@ class TestSingleStreamSource:
             '{"code":200,"data":{"anchor":{"nickName":"Look主播"},"liveStatus":1,'
             '"roomInfo":{"liveType":2,"title":"t","liveUrl":{"hlsPullUrl":"http://lookcdn/a.m3u8"}}}}'
         )
-        with patch.object(sp, "async_req", new=_fake_req({"room/get/v3": body})):
+        with patch.object(sp.http, "request", new=_fake_req({"room/get/v3": body})):
             result = await sp.get_looklive_stream_url("https://look.163.com/live?id=32108888")
         assert result["is_live"] is True
         assert result["record_url"] == "http://lookcdn/a.m3u8"
@@ -420,7 +425,7 @@ class TestSingleStreamSource:
             '{"code":200,"data":{"anchor":{"nickName":"Look主播"},"liveStatus":1,'
             '"roomInfo":{"liveType":2,"title":"t","liveUrl":{"httpPullUrl":"http://lookcdn/a.flv"}}}}'
         )
-        with patch.object(sp, "async_req", new=_fake_req({"room/get/v3": body})):
+        with patch.object(sp.http, "request", new=_fake_req({"room/get/v3": body})):
             result = await sp.get_looklive_stream_url("https://look.163.com/live?id=32108888")
         assert result["is_live"] is True
         assert result["record_url"] == "http://lookcdn/a.flv"
@@ -473,7 +478,7 @@ class TestDouyuSignHardening:
     def _patch(self, enc_key_json: str) -> Any:
         key_url_body = '{"error":0,"data":' + enc_key_json + "}"
         # md5 迭代次数 = enc_time + 1（最后一次固定追加 sign_str）。统计调用次数即可反推 enc_time。
-        return patch.object(sp, "async_req", new=_fake_req({"getEncryption": key_url_body}))
+        return patch.object(sp.http, "request", new=_fake_req({"getEncryption": key_url_body}))
 
     @pytest.mark.asyncio
     async def test_enc_time_string_two_parsed_as_two(self) -> None:
@@ -550,7 +555,7 @@ class TestDouyinNoDuplicateFetch:
             "stream_url": {"live_core_sdk_data": {"pull_data": {"stream_data": '{"data":{"origin":{"main":{}}}}'}}},
         }
         with (
-            patch.object(sp, "async_req", new=AsyncMock(side_effect=_req)),
+            patch.object(sp.http, "request", new=AsyncMock(side_effect=_req)),
             patch.object(sp, "_extract_room_data_from_html", return_value=room_data),
             patch.object(sp, "extract_douyin_hevc_flv_url", return_value="https://hevc.flv"),
         ):
@@ -568,7 +573,7 @@ class TestBiliSpiRetryBackoff:
     @pytest.mark.asyncio
     async def test_spi_empty_retry_sleeps_between_attempts(self) -> None:
         # 失效形态：两次请求**零间隔**连击 spi —— CDN 探针侧有 _throttle_probe 限速，spi 这一路
-        # 没有，固定节奏本身就是风控指纹；且「200 + 空 body」下 async_req 与 _loads_dict 都不抛，
+        # 没有，固定节奏本身就是风控指纹；且「200 + 空 body」下 request 与 _loads_dict 都不抛，
         # 旧代码挂在 except 上的重试/告警永不执行，真正需要归因的「两跳皆空」反而零日志。
         # 判据：空结果重试前必须 await asyncio.sleep（>0；生产取 0.5~1.0 的抖动区间）。
         body_room = '{"code":0,"data":{"room_id":1,"uid":2}}'
@@ -586,8 +591,8 @@ class TestBiliSpiRetryBackoff:
         # [MT-09 2026-10-18] 落点由 sp.asyncio 改成 sp 命名空间里的 asyncio 引用位（shim 见文件头）：
         # 旧形态的宿主是全进程唯一的 asyncio 本体，窗口内 loguru 边车与任何其它协程的 sleep 一并被换桩。
         with (
-            patch.object(sp, "async_req", new=_fake_req(payloads)),
-            patch.object(sp, "_cache_fetch_cookies", new=AsyncMock(return_value={})),
+            patch.object(sp.http, "request", new=_fake_req(payloads)),
+            patch.object(sp, "fetch_cookies", new=AsyncMock(return_value={})),
             patch.object(sp, "asyncio", new=_asyncio_shim(sleep=_rec_sleep)),
         ):
             # 反向见证必须落在窗口**内**才有判定力：此刻 sp.asyncio 是 shim、而 stdlib asyncio
@@ -624,7 +629,7 @@ class TestBaiduStableKey:
             },
             ensure_ascii=False,
         )
-        with patch.object(sp, "async_req", new=_fake_req({"searchbox": body})):
+        with patch.object(sp.http, "request", new=_fake_req({"searchbox": body})):
             result = await sp.get_baidu_stream_data(
                 "https://live.baidu.com/m/media/pclive/pchome/live.html?room_id=9175031377"
             )
@@ -701,7 +706,7 @@ class TestHuyaLetterRoomId:
         # → roomid=%226030242%22 → 接口恒返回空房间，所有字母号虎牙房间静默按未开播。
         seen: list[str] = []
         page = 'var h = {"ProfileRoom":"6030242","sPrivateHost":true};'
-        with patch.object(sp, "async_req", new=_huya_req(page, _HUYA_OFF, seen)):
+        with patch.object(sp.http, "request", new=_huya_req(page, _HUYA_OFF, seen)):
             result = await sp.get_huya_app_stream_url("https://www.huya.com/abcroom")
         assert result["is_live"] is False
         api_calls = [u for u in seen if "cache.php" in u]
@@ -714,7 +719,7 @@ class TestHuyaLetterRoomId:
         # 数字形态（无引号）是页面的另一形态，剥引号必须幂等、不得把它打回未开播。
         seen: list[str] = []
         page = 'var h = {"ProfileRoom":6030242,"sPrivateHost":true};'
-        with patch.object(sp, "async_req", new=_huya_req(page, _HUYA_OFF, seen)):
+        with patch.object(sp.http, "request", new=_huya_req(page, _HUYA_OFF, seen)):
             await sp.get_huya_app_stream_url("https://www.huya.com/abcroom")
         assert any("roomid=6030242" in u for u in seen), seen
 
@@ -723,7 +728,7 @@ class TestHuyaLetterRoomId:
         # 页面改版取不到 ProfileRoom：必须早抛「请使用数字房间号链接」，不得再打小程序接口。
         seen: list[str] = []
         page = "页面改版后内联结构里再无 ProfileRoom 字段"
-        with patch.object(sp, "async_req", new=_huya_req(page, _HUYA_OFF, seen)):
+        with patch.object(sp.http, "request", new=_huya_req(page, _HUYA_OFF, seen)):
             with pytest.raises(Exception, match="room_number"):
                 await _raw(sp.get_huya_app_stream_url)("https://www.huya.com/abcroom")
         assert not any("cache.php" in u for u in seen), f"反查失败仍发了接口请求: {seen}"
@@ -734,7 +739,7 @@ class TestHuyaLetterRoomId:
         # 旧实现对它照发 cache.php 请求；URL 以 / 结尾时 room_id 更是空串也照发。
         seen: list[str] = []
         page = ""
-        with patch.object(sp, "async_req", new=_huya_req(page, _HUYA_OFF, seen)):
+        with patch.object(sp.http, "request", new=_huya_req(page, _HUYA_OFF, seen)):
             with pytest.raises(Exception, match="room_number"):
                 await _raw(sp.get_huya_app_stream_url)("https://www.huya.com/12-34/")
         assert seen == [], f"非数字房间号仍发出了请求: {seen}"
@@ -744,7 +749,7 @@ class TestHuyaLetterRoomId:
         # rstrip("/") 的行为锁：同一房间带尾斜杠与不带尾斜杠必须走同一个 roomid。
         seen: list[str] = []
         page = ""
-        with patch.object(sp, "async_req", new=_huya_req(page, _HUYA_OFF, seen)):
+        with patch.object(sp.http, "request", new=_huya_req(page, _HUYA_OFF, seen)):
             await sp.get_huya_app_stream_url("https://www.huya.com/6030242/")
         assert seen and "roomid=6030242" in seen[0], seen
 
@@ -755,7 +760,7 @@ class TestHuyaLetterRoomId:
         import ast
         from pathlib import Path
 
-        root = Path(sp.__file__).resolve().parent.parent
+        root = Path(sp.__file__).resolve().parents[2]
 
         def patterns(path: Path) -> set[str]:
             tree = ast.parse(path.read_text(encoding="utf-8-sig"))
@@ -765,7 +770,7 @@ class TestHuyaLetterRoomId:
                 if isinstance(node, ast.Constant) and isinstance(node.value, str) and "ProfileRoom" in node.value
             }
 
-        main_patterns = patterns(root / "src" / "spider.py")
+        main_patterns = patterns(root / "src" / "streams/spider.py")
         twin_patterns = patterns(root / "tool" / "douyin_live_recorder_standalone.py")
         assert main_patterns, "主实现里找不到 ProfileRoom 正则常量"
         assert main_patterns == twin_patterns, f"两副本正则串不一致: {main_patterns} != {twin_patterns}"
@@ -777,7 +782,7 @@ class TestHuyaHlsOnlyCandidate:
         # 失效形态：整条 entry 的有效性由 **FLV 票据** 裁决，而 HLS 地址只依赖 sHlsUrl +
         # sHlsAntiCode → 只下发 HLS 票据的房间连 HLS 候选都被砍掉，全部线路如此即「在播但零候选」。
         entries = '{"sCdnType":"AL","sStreamName":"n1","sHlsUrl":"http://al.hls.example.com","sHlsAntiCode":"a=1"}'
-        with patch.object(sp, "async_req", new=_huya_req("", _huya_on(entries), [])):
+        with patch.object(sp.http, "request", new=_huya_req("", _huya_on(entries), [])):
             result = await sp.get_huya_app_stream_url("https://www.huya.com/12345")
         assert result["is_live"] is True
         assert result["m3u8_url"] == "http://al.hls.example.com/n1.m3u8?a=1", result
@@ -789,7 +794,7 @@ class TestHuyaHlsOnlyCandidate:
     @pytest.mark.asyncio
     async def test_flv_only_ticket_still_yields_flv_and_record(self) -> None:
         entries = '{"sCdnType":"HS","sStreamName":"n2","sFlvUrl":"http://hs.flv.example.com","sFlvAntiCode":"f=1"}'
-        with patch.object(sp, "async_req", new=_huya_req("", _huya_on(entries), [])):
+        with patch.object(sp.http, "request", new=_huya_req("", _huya_on(entries), [])):
             result = await sp.get_huya_app_stream_url("https://www.huya.com/12345")
         assert result["flv_url"] == "http://hs.flv.example.com/n2.flv?f=1", result
         assert result["record_url"] == "http://hs.flv.example.com/n2.flv?f=1", result
@@ -800,7 +805,7 @@ class TestHuyaHlsOnlyCandidate:
         # 放宽判据后必须补回这条：两路票据皆缺的 entry 不得进候选，否则会返回
         # 「is_live=True 且 m3u8_url/flv_url 全空」的坏候选（每轮白烧探针）。
         entries = '{"sCdnType":"AL","sStreamName":"n3"}'
-        with patch.object(sp, "async_req", new=_huya_req("", _huya_on(entries), [])):
+        with patch.object(sp.http, "request", new=_huya_req("", _huya_on(entries), [])):
             result = await sp.get_huya_app_stream_url("https://www.huya.com/12345")
         assert result == {"anchor_name": "虎牙主播", "is_live": True}, result
 
@@ -813,7 +818,7 @@ class TestHuyaHlsOnlyCandidate:
 class TestDouyuWebsecEncTime:
     def _patch(self, enc_key_json: str) -> Any:
         body = '{"error":0,"data":' + enc_key_json + "}"
-        return patch.object(sp, "async_req", new=_fake_req({"getEncryption": body}))
+        return patch.object(sp.http, "request", new=_fake_req({"getEncryption": body}))
 
     @pytest.mark.asyncio
     async def test_missing_enc_time_warns_and_returns_empty(self) -> None:
@@ -895,7 +900,7 @@ class TestSoopBjIdFromUrl:
             captured["data"] = kwargs.get("data")
             return body
 
-        with patch.object(sp, "async_req", new=AsyncMock(side_effect=_req)):
+        with patch.object(sp.http, "request", new=AsyncMock(side_effect=_req)):
             await _raw(sp.get_sooplive_tk)("https://www.sooplive.co.kr/play/oul282", rtype="info")
         assert "bjid=oul282" in seen[0], seen
         form = cast("dict[str, object]", captured["data"])
@@ -916,7 +921,7 @@ class TestShopeeMissingSession:
         seen: list[str] = []
         logger = _fake_logger()
         with (
-            patch.object(sp, "async_req", new=_recording_req({}, seen)),
+            patch.object(sp.http, "request", new=_recording_req({}, seen)),
             patch.object(sp, "logger", logger),
         ):
             result = await sp.get_shopee_stream_url("https://live.shopee.sg/share?from=live")
@@ -929,7 +934,7 @@ class TestShopeeMissingSession:
         # ERROR 只保留给「确实拉到会话信封、里面却没有 data」这一确定失效形态。
         logger = _fake_logger()
         with (
-            patch.object(sp, "async_req", new=_fake_req({"/session/": '{"message":"bad session"}'})),
+            patch.object(sp.http, "request", new=_fake_req({"/session/": '{"message":"bad session"}'})),
             patch.object(sp, "logger", logger),
         ):
             result = await sp.get_shopee_stream_url("https://live.shopee.sg/share?session=802458")
@@ -941,7 +946,7 @@ class TestShopeeMissingSession:
         # 空响应（风控/网络）归因走 _warn_api_abnormal，不该冒领「地址失效」这条 ERROR。
         logger = _fake_logger()
         with (
-            patch.object(sp, "async_req", new=_fake_req({"/session/": ""})),
+            patch.object(sp.http, "request", new=_fake_req({"/session/": ""})),
             patch.object(sp, "logger", logger),
         ):
             result = await sp.get_shopee_stream_url("https://live.shopee.sg/share?session=802458")
@@ -969,7 +974,7 @@ class TestLianjieQuerylessVideoUrl:
         # 记成**成功解析样本**，熔断统计看不出线路已坏。
         logger = _fake_logger()
         with (
-            patch.object(sp, "async_req", new=_fake_req({"getRoomInfo": self._body("webrtc://cdn/live/r1")})),
+            patch.object(sp.http, "request", new=_fake_req({"getRoomInfo": self._body("webrtc://cdn/live/r1")})),
             patch.object(sp, "logger", logger),
         ):
             result = await sp.get_lianjie_stream_url("https://www.lailianjie.com/r1")
@@ -982,7 +987,9 @@ class TestLianjieQuerylessVideoUrl:
         # 正常形态不得受影响：后缀插在查询串**之前**，且成功路径零告警。
         logger = _fake_logger()
         with (
-            patch.object(sp, "async_req", new=_fake_req({"getRoomInfo": self._body("webrtc://cdn/live/r1?token=x")})),
+            patch.object(
+                sp.http, "request", new=_fake_req({"getRoomInfo": self._body("webrtc://cdn/live/r1?token=x")})
+            ),
             patch.object(sp, "logger", logger),
         ):
             result = await sp.get_lianjie_stream_url("https://www.lailianjie.com/r1")
@@ -1004,7 +1011,7 @@ class TestFaceitNicknameExtraction:
         # "IndexError … in get_faceit_stream_data"，与本文件其余「if not m: raise ValueError(...)」
         # 的可读线索不同。
         seen: list[str] = []
-        with patch.object(sp, "async_req", new=_recording_req({}, seen)):
+        with patch.object(sp.http, "request", new=_recording_req({}, seen)):
             with pytest.raises(ValueError, match="Failed to find faceit nickname"):
                 await _raw(sp.get_faceit_stream_data)("https://www.faceit.com/zh/players/testuser")
         assert seen == [], f"昵称都没取到就发了请求: {seen}"
@@ -1012,7 +1019,7 @@ class TestFaceitNicknameExtraction:
     @pytest.mark.asyncio
     async def test_stream_url_still_extracted(self) -> None:
         # 反向防线：带 /stream 的正规链接不得被判成「取不到昵称」。
-        with patch.object(sp, "async_req", new=_fake_req({"nicknames": '{"payload": {"id": 7}}'})):
+        with patch.object(sp.http, "request", new=_fake_req({"nicknames": '{"payload": {"id": 7}}'})):
             result = await _raw(sp.get_faceit_stream_data)("https://www.faceit.com/zh/players/testuser/stream")
         assert result == {"anchor_name": "", "is_live": False}, result
 
@@ -1042,7 +1049,7 @@ class TestTaobaoSuccessParsing:
             return body, {}
 
         with (
-            patch.object(sp, "async_req", new=AsyncMock(side_effect=_req)),
+            patch.object(sp.http, "request", new=AsyncMock(side_effect=_req)),
             patch.object(sp, "logger", logger),
         ):
             return await sp.get_taobao_stream_url(self.URL, cookies=f"unb=1; _m_h5_tk={self.TICKET}")
@@ -1095,7 +1102,7 @@ class TestShowroomHlsAllEmptyUrl:
     ) -> dict[str, object]:
         payloads = {"live_info": self._LIVE, "streaming_url": stream_body}
         with (
-            patch.object(sp, "async_req", new=_fake_req(payloads)),
+            patch.object(sp.http, "request", new=_fake_req(payloads)),
             patch.object(sp, "logger", logger),
             patch.object(sp, "get_play_url_list", new=AsyncMock(return_value=playlist or [])),
         ):

@@ -730,11 +730,7 @@
     // [历史注 2026-09-23] 此处曾有一条「已撤下的主循环探针键 === false」分支：它读的计数字段从未在
     // main.py 定义、键永不下发，分支永不成立；「取证失败」改由两个真实信号承担：error 与 stale。
     function updateStatusWarning(s) {
-        if (!s || s.error === 'status_unavailable') {
-            showStatusWarning(t('dashboard.statusUnavailable'));
-            return;
-        }
-        if (s.stale === true) {
+        if (!s || s.error === 'status_unavailable' || s.stale === true) {
             showStatusWarning(t('dashboard.statusUnavailable'));
             return;
         }
@@ -1133,16 +1129,6 @@
         return span;
     }
 
-    // 清空并重建子节点（避免 innerHTML 拼接，画质名一律走 textContent）
-    function replaceChildren(node, children) {
-        while (node.firstChild) {
-            node.removeChild(node.firstChild);
-        }
-        for (var i = 0; i < children.length; i++) {
-            node.appendChild(children[i]);
-        }
-    }
-
     // 把当前选项渲染进三处：#room-quality 下拉、#quality-chips 标签、#quality-candidate 候选。
     // 下拉首位恒为「默认画质」（value 为空 = 不写画质段，回落到全局默认画质）。
     function renderQualityOptions() {
@@ -1160,7 +1146,7 @@
                 opt.textContent = qualityOptions[i];
                 opts.push(opt);
             }
-            replaceChildren(sel, opts);
+            sel.replaceChildren(...opts);
             sel.value = keep;
             // 选中项已被移除时 select.value 回落到空串，即「默认画质」
             if (sel.value !== keep) {
@@ -1174,7 +1160,7 @@
             for (var j = 0; j < qualityOptions.length; j++) {
                 chipNodes.push(buildQualityChip(qualityOptions[j]));
             }
-            replaceChildren(chips, chipNodes);
+            chips.replaceChildren(...chipNodes);
         }
 
         var cand = $('quality-candidate');
@@ -1194,7 +1180,7 @@
                 empty.textContent = t('rooms.qualityEmpty');
                 candOpts.push(empty);
             }
-            replaceChildren(cand, candOpts);
+            cand.replaceChildren(...candOpts);
             cand.disabled = !left.length;
             var addBtn = $('quality-add-btn');
             if (addBtn) {

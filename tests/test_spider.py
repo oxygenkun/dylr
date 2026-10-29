@@ -1,4 +1,4 @@
-# src/spider.py 回归测试：抖音（Web/APP）流地址解析路径，及各平台解析函数与容错归一化入口的行为契约。
+# src/streams/spider.py 回归测试：抖音（Web/APP）流地址解析路径，及各平台解析函数与容错归一化入口的行为契约。
 
 import ast
 import asyncio
@@ -12,8 +12,8 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 
-from src import spider as sp
-from src.spider import (
+from src.streams import spider as sp
+from src.streams.spider import (
     _extract_room_data_from_html,
     _get_str_response,
     _loads_dict,
@@ -23,7 +23,7 @@ from src.spider import (
     extract_kuaishou_eid,
     get_bilibili_room_info,
     get_bilibili_stream_data,
-    get_douyin_app_stream_data,  # noqa: E402
+    get_douyin_app_stream_data,
     get_douyin_web_stream_data,
     get_douyu_info_data,
     get_huya_stream_data,
@@ -37,9 +37,9 @@ from src.spider import (
 
 
 class TestGetStrResponse:
-    # _get_str_response：归一化 async_req 返回值（str / (body, headers) 元组 / None → 一律取字符串）。
+    # _get_str_response：归一化 request 返回值（str / (body, headers) 元组 / None → 一律取字符串）。
 
-    # _get_str_response 是 async_req 返回值的归一化入口：真实请求可能返回纯文本，也可能返回
+    # _get_str_response 是 request 返回值的归一化入口：真实请求可能返回纯文本，也可能返回
     # (响应体, 响应头) 元组（主流程靠元组透传 cookie）。下游一律按字符串处理，故须统一抽取。
 
     def test_str_input(self) -> None:
@@ -51,7 +51,7 @@ class TestGetStrResponse:
         assert _get_str_response(("body", {"cookie": "x"})) == "body"
 
     def test_none_input(self) -> None:
-        # 网络异常时 async_req 可能返回 None：须归一化为 "" 而非让下游 str() 崩
+        # 网络异常时 request 可能返回 None：须归一化为 "" 而非让下游 str() 崩
         assert _get_str_response(None) == ""
 
     def test_empty_tuple(self) -> None:
@@ -151,13 +151,13 @@ class TestGetDouyinWebStreamData:
             }
         )
         # 抖音 web API 的 room.status 字段：2=直播中、4=未开播（见 test_custom_cookies_used）。
-        # async_req 的 side_effect 顺序即 fetch 顺序：[API 响应, HEVC HTML]，本例两调都命中。
+        # request 的 side_effect 顺序即 fetch 顺序：[API 响应, HEVC HTML]，本例两调都命中。
         # 第二次请求（获取 HEVC FLV URL 的 HTML）
         html_response = "<html>no hevc stream</html>"
 
         with (
-            patch("src.spider.async_req", new_callable=AsyncMock, side_effect=[api_response, html_response]),
-            patch("src.spider._ensure_ttwid", new_callable=AsyncMock, return_value="ttwid=fake_ttwid"),
+            patch("src.network.http.request", new_callable=AsyncMock, side_effect=[api_response, html_response]),
+            patch("src.streams.spider.get_ttwid", new_callable=AsyncMock, return_value="ttwid=fake_ttwid"),
         ):
             result = await get_douyin_web_stream_data("https://live.douyin.com/7318293442")
 
@@ -183,12 +183,12 @@ class TestGetDouyinWebStreamData:
 
         with (
             patch(
-                "src.spider.async_req",
+                "src.network.http.request",
                 new_callable=AsyncMock,
                 side_effect=["", "", valid_html],  # 两次API空响应 + HTML回退
             ),
-            patch("src.spider._ensure_ttwid", new_callable=AsyncMock, return_value="ttwid=fake"),
-            patch("src.spider.asyncio.sleep", new_callable=AsyncMock),
+            patch("src.streams.spider.get_ttwid", new_callable=AsyncMock, return_value="ttwid=fake"),
+            patch("src.streams.spider.asyncio.sleep", new_callable=AsyncMock),
         ):
             result = await get_douyin_web_stream_data("https://live.douyin.com/7318293442")
 
@@ -202,12 +202,12 @@ class TestGetDouyinWebStreamData:
 
         with (
             patch(
-                "src.spider.async_req",
+                "src.network.http.request",
                 new_callable=AsyncMock,
                 side_effect=[error_response, error_response, "<html>no data</html>"],
             ),
-            patch("src.spider._ensure_ttwid", new_callable=AsyncMock, return_value="ttwid=fake"),
-            patch("src.spider.asyncio.sleep", new_callable=AsyncMock),
+            patch("src.streams.spider.get_ttwid", new_callable=AsyncMock, return_value="ttwid=fake"),
+            patch("src.streams.spider.asyncio.sleep", new_callable=AsyncMock),
         ):
             result = await get_douyin_web_stream_data("https://live.douyin.com/7318293442")
 
@@ -215,7 +215,7 @@ class TestGetDouyinWebStreamData:
 
     @pytest.mark.asyncio
     async def test_custom_cookies_used(self) -> None:
-        # 正常路径：传入自定义cookies时不再调用_ensure_ttwid。
+        # 正常路径：传入自定义cookies时不再调用get_ttwid。
         api_response = json.dumps(
             {
                 "status_code": 0,
@@ -228,8 +228,8 @@ class TestGetDouyinWebStreamData:
 
         mock_ttwid = AsyncMock(return_value="ttwid=should_not_be_called")
         with (
-            patch("src.spider.async_req", new_callable=AsyncMock, return_value=api_response),
-            patch("src.spider._ensure_ttwid", mock_ttwid),
+            patch("src.network.http.request", new_callable=AsyncMock, return_value=api_response),
+            patch("src.streams.spider.get_ttwid", mock_ttwid),
         ):
             result = await get_douyin_web_stream_data("https://live.douyin.com/7318293442", cookies="custom_cookie=abc")
 
@@ -247,8 +247,8 @@ class TestGetDouyinWebStreamData:
         )
         logger = _LogSpy()
         with (
-            patch("src.spider.async_req", new_callable=AsyncMock, return_value=api_response) as mock_req,
-            patch("src.spider.logger", logger),
+            patch("src.network.http.request", new_callable=AsyncMock, return_value=api_response) as mock_req,
+            patch("src.streams.spider.logger", logger),
         ):
             result = await get_douyin_web_stream_data(
                 "https://live.douyin.com/52979775590", cookies="custom_cookie=abc"
@@ -265,9 +265,9 @@ class TestGetDouyinWebStreamData:
         api_response = json.dumps({"status_code": 0, "data": {"data": [], "user": {"nickname": "N"}}})
         logger = _LogSpy()
         with (
-            patch("src.spider.async_req", new_callable=AsyncMock, return_value=api_response),
-            patch("src.spider.logger", logger),
-            patch("src.spider.asyncio.sleep", new_callable=AsyncMock),
+            patch("src.network.http.request", new_callable=AsyncMock, return_value=api_response),
+            patch("src.streams.spider.logger", logger),
+            patch("src.streams.spider.asyncio.sleep", new_callable=AsyncMock),
         ):
             result = await get_douyin_web_stream_data("https://live.douyin.com/745964462470", cookies="c=1")
 
@@ -283,7 +283,9 @@ class TestGetDouyinAppStreamData:
         # 正常路径：live.douyin.com 链接直接委托给 get_douyin_web_stream_data。
         expected = {"status": 2, "anchor_name": "主播", "stream_url": {}}
 
-        with patch("src.spider.get_douyin_web_stream_data", new_callable=AsyncMock, return_value=expected) as mock_web:
+        with patch(
+            "src.streams.spider.get_douyin_web_stream_data", new_callable=AsyncMock, return_value=expected
+        ) as mock_web:
             result = await get_douyin_app_stream_data("https://live.douyin.com/7318293442")
 
         mock_web.assert_called_once_with("https://live.douyin.com/7318293442", None, None)
@@ -311,12 +313,12 @@ class TestGetDouyinAppStreamData:
 
         with (
             patch(
-                "src.spider.get_sec_user_id",
+                "src.streams.spider.get_sec_user_id",
                 new_callable=AsyncMock,
                 return_value=("7318293442", "MS4wLjABAAAA_sec"),
             ),
-            patch("src.spider.async_req", new_callable=AsyncMock, return_value=app_response),
-            patch("src.spider._ensure_ttwid", new_callable=AsyncMock, return_value="ttwid=fake"),
+            patch("src.network.http.request", new_callable=AsyncMock, return_value=app_response),
+            patch("src.streams.spider.get_ttwid", new_callable=AsyncMock, return_value="ttwid=fake"),
         ):
             result = await get_douyin_app_stream_data("https://v.douyin.com/iQLgKSj/")
 
@@ -328,12 +330,12 @@ class TestGetDouyinAppStreamData:
         # 异常路径：所有解析路径失败，返回空anchor_name字典。
         with (
             patch(
-                "src.spider.get_sec_user_id",
+                "src.streams.spider.get_sec_user_id",
                 new_callable=AsyncMock,
                 side_effect=Exception("network error"),
             ),
-            patch("src.spider._ensure_ttwid", new_callable=AsyncMock, return_value="ttwid=fake"),
-            patch("src.spider.is_user_homepage_url", return_value=False),
+            patch("src.streams.spider.get_ttwid", new_callable=AsyncMock, return_value="ttwid=fake"),
+            patch("src.streams.spider.is_user_homepage_url", return_value=False),
         ):
             result = await get_douyin_app_stream_data("https://v.douyin.com/invalid/")
 
@@ -364,7 +366,7 @@ class TestExtractRoomDataFromHtml:
             '\\"roomStore\\":' + room_store + ',"linkmicStore":{}}]\\n"])</script>'
         )
         logger = _LogSpy()
-        with patch("src.spider.logger", logger):
+        with patch("src.streams.spider.logger", logger):
             result = _extract_room_data_from_html(html)
 
         assert result["status"] == 4, result
@@ -438,7 +440,7 @@ class TestGetPlayUrlList:
     async def test_https_urls(self) -> None:
         # 提取以 https:// 开头的 URL.
         m3u8_content = "#EXTM3U\nhttps://cdn.example.com/stream1.m3u8\nhttps://cdn.example.com/stream2.m3u8"
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=m3u8_content):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=m3u8_content):
             result = await get_play_url_list("https://example.com/master.m3u8")
             assert len(result) == 2
             assert "stream1.m3u8" in result[0]
@@ -447,21 +449,21 @@ class TestGetPlayUrlList:
     async def test_relative_m3u8_urls(self) -> None:
         # 提取相对路径 m3u8.
         m3u8_content = "#EXTM3U\nstream1.m3u8\nstream2.m3u8"
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=m3u8_content):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=m3u8_content):
             result = await get_play_url_list("https://example.com/master.m3u8")
             assert len(result) == 2
 
     @pytest.mark.asyncio
     async def test_empty_response(self) -> None:
         # 空响应返回空列表.
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=""):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=""):
             result = await get_play_url_list("https://example.com/master.m3u8")
             assert result == []
 
     @pytest.mark.asyncio
     async def test_non_string_response(self) -> None:
         # 非字符串响应返回空列表.
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value={"error": "bad"}):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value={"error": "bad"}):
             result = await get_play_url_list("https://example.com/master.m3u8")
             assert result == []
 
@@ -472,7 +474,7 @@ class TestGetPlayUrlList:
             "#EXTINF:10\n#EXT-X-BANDWIDTH=1000000\nhttps://cdn.example.com/low.m3u8\n"
             "#EXTINF:10\n#EXT-X-BANDWIDTH=5000000\nhttps://cdn.example.com/high.m3u8"
         )
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=m3u8_content):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=m3u8_content):
             result = await get_play_url_list("https://example.com/master.m3u8")
             assert len(result) == 2
             assert "high" in result[0]
@@ -484,14 +486,14 @@ class TestKuaishouStreamData:
     @pytest.mark.asyncio
     async def test_network_error_returns_not_live(self) -> None:
         # 网络异常返回 is_live=False.
-        with patch("src.spider.async_req", new_callable=AsyncMock, side_effect=Exception("network error")):
+        with patch("src.network.http.request", new_callable=AsyncMock, side_effect=Exception("network error")):
             result = await get_kuaishou_stream_data("https://live.kuaishou.com/u/testuser")
             assert result["is_live"] is False
 
     @pytest.mark.asyncio
     async def test_no_initial_state_returns_not_live(self) -> None:
         # 无 __INITIAL_STATE__ 返回 is_live=False.
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value="<html>no data</html>"):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value="<html>no data</html>"):
             result = await get_kuaishou_stream_data("https://live.kuaishou.com/u/testuser")
             assert result["is_live"] is False
 
@@ -502,7 +504,7 @@ class TestHuyaStreamData:
     @pytest.mark.asyncio
     async def test_no_stream_data_returns_empty(self) -> None:
         # 无流数据时装饰器捕获异常，返回空字典。
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value="<html>no stream</html>"):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value="<html>no stream</html>"):
             result = await get_huya_stream_data("https://www.huya.com/12345")
             assert result == {"is_live": False}
 
@@ -510,7 +512,7 @@ class TestHuyaStreamData:
     async def test_successful_parse(self) -> None:
         # 正常解析虎牙流数据.
         html = 'stream: {"data":{"gameStreamInfoList":[]}},"iWebDefaultBitRate"'
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=html):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=html):
             result = await get_huya_stream_data("https://www.huya.com/12345")
             assert isinstance(result, dict)
 
@@ -532,7 +534,7 @@ class TestDouyuInfoData:
                 }
             }
         )
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=betard_response):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=betard_response):
             result = await get_douyu_info_data("https://www.douyu.com/3125893?rid=3125893")
             assert result["anchor_name"] == "斗鱼主播"
             assert result["is_live"] is True
@@ -551,7 +553,7 @@ class TestDouyuInfoData:
                 }
             }
         )
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=betard_response):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=betard_response):
             result = await get_douyu_info_data("https://www.douyu.com/123")
             assert result["is_live"] is False
 
@@ -562,7 +564,7 @@ class TestNeteaseStreamData:
     @pytest.mark.asyncio
     async def test_no_next_data_returns_empty(self) -> None:
         # 无 __NEXT_DATA__ 时装饰器捕获异常，返回空字典。
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value="<html>no data</html>"):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value="<html>no data</html>"):
             result = await get_netease_stream_data("https://cc.163.com/12345")
             assert result == {"is_live": False}
 
@@ -587,7 +589,7 @@ class TestNeteaseStreamData:
         }
         # 注意正则要求 </script></body> 紧跟在 JSON 后面，且 id 和 crossorigin 之间需要其他属性
         html = f'<script id="__NEXT_DATA__" type="application/json" crossorigin="anonymous">{json.dumps(next_data)}</script></body>'
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=html):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=html):
             result = await get_netease_stream_data("https://cc.163.com/12345")
             assert result["is_live"] is True
             assert result["anchor_name"] == "网易主播"
@@ -599,7 +601,7 @@ class TestQiandureboStreamData:
     @pytest.mark.asyncio
     async def test_no_user_data(self) -> None:
         # 无用户数据返回空.
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value="<html>no user</html>"):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value="<html>no user</html>"):
             result = await get_qiandurebo_stream_data("https://qiandurebo.com/web/index.php?room=123")
             assert result["is_live"] is False
 
@@ -614,7 +616,7 @@ class TestQiandureboStreamData:
             '  "other": "val",\r\n'
             "  user.play_url"
         )
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=html):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=html):
             result = await get_qiandurebo_stream_data("https://qiandurebo.com/web/index.php?room=123")
             # 正则 "zb_nickname": "(.*?)",\r\n 提取昵称
             assert result["anchor_name"] == "热播主播"
@@ -628,7 +630,7 @@ class TestBilibiliRoomInfo:
     @pytest.mark.asyncio
     async def test_error_returns_empty(self) -> None:
         # 异常返回空 anchor_name.
-        with patch("src.spider.async_req", new_callable=AsyncMock, side_effect=Exception("network")):
+        with patch("src.network.http.request", new_callable=AsyncMock, side_effect=Exception("network")):
             result = await get_bilibili_room_info("https://live.bilibili.com/26066074")
             assert result["anchor_name"] == ""
             assert result["live_status"] is False
@@ -641,7 +643,7 @@ class TestBilibiliRoomInfo:
         h5_resp = json.dumps({"data": {"room_info": {"title": "测试标题"}}})
 
         with patch(
-            "src.spider.async_req",
+            "src.network.http.request",
             new_callable=AsyncMock,
             side_effect=[init_resp, master_resp, h5_resp],
         ):
@@ -665,7 +667,7 @@ class TestBilibiliStreamData:
                 },
             }
         )
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=resp):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=resp):
             result = await get_bilibili_stream_data("https://live.bilibili.com/26066074")
             assert result is not None
             # 精确钉死返回的 gotcha CDN 地址，验证优先选择逻辑而非含糊子串匹配。
@@ -684,7 +686,7 @@ class TestBilibiliStreamData:
             }
         )
         with patch(
-            "src.spider.async_req",
+            "src.network.http.request",
             new_callable=AsyncMock,
             side_effect=[play_url_resp, room_info_resp],
         ):
@@ -696,12 +698,12 @@ class TestBilibiliStreamData:
         # 空 durl 列表返回 None.
         resp = json.dumps({"code": 0, "data": {"durl": []}})
         room_info = json.dumps({"data": {"live_status": 0, "playurl_info": {"playurl": {"stream": []}}}})
-        with patch("src.spider.async_req", new_callable=AsyncMock, side_effect=[resp, room_info]):
+        with patch("src.network.http.request", new_callable=AsyncMock, side_effect=[resp, room_info]):
             result = await get_bilibili_stream_data("https://live.bilibili.com/26066074")
             assert result is None
 
 
-# ─── WP-A（2026-09-29）：src/spider.py 安全收口回归锁 ──────────────────────
+# ─── WP-A（2026-09-29）：src/streams/spider.py 安全收口回归锁 ──────────────────────
 # 覆盖 docs/worklog/CODE_REVIEW_2026-09-29_2.md 的 M-3 / M-4 / M-8 / M-9 / M-10。
 # S-1（Shopee 落地页域族白名单 + 凭据收口 + api_host 闸）单独落在
 # tests/test_shopee_landing_guard.py。
@@ -769,7 +771,7 @@ class TestM3RoomPasswordNotInErrorPaths:
             seen.append(url)
             return bodies[len(seen) - 1]
 
-        monkeypatch.setattr(sp, "async_req", fake_req)
+        monkeypatch.setattr(sp.http, "request", fake_req)
         raw = _unwrap(sp.get_pandatv_stream_data)
         with pytest.raises(RuntimeError) as excinfo:
             await raw("https://www.pandalive.co.kr/play/abc123?pwd=ROOM-SECRET-PW")
@@ -784,7 +786,7 @@ class TestM3RoomPasswordNotInErrorPaths:
     async def test_winktv_needadult_raises_with_masked_room_password(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # bj 信息用替身（同文件既有做法），聚焦本函数的 raise 现场
         monkeypatch.setattr(sp, "get_winktv_bj_info", AsyncMock(return_value=("主播-1", True)))
-        monkeypatch.setattr(sp, "async_req", AsyncMock(return_value='{"errorData": {"code": "needAdult"}}'))
+        monkeypatch.setattr(sp.http, "request", AsyncMock(return_value='{"errorData": {"code": "needAdult"}}'))
         raw = _unwrap(sp.get_winktv_stream_data)
         with pytest.raises(RuntimeError) as excinfo:
             await raw("https://www.winktv.co.kr/play/xyz?pwd=ROOM-SECRET-PW")
@@ -796,7 +798,7 @@ class TestM3RoomPasswordNotInErrorPaths:
 
     @pytest.mark.asyncio
     async def test_twitcasting_malformed_url_masks_query_credentials(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(sp, "async_req", AsyncMock(return_value=""))
+        monkeypatch.setattr(sp.http, "request", AsyncMock(return_value=""))
         raw = _unwrap(sp.get_twitcasting_stream_url)
         with pytest.raises(RuntimeError) as excinfo:
             await raw("https://twitcasting.tv//?token=RAW-TOKEN")
@@ -805,7 +807,7 @@ class TestM3RoomPasswordNotInErrorPaths:
 
     @pytest.mark.asyncio
     async def test_weibo_malformed_url_masks_query_credentials(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(sp, "async_req", AsyncMock(return_value=""))
+        monkeypatch.setattr(sp.http, "request", AsyncMock(return_value=""))
         raw = _unwrap(sp.get_weibo_stream_data)
         with pytest.raises(RuntimeError) as excinfo:
             await raw("https://weibo.com/x?cookie=RAW-COOKIE")
@@ -817,7 +819,7 @@ class TestM3RoomPasswordNotInErrorPaths:
         # 抖音两处 raise（web/enter 的 inner_list 为空）走的是「异常文本进 logger.error」这条路。
         body = '{"status_code": 0, "data": {"data": [], "user": {"nickname": "N"}}}'
         logger = _LogSpy()
-        monkeypatch.setattr(sp, "async_req", AsyncMock(return_value=body))
+        monkeypatch.setattr(sp.http, "request", AsyncMock(return_value=body))
         monkeypatch.setattr(sp, "logger", logger)
 
         result = await sp.get_douyin_web_stream_data("https://live.douyin.com/745964462470?ttwid=RAW-TTWID")
@@ -855,7 +857,7 @@ class TestM3RoomPasswordNotInErrorPaths:
 
 
 class TestM4PopkontvLoginErrorMasking:
-    # M-4：login_popkontv 是全文件唯一**绕过 async_req** 的生产 httpx 请求，
+    # M-4：login_popkontv 是全文件唯一**绕过 request** 的生产 httpx 请求，
     # 因此拿不到 async_http 那条「异常文本一律过 mask_credentials」的现成防线。
     # httpx/urllib3 的代理异常原文里内嵌含 user:pass@ 的代理 URL。
 
@@ -900,7 +902,7 @@ class TestM4PopkontvLoginErrorMasking:
 
 class TestM8ProxyScopedCredentialCaches:
     # M-8：进程级凭据快路此前只判「非空 + TTL」，不判 proxy → 代理 A 取到的设备标识
-    # 在有效期内被代理 B 的房间复用（同 src/ttwid.py 的 MIN-2220 已修形态）。
+    # 在有效期内被代理 B 的房间复用（同 src/streams/ttwid.py 的 MIN-2220 已修形态）。
 
     def test_kuaishou_did_fast_path_requires_same_proxy(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(sp, "_cached_kuaishou_did", "did=A")
@@ -931,7 +933,7 @@ class TestM8ProxyScopedCredentialCaches:
         monkeypatch.setattr(sp, "_cached_kuaishou_did", "did=A")
         monkeypatch.setattr(sp, "_cached_kuaishou_did_ts", time.monotonic())
         monkeypatch.setattr(sp, "_cached_kuaishou_did_proxy", "http://a:8080")
-        monkeypatch.setattr(sp, "_cache_fetch_cookies", fake_fetch_cookies)
+        monkeypatch.setattr(sp, "fetch_cookies", fake_fetch_cookies)
 
         got = await sp._ensure_kuaishou_did("http://b:8080")
 
@@ -947,7 +949,7 @@ class TestM8ProxyScopedCredentialCaches:
         monkeypatch.setattr(sp, "_cached_kuaishou_did", "did=A")
         monkeypatch.setattr(sp, "_cached_kuaishou_did_ts", time.monotonic())
         monkeypatch.setattr(sp, "_cached_kuaishou_did_proxy", "http://a:8080")
-        monkeypatch.setattr(sp, "_cache_fetch_cookies", dead_fetch)
+        monkeypatch.setattr(sp, "fetch_cookies", dead_fetch)
 
         assert await sp._ensure_kuaishou_did("http://b:8080") == ""
 
@@ -991,7 +993,7 @@ class TestM8ProxyScopedCredentialCaches:
 
         monkeypatch.setattr(sp, "_bili_buvid_cached", "BUVID-A")
         monkeypatch.setattr(sp, "_bili_buvid_cached_proxy", "http://a:8080")
-        monkeypatch.setattr(sp, "async_req", fake_req)
+        monkeypatch.setattr(sp.http, "request", fake_req)
 
         info = await sp.get_bilibili_danmaku_info("https://live.bilibili.com/462", proxy_addr="http://b:8080")
 
@@ -1008,7 +1010,7 @@ class TestM9AnchorNameNeverNone:
     @pytest.mark.asyncio
     async def test_douyin_web_null_nickname_yields_empty_string(self, monkeypatch: pytest.MonkeyPatch) -> None:
         body = '{"status_code": 0, "data": {"data": [{"status": 4, "room_id": 1}], "user": {"nickname": null}}}'
-        monkeypatch.setattr(sp, "async_req", AsyncMock(return_value=body))
+        monkeypatch.setattr(sp.http, "request", AsyncMock(return_value=body))
         monkeypatch.setattr(sp, "logger", _LogSpy())
 
         result = await sp.get_douyin_web_stream_data("https://live.douyin.com/745964462470", cookies="c=1")
@@ -1023,7 +1025,7 @@ class TestM9AnchorNameNeverNone:
         # （页面把整段状态截到这里），截出的片段补 1 个右花括号后才是 play_list。
         inline = '{"liveStream": {"hls": "http://p/1.m3u8"}, "author": {"name": null},"gameInfo": {}}'
         html = f"<html><script>window.__INITIAL_STATE__={inline};(function(){{var s;</script></html>"
-        monkeypatch.setattr(sp, "async_req", AsyncMock(return_value=html))
+        monkeypatch.setattr(sp.http, "request", AsyncMock(return_value=html))
         monkeypatch.setattr(sp, "logger", _LogSpy())
 
         result = await sp.get_kuaishou_stream_data("https://live.kuaishou.com/u/testuser", cookies="c=1")
@@ -1035,7 +1037,7 @@ class TestM9AnchorNameNeverNone:
     async def test_huya_app_null_nick_yields_empty_string(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # 房间号必须是纯数字尾段（字母号会先进反查分支、非数字直接早抛，见 MIN-2201）。
         body = '{"data": {"profileInfo": {"nick": null}, "realLiveStatus": "OFF"}}'
-        monkeypatch.setattr(sp, "async_req", AsyncMock(return_value=body))
+        monkeypatch.setattr(sp.http, "request", AsyncMock(return_value=body))
         monkeypatch.setattr(sp, "logger", _LogSpy())
 
         result = await sp.get_huya_app_stream_url("https://www.huya.com/6030242", cookies="c=1")
@@ -1068,7 +1070,7 @@ class TestM9AnchorNameNeverNone:
             + json.dumps(next_data)
             + "</script></body>"
         )
-        monkeypatch.setattr(sp, "async_req", AsyncMock(return_value=html))
+        monkeypatch.setattr(sp.http, "request", AsyncMock(return_value=html))
         monkeypatch.setattr(sp, "logger", _LogSpy())
 
         result = await sp.get_netease_stream_data("https://cc.163.com/12345", cookies="c=1")
@@ -1078,7 +1080,7 @@ class TestM9AnchorNameNeverNone:
 
 
 class TestTwitCastingParseFailureLoginFallback:
-    # M-10（回归锁，src/spider.py 的 except AttributeError, ValueError 分支）：
+    # M-10（回归锁，src/streams/spider.py 的 except AttributeError, ValueError 分支）：
     # get_data 在四个正则任一未命中时**显式** raise ValueError("Failed to parse page data")，
     # 而受限房的登录回退此前只接 AttributeError → 注释承诺的「解析失败→登录重试」是死分支，
     # 页面改版/成人房一律判未开播、登录态永远用不上。
@@ -1086,7 +1088,7 @@ class TestTwitCastingParseFailureLoginFallback:
     # 删掉即变红（装饰器会把 ValueError 吞成 {"is_live": False}，login 一次也不会调用）。
 
     _GOOD_HTML = (
-        # 四个正则的共同现场（模式串见 src/spider.py::get_twitcasting_stream_url 的 get_data）：
+        # 四个正则的共同现场（模式串见 src/streams/spider.py::get_twitcasting_stream_url 的 get_data）：
         # <title> 段要求 `主播名 (@账号)  的直播 - Twit`（括号 + 两个空格），
         # twitter:title 与 data-is-onlive 之后都必须紧跟**换行 + 空白**再接下一个属性。
         "<html><head><title>主播 (@tcuser)  的直播 - Twit</title>\n"
@@ -1103,7 +1105,7 @@ class TestTwitCastingParseFailureLoginFallback:
         sent: list[dict[str, Any]] = []
 
         async def fake_req(*args: object, **kwargs: object) -> str:
-            # kwargs 的值类型是 object（打桩签名与生产 async_req 的宽签名对齐），此处要进
+            # kwargs 的值类型是 object（打桩签名与生产 request 的宽签名对齐），此处要进
             # dict[str, str] 的 sent 列表，必须显式 cast 收窄——不收窄则 mypy 在 warn_return_any
             # 之外还会报 dict(object) 无匹配重载，而 Any 会顺带关掉整条属性链的检查。
             headers = cast(dict[str, str], kwargs.get("headers") or {})
@@ -1112,7 +1114,7 @@ class TestTwitCastingParseFailureLoginFallback:
             return "" if len(sent) == 1 else self._GOOD_HTML
 
         login = AsyncMock(return_value="TC_COOKIE=1")
-        monkeypatch.setattr(sp, "async_req", fake_req)
+        monkeypatch.setattr(sp.http, "request", fake_req)
         monkeypatch.setattr(sp, "login_twitcasting", login)
         monkeypatch.setattr(sp, "logger", _LogSpy())
 
@@ -1129,7 +1131,7 @@ class TestTwitCastingParseFailureLoginFallback:
         async def fake_req(*args: object, **kwargs: object) -> str:
             return ""
 
-        monkeypatch.setattr(sp, "async_req", fake_req)
+        monkeypatch.setattr(sp.http, "request", fake_req)
         monkeypatch.setattr(sp, "login_twitcasting", AsyncMock(return_value=None))
         monkeypatch.setattr(sp, "logger", _LogSpy())
 
@@ -1175,7 +1177,7 @@ class TestL09KuaishouEidExtraction:
             sent.append({"url": str(kwargs.get("url") or (args[0] if args else "")), "data": kwargs.get("data")})
             return '{"code":0,"data":{"liveStream":{}}}'
 
-        monkeypatch.setattr(sp, "async_req", fake_req)
+        monkeypatch.setattr(sp.http, "request", fake_req)
         monkeypatch.setattr(sp, "_ensure_kuaishou_did", AsyncMock(return_value="did=abc"))
         fallback = AsyncMock(return_value={"is_live": False})
         monkeypatch.setattr(sp, "get_kuaishou_stream_data", fallback)
@@ -1251,7 +1253,7 @@ class TestL08BiliBuvidNeverLoggedInClear:
     async def test_cookie_buvid_debug_line_has_no_plaintext(self, monkeypatch: pytest.MonkeyPatch) -> None:
         spy = _LogSpy()
         monkeypatch.setattr(sp, "logger", spy)
-        monkeypatch.setattr(sp, "async_req", self._fake_req('{"code":0,"data":{"b_3":"SHOULD-NOT-BE-USED"}}'))
+        monkeypatch.setattr(sp.http, "request", self._fake_req('{"code":0,"data":{"b_3":"SHOULD-NOT-BE-USED"}}'))
 
         info = await sp.get_bilibili_danmaku_info(
             "https://live.bilibili.com/462", cookies=f"buvid3={self._COOKIE_BUVID};SESSDATA=rawsess"
@@ -1280,11 +1282,11 @@ class TestL08BiliBuvidNeverLoggedInClear:
         async def fake_home_cookies(*args: object, **kwargs: object) -> dict[str, str]:
             return {"buvid3": secret}
 
-        monkeypatch.setattr(sp, "_cache_fetch_cookies", fake_home_cookies)
+        monkeypatch.setattr(sp, "fetch_cookies", fake_home_cookies)
         spy = _LogSpy()
         monkeypatch.setattr(sp, "logger", spy)
         # spi 两跳皆空（风控 200+空 body 的主形态）→ 落到首页 Set-Cookie 兜底那条 debug
-        monkeypatch.setattr(sp, "async_req", self._fake_req('{"code":0,"data":{}}'))
+        monkeypatch.setattr(sp.http, "request", self._fake_req('{"code":0,"data":{}}'))
 
         info = await sp.get_bilibili_danmaku_info("https://live.bilibili.com/462")
 

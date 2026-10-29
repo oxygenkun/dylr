@@ -10,9 +10,9 @@
 # ① 不设变量时行为与上游逐字一致（面板默认停止态）；② 设了真值才开录，
 # 且 0/false/no 之类必须回落停止态——否则一台机器设过 0 也会偷偷开录。
 #
-# 被测对象是 web.py::main 的接线：`import main` / `uvicorn` / `src.web_api` 统一换成
+# 被测对象是 web.py::main 的接线：`import main` / `uvicorn` / `src.api.routes` 统一换成
 # sys.modules 替身（与被测文件同目录的 test_web_background_gate_order.py 同法），
-# read_web_config 走 src/web_config.py 真实实现——在测试里重写它等于假绿。
+# read_web_config 走 src/api/config.py 真实实现——在测试里重写它等于假绿。
 
 import io
 import sys
@@ -23,6 +23,7 @@ from typing import Any
 
 import pytest
 
+import src.recording
 from src import web
 
 _ENV_KEY = "DOUYIN_WEB_AUTO_START_RECORDING"
@@ -41,6 +42,9 @@ class _FakeEngineModule:
 
     def main(self, **kwargs: Any) -> None:
         self.engine_kwargs.append(kwargs)
+
+    def initialize_process(self) -> None:
+        return None
 
     def cleanup_all_ffmpeg_processes(self) -> None:
         return None
@@ -76,14 +80,15 @@ def _run_web_main(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, env_value: st
     cfg = _write_web_config(tmp_path)
     engine = _FakeEngineModule(tmp_path, cfg)
 
-    monkeypatch.setitem(sys.modules, "src.main", engine)
+    monkeypatch.setitem(sys.modules, "src.recording.engine", engine)
     import src
 
-    monkeypatch.setattr(src, "main", engine, raising=False)
+    monkeypatch.setattr(src.recording, "engine", engine, raising=False)
+    monkeypatch.setattr(src.recording, "state", engine)
     monkeypatch.setitem(sys.modules, "uvicorn", types.SimpleNamespace(Server=_FakeServer, Config=lambda *a, **kw: None))
-    monkeypatch.setitem(sys.modules, "src.web_api", types.SimpleNamespace(create_app=lambda **kwargs: None))
+    monkeypatch.setitem(sys.modules, "src.api.routes", types.SimpleNamespace(create_app=lambda **kwargs: None))
     # 退出链的 HTTP 连接池收尾：替身避免测试里创建真实 httpx 客户端。
-    monkeypatch.setitem(sys.modules, "src.async_http", types.SimpleNamespace(close_all_clients_sync=lambda: None))
+    monkeypatch.setitem(sys.modules, "src.network.http", types.SimpleNamespace(close_clients=lambda: None))
     monkeypatch.setattr(sys, "stdout", io.StringIO())
     monkeypatch.setattr(sys, "stderr", io.StringIO())
     if env_value is None:

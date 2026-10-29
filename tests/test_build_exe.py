@@ -252,7 +252,7 @@ def test_release_cleaner_removes_runtime_artifacts_and_keeps_payload(
         (f"{build_exe.APP_NAME}/_internal/src/__pycache__/utils.cpython-314.pyc", True),
         ("logs/web_console.log", True),
         (f"{build_exe.APP_NAME}/config/config.ini", False),
-        (f"{build_exe.APP_NAME}/_internal/src/utils.py", False),
+        (f"{build_exe.APP_NAME}/_internal/src/support/utils.py", False),
         (f"{build_exe.APP_NAME}/_internal/web/logs_note.js", False),
         (f"{build_exe.APP_NAME}/", False),
     ],
@@ -481,7 +481,9 @@ def test_smoke_load_config_still_reads_valid_checks(tmp_path: Path) -> None:
 
 
 def _production_import_names() -> set[str]:
-    files = [ROOT / name for name in ("src/main.py", "src/web.py", "src/i18n.py", "src/msg_push.py")]
+    files = [
+        ROOT / name for name in ("src/main.py", "src/web.py", "src/support/i18n.py", "src/notifications/msg_push.py")
+    ]
     files += sorted((ROOT / "src").rglob("*.py"))
     names: set[str] = set()
     for path in files:

@@ -13,16 +13,19 @@
 
 import ast
 import configparser
+import types
 from pathlib import Path
 from typing import Any
 
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-MAIN_FILE = REPO_ROOT / "src/main.py"
+MAIN_FILE = REPO_ROOT / "src/recording/engine.py"
 CONFIG_FILE = REPO_ROOT / "config" / "config.ini"
 # utf-8-sig：与本仓其它直接读 main.py 源码的检查用例同口径（BOM 存在时不污染首行 token）。
-MAIN_SRC = MAIN_FILE.read_text(encoding="utf-8-sig")
+MAIN_SRC = "\n".join(
+    path.read_text(encoding="utf-8-sig") for path in (MAIN_FILE, REPO_ROOT / "src/recording/session.py")
+)
 
 _ASSIGNS: dict[str, list[ast.Assign]] | None = None
 
@@ -35,8 +38,12 @@ def _assign_nodes(name: str) -> list[ast.Assign]:
         for node in ast.walk(ast.parse(MAIN_SRC)):
             if isinstance(node, ast.Assign):
                 for target in node.targets:
-                    if isinstance(target, ast.Name):
-                        bucket.setdefault(target.id, []).append(node)
+                    if (
+                        isinstance(target, ast.Attribute)
+                        and isinstance(target.value, ast.Name)
+                        and target.value.id == "state"
+                    ):
+                        bucket.setdefault(target.attr, []).append(node)
         _ASSIGNS = bucket
     return _ASSIGNS.get(name, [])
 
@@ -61,9 +68,9 @@ def _value_segment(name: str) -> str:
 
 def _parse(raw: str) -> list[str]:
     # 用生产表达式原文编译执行，只把左侧的输入字符串换成用例值。
-    namespace: dict[str, Any] = {"danmaku_platforms_str": raw}
+    namespace: dict[str, Any] = {"danmaku_platforms_str": raw, "state": types.SimpleNamespace()}
     exec(compile(_assign_segment(), "<danmaku_platforms>", "exec"), namespace)  # noqa: S102
-    value: Any = namespace["danmaku_platforms"]
+    value: Any = namespace["state"].danmaku_platforms
     assert isinstance(value, list), f"生产表达式应产出 list，实为 {type(value).__name__}"
     return [str(item) for item in value]
 
@@ -132,7 +139,7 @@ class TestMembershipHits:
             if isinstance(node, ast.Compare) and isinstance(node.ops[0], ast.In):
                 left = ast.unparse(node.left)
                 rights = [ast.unparse(r) for r in node.comparators]
-                if left == "platform" and "danmaku_platforms" in rights:
+                if left == "platform" and "state.danmaku_platforms" in rights:
                     hit = True
         assert hit, "src/main.py 里找不到 `platform in danmaku_platforms` 匹配点（接线形态已变化，需复核本锁）"
 

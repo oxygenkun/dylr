@@ -191,7 +191,7 @@ def load_config(path: str) -> tuple[list[CheckConfig], str | None]:
 def _resolve_url(check: CheckConfig, base_url: str | None) -> str:
     raw = cast(str, check.get("url") or check.get("path") or "/")
     # 已是完整地址直接返回，不做 base_url 拼接（避免把绝对 URL 误拼成 base_url+url 的无效地址）。
-    if raw.startswith("http://") or raw.startswith("https://"):
+    if raw.startswith(("http://", "https://")):
         return raw
     if base_url:
         return base_url.rstrip("/") + "/" + raw.lstrip("/")

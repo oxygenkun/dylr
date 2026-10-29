@@ -26,7 +26,7 @@ from typing import cast
 
 import pytest
 
-from src.web_config import SENSITIVE_MASK, append_config_line, is_sensitive_item
+from src.api.config import SENSITIVE_MASK, append_config_line, is_sensitive_item
 
 _BASE_URL = "http://127.0.0.1:8000"
 # 各 fixture 落盘的是它的 PBKDF2 哈希；本明文同时是登录口令与 MID-2241 的合法复验值
@@ -52,33 +52,23 @@ def _reset_web_api_state(wa: types.ModuleType) -> None:
         setattr(wa, "_status_inflight", False)
         setattr(wa, "_status_inflight_since", 0.0)
     # SEV-2221 的主循环停摆探针状态（_main_loop_probe_lock / _main_loop_probe_count /
-    # _main_loop_probe_at）已随该探针从 src/web_api.py 撤下（见文件头 ④）。这里若继续 setattr，
+    # _main_loop_probe_at）已随该探针从 src/api/routes.py 撤下（见文件头 ④）。这里若继续 setattr，
     # 就是给一个不存在的模块全局赋值：用例照绿，却凭空塞进生产代码从不读的名字。
 
 
-def _install_fake_main() -> types.ModuleType:
-    # 最小 main 桩：只提供 web_api 读到的属性。get_status 返回可直接 JSON 化的快照。
-    mod = types.ModuleType("main")
-    setattr(mod, "get_status", lambda: {"engine_alive": True, "monitoring": 1, "recording": []})
-    setattr(mod, "file_update_lock", __import__("threading").RLock())
-    return mod
-
-
-@pytest.fixture(scope="function")
+@pytest.fixture
 def fake_main(monkeypatch: pytest.MonkeyPatch) -> Generator[types.ModuleType, None, None]:
-    mod = _install_fake_main()
-    monkeypatch.setitem(__import__("sys").modules, "src.main", mod)
-    import src
+    from src.recording import status as recorder_status
 
-    monkeypatch.setattr(src, "main", mod, raising=False)
-    yield mod
+    monkeypatch.setattr(recorder_status, "get_status", lambda: {"engine_alive": True, "monitoring": 1, "recording": []})
+    yield recorder_status
 
 
 @pytest.fixture(scope="function")
 def app_env(tmp_path: Path, fake_main: types.ModuleType) -> Generator[types.SimpleNamespace, None, None]:
     from starlette.testclient import TestClient
 
-    from src import web_api as wa
+    from src.api import routes as wa
 
     _reset_web_api_state(wa)
 
@@ -204,7 +194,7 @@ class TestWriteSideSensitiveParity:
     def test_read_side_treats_the_same_items_as_sensitive(self, app_env: types.SimpleNamespace) -> None:
         # 一致性锁：同一条目在**读侧**必须已被脱敏——写侧的判据就是从读侧同源来的，
         # 若读侧将来把值形态判定删掉，这条会先红，提示两端一起漂了。
-        from src.web_config import read_config_safe
+        from src.api.config import read_config_safe
 
         section, key = "推送配置", "自定义推送标题"
         assert append_config_line(
@@ -230,7 +220,7 @@ class TestWriteSideSensitiveParity:
     def test_write_side_reuses_read_side_predicate(self) -> None:
         # 源码级锁：写侧不得**复制**一份值形态判定（两份实现必然漂移）。
         # 必须直接引用 web_config._looks_like_secret_value。
-        src = (Path(__file__).resolve().parent.parent / "src" / "web_api.py").read_text(encoding="utf-8")
+        src = (Path(__file__).resolve().parent.parent / "src" / "api/routes.py").read_text(encoding="utf-8")
         assert "_looks_like_secret_value" in src, "写侧未复用读侧的值形态判据"
         # 必须同时覆盖「新值形态」与「旧值形态」两个方向（后者堵「清空值型凭据」）
         assert "_looks_like_secret_value(value)" in src, "写侧未判新值形态"
@@ -241,7 +231,7 @@ class TestWriteSideSensitiveParity:
         # SENSITIVE_MASK，_looks_like_secret_value('***') 恒为 False —— 整条值形态分支被架空，
         # 端点静默放行。这里锁住「不得用脱敏读」这一根因：从 `old_value = ""` 到敏感判定之间
         # 若再出现 read_config_safe，即为退化。
-        src = (Path(__file__).resolve().parent.parent / "src" / "web_api.py").read_text(encoding="utf-8")
+        src = (Path(__file__).resolve().parent.parent / "src" / "api/routes.py").read_text(encoding="utf-8")
         code = "\n".join(ln for ln in src.splitlines() if not ln.strip().startswith("#"))
         # 敏感判定的调用行是这段代码的终点；截取其前的片段做断言，避免命中别处的同名调用
         marker = "_looks_like_secret_value(old_value)"
@@ -273,20 +263,20 @@ class TestTokenExpiryClamp:
         ],
     )
     def test_clamp_bounds(self, raw: object, expected: float) -> None:
-        from src import web_api as wa
+        from src.api import routes as wa
 
         assert wa._clamp_token_expiry(raw) == expected
 
     @pytest.mark.parametrize("raw", ["", "abc", None, [], {}])
     def test_non_numeric_falls_back_to_default(self, raw: object) -> None:
         # 非数值不得抛异常把登录打成 500；回落默认 86400。
-        from src import web_api as wa
+        from src.api import routes as wa
 
         assert wa._clamp_token_expiry(raw) == 86400.0
 
     def test_nan_falls_back_to_default(self) -> None:
         # NaN 与任何比较都为假：若不显式挡掉，min/max 会把它原样透传（exp 变成 NaN → 永不过期）。
-        from src import web_api as wa
+        from src.api import routes as wa
 
         assert wa._clamp_token_expiry(float("nan")) == 86400.0
 
@@ -406,7 +396,7 @@ class TestAuthKeyReauth:
     def test_reauth_not_required_while_auth_disabled(self, tmp_path: Path, fake_main: types.ModuleType) -> None:
         # 反向边界①：认证关闭（出厂默认）时不得要求复验——那时面板对任何能访问端口的人全开，
         # bearer 不构成防线，也没有可信的「当前口令」可验，强复验只会把正常收紧配置打死。
-        from src import web_api as wa
+        from src.api import routes as wa
 
         env = self._auth_off_env(tmp_path, wa)
         try:

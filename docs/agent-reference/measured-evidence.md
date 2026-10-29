@@ -27,23 +27,23 @@
 
 2026-09-20 实测（本机 Windows / GBK 语言环境，isort 9.0.1，命令 `python -m isort --check-only --profile black --line-length 120 .`）：
 不带 `PYTHONUTF8` 时 **rc=0**，stderr 同时出现 **17 条** `UserWarning: Unable to parse file …: 'gbk' codec can't encode character`，
-被跳过的文件为 `main.py`、`gui.py`、`web.py`、`build_exe.py`、`src/spider.py`、`src/stream_select.py`、
-`src/config_io.py`、`src/notify.py`、`src/async_http.py`、`scripts/douyin_live_recorder_standalone.py`、
+被跳过的文件为 `main.py`、`gui.py`、`web.py`、`build_exe.py`、`src/streams/spider.py`、`src/streams/selection.py`、
+`src/config/io.py`、`src/notifications/notify.py`、`src/network/async_http.py`、`scripts/douyin_live_recorder_standalone.py`、
 `scripts/smoke_test.py` 与 `tests/` 下 6 个（`test_config_bool.py`、`test_config_io_readonly.py`、
 `test_http_config.py`、`test_i18n_migration.py`、`test_record_container.py`、`test_web_api.py`）。
 抛错点在 `isort/core.py:479` 的 **encode**（不是 decode）。同一命令加 `PYTHONUTF8=1` 后
 **0 条**该告警——检查覆盖面恢复为全量：本轮仓库内自有 .py 共 **131** 个（根 6 + src 43 +
 scripts 11 + tests 71，不含 `typings/` 的 14 个 `.pyi` 存根），其中 17 个此前处于「未检查」状态。
 （报告 MID-63 记为 16 个 / 5 个测试文件；本轮实测集合为 17 个 / 6 个测试文件，另含
-`src/async_http.py` 与 `scripts/` 下 2 个。计数随并行改动漂移，以 `grep -c "Unable to parse file"` 现测为准。）
+`src/network/async_http.py` 与 `scripts/` 下 2 个。计数随并行改动漂移，以 `grep -c "Unable to parse file"` 现测为准。）
 
 2026-09-21 复测（同一台 Windows / `locale.getpreferredencoding(False) == cp936`，isort 9.0.1，
 检查参数 `--check-only --profile black --line-length 120 .`）：不带 `PYTHONUTF8` 时 **rc=0**、
 stderr **18 条** `Unable to parse file`；带 `PYTHONUTF8=1` 时 **rc=0、stderr 完全为空（0 条）**。
-较 09-20 基线多出的 1 个是 `src/collector.py`（其间并行改动新增的中文注释文件）。
+较 09-20 基线多出的 1 个是 `src/danmaku/collector.py`（其间并行改动新增的中文注释文件）。
 逐文件清单：`build_exe.py`、`gui.py`、`main.py`、`web.py`、
-`src/async_http.py`、`src/collector.py`、`src/config_io.py`、`src/notify.py`、`src/spider.py`、
-`src/stream_select.py`、`scripts/douyin_live_recorder_standalone.py`、`scripts/smoke_test.py`、
+`src/network/async_http.py`、`src/danmaku/collector.py`、`src/config/io.py`、`src/notifications/notify.py`、`src/streams/spider.py`、
+`src/streams/selection.py`、`scripts/douyin_live_recorder_standalone.py`、`scripts/smoke_test.py`、
 `tests/test_config_bool.py`、`tests/test_config_io_readonly.py`、`tests/test_http_config.py`、
 `tests/test_i18n_migration.py`、`tests/test_record_container.py`、`tests/test_web_api.py`。
 同轮附带发现：`scripts/run_gates.py` 自身在 cp936 下会因转发 black 成功行的 `✨` 抛
@@ -192,7 +192,7 @@ PySide6 轮子本机解压尺寸 **647.56MB**（`pip show` 口径，镜像默认
 
 **版本面历次对齐读数**（根文件条目：「本地检查可外推的前提」）：2026-09-30 全量核查 black 26.5.1 / mypy 2.3.1 / pytest 9.1.1 与 CI 同值，isort 本机 9.0.2 对 CI 钉定 9.0.1 差一个补丁位；2026-10-03 经用户批准把 CI 的 `mypy_version` 抬到 2.4.0 与本机同值；2026-10-04 经用户批准把 `isort_version` 抬到 9.0.2 与本机同值；2026-10-17 经用户批准把 CI 的 `black_version` 抬到 26.10.1 与本机同值，并把 `.pre-commit-config.yaml` 的 black / isort 两个 mirror rev 对齐到同一组值。抬 `black_version` 前用 26.5.1 与 26.10.1 各跑一次全量 `black --check`，两版结论逐字相同；同日 `.pre-commit` rev 的存在性经 GitHub API `refs/tags/26.10.1`、`refs/tags/9.0.2` 逐个核实（均 HTTP 200），`pre-commit validate-config` OK，但本机 clone 被代理拦住，所以「钩子真的装起来跑一遍」仍未经验证。
 
-**`[tool.mypy].exclude` 裸名→锚定修复的前后读数**（根文件条目：「exclude 的运行时二进制目录条目必须写目录段锚定形态」）：裸 `"ffmpeg"` 使 `src/ffmpeg_*` 与 `tests/test_ffmpeg_*` 共 10 个文件、裸 `"node"` 使 `src/node_install.py`/`tests/test_node_install.py` 对无参 mypy 失明。锚定修复实测：无参 `mypy` 读数 193→205 source files（+12 恰为逐文件枚举集合），新暴露 8 处存量错误当场修复——4 处恒回 False 的 `__exit__` 由 `-> bool` 改 `-> None`（falsy 语义不变，bool 标注触发 `[exit-return]`）、4 处「lambda 消费 `list.append` 返回值」改嵌套 def（`[func-returns-value]`）；本机 venv mypy 2.4.0 与 CI 钉定 2.3.1（`pip install --target` 临时目录交叉验证）各跑一遍均 `Success: no issues found in 205 source files`。
+**`[tool.mypy].exclude` 裸名→锚定修复的前后读数**（根文件条目：「exclude 的运行时二进制目录条目必须写目录段锚定形态」）：裸 `"ffmpeg"` 使 `src/ffmpeg_*` 与 `tests/test_ffmpeg_*` 共 10 个文件、裸 `"node"` 使 `src/runtime/node.py`/`tests/test_node_install.py` 对无参 mypy 失明。锚定修复实测：无参 `mypy` 读数 193→205 source files（+12 恰为逐文件枚举集合），新暴露 8 处存量错误当场修复——4 处恒回 False 的 `__exit__` 由 `-> bool` 改 `-> None`（falsy 语义不变，bool 标注触发 `[exit-return]`）、4 处「lambda 消费 `list.append` 返回值」改嵌套 def（`[func-returns-value]`）；本机 venv mypy 2.4.0 与 CI 钉定 2.3.1（`pip install --target` 临时目录交叉验证）各跑一遍均 `Success: no issues found in 205 source files`。
 [历史注] 修复前的判据形态：新增 `src/ffmpeg_linux_download.py` 前后无参 mypy 同为 189 source files、加一个不含 ffmpeg 的测试文件后为 190；当时的代偿口径「显式传参 `python -m mypy src/ffmpeg_<x>.py tests/test_ffmpeg_<x>.py` + basedpyright」随本次锚定一并退役，「mypy 全绿不得当作 ffmpeg 系文件类型检查证据」的禁令同步失效。
 
 ## 与根文件的分工

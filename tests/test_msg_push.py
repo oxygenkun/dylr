@@ -13,7 +13,7 @@ from unittest.mock import patch
 
 from loguru import logger
 
-from src.msg_push import _mask_secret, _mask_url, bark, dingtalk
+from src.notifications.msg_push import _mask_secret, _mask_url, bark, dingtalk
 
 
 # 守护 _mask_secret 的长度分档策略：短凭证整串遮蔽、长凭证保留首尾各 2 位。
@@ -86,7 +86,10 @@ class TestBarkFailureLogMasking:
         captured: list[str] = []
         sink_id = logger.add(lambda message: captured.append(str(message)), level="WARNING")
         try:
-            with patch("src.msg_push.opener.open", side_effect=_fail_response(b'{"code": 500, "message": "nope"}')):
+            with patch(
+                "src.notifications.msg_push.opener.open",
+                side_effect=_fail_response(b'{"code": 500, "message": "nope"}'),
+            ):
                 result = bark("https://bark.example.com/AbCdEfGh", "title", "content")
         finally:
             logger.remove(sink_id)
@@ -100,7 +103,7 @@ class TestBarkFailureLogMasking:
         captured: list[str] = []
         sink_id = logger.add(lambda message: captured.append(str(message)), level="WARNING")
         try:
-            with patch("src.msg_push.opener.open", side_effect=_fail_response(b'{"code": 500}')):
+            with patch("src.notifications.msg_push.opener.open", side_effect=_fail_response(b'{"code": 500}')):
                 bark("https://api.day.app/AbCd1234", "title", "content")
         finally:
             logger.remove(sink_id)
@@ -147,7 +150,7 @@ class TestDingtalk:
             captured["data"] = getattr(req, "data")
             return FakeResponse(b'{"errcode": 0}')
 
-        with patch("src.msg_push.opener.open", side_effect=fake_open):
+        with patch("src.notifications.msg_push.opener.open", side_effect=fake_open):
             result = dingtalk("https://oapi.dingtalk.com/robot/send?access_token=x", "hi", number=None)
         # 钉钉的成败不能只看 HTTP 状态码：接口恒返回 200，业务失败体现在 errcode!=0，
         # 故 success 字段是唯一可信判据。
@@ -165,7 +168,7 @@ class TestDingtalk:
             captured["data"] = getattr(req, "data")
             return FakeResponse(b'{"errcode": 0}')
 
-        with patch("src.msg_push.opener.open", side_effect=fake_open):
+        with patch("src.notifications.msg_push.opener.open", side_effect=fake_open):
             result = dingtalk("https://oapi.dingtalk.com/robot/send?access_token=x", "hi", number="13800000000")
         assert result["success"]
         import json
@@ -187,8 +190,8 @@ class TestPushTemplateRendering:
     LIVE_OFF = "直播间状态更新：{ROOM_NAME} 直播已结束！时间：{TIME}"
 
     def test_builtin_templates_render_in_every_language(self) -> None:
-        from src import i18n
-        from src.msg_push import render_push_content
+        from src.notifications.msg_push import render_push_content
+        from src.support import i18n
 
         original = i18n.get_language()
         try:
@@ -205,7 +208,7 @@ class TestPushTemplateRendering:
 
     def test_legacy_chinese_placeholders_still_render(self) -> None:
         # 兼容路径：旧配置/旧文案里的中文记号同样展开，且不查表也能出结果
-        from src.msg_push import render_push_content, render_push_template
+        from src.notifications.msg_push import render_push_content, render_push_template
 
         legacy = "开播啦：[直播间名称] @ [时间]"
         assert render_push_template(legacy, self.ROOM, self.TIME) == f"开播啦：{self.ROOM} @ {self.TIME}"
@@ -213,6 +216,6 @@ class TestPushTemplateRendering:
 
     def test_braces_in_room_name_are_not_treated_as_placeholders(self) -> None:
         # 走 str.replace 而非 str.format：昵称自带花括号时不得抛 KeyError，也不得被吃掉
-        from src.msg_push import render_push_template
+        from src.notifications.msg_push import render_push_template
 
         assert render_push_template("{ROOM_NAME} 开播", "序号1 兔{酱}", self.TIME) == "序号1 兔{酱} 开播"

@@ -6,36 +6,17 @@
 #
 # 备注：项目用 loguru 记录错误，loguru 默认不桥接 stdlib logging，
 # 故 caplog 抓不到——测试自带 InMemorySink 捕获消息文本。
-
 import io
 import shlex
 import sys
 import time
 from collections.abc import Generator
-from pathlib import Path
 
 import pytest
 from loguru import logger
 
-# 通知模块的 run_script 通过 import main 读写运行时全局；
-# 测试需先把 main 引入，才能加载 src.notify
-# [LT-07 2026-10-18] 这条 sys.path 注入只为下面两行**导入期**服务，用完当场摘回：旧形态把仓库根
-# 永久留在 sys.path[0] 且从不还原（同会话其它包的模块解析顺序被单方面改写，多个用例各插一次还会累积）。
-# 不搬进 fixture：`import main` 就在模块级、收集期即执行，fixture 要等用例开跑才运行。
-# 摘回按值 remove 首个同名条目：tests/__init__.py 已登记一条时，移除的是我们插的那条；
-# main / src.notify 此后由 sys.modules 兜住，用例内的再次 import 不依赖这条路径。
-_REPO_ROOT = str(Path(__file__).resolve().parent.parent)
-_PATH_BASELINE = sys.path.count(_REPO_ROOT)  # 注入前的条目数（各调用形态下都实测为 0 或 1）
-sys.path.insert(0, _REPO_ROOT)
-try:
-    import src.notify as notify  # noqa: E402
-    from src import main  # noqa: E402  必须在 src.notify 之前
-finally:
-    if _REPO_ROOT in sys.path:
-        sys.path.remove(_REPO_ROOT)
-# LT-07 泄漏判据：「注入 → 导入 → 摘回」三步必须把 sys.path 归还成注入前的条目数。按计数比而不按
-# 整表相等——别的库导入期正当注册的搜索路径不该被本文件判红；生产代码零处碰 sys.path，故判据确定。
-assert sys.path.count(_REPO_ROOT) == _PATH_BASELINE, "仓库根被永久留在 sys.path：注入未归还，状态泄漏"
+import src.notifications.notify as notify
+from src.recording import state
 
 # M-30：命令一律用 sys.executable，不写死字面量 `python`——生产 run_script 以 shell=False +
 # shlex.split 在 PATH 里查找可执行文件，Linux/CI 镜像常只提供 python3（无 python 软链），旧写法在
@@ -120,13 +101,13 @@ def test_run_script_uses_safe_split_not_shell(log_capture: io.StringIO) -> None:
 # {ROOM_NAME}/{TIME}：机器字段永不进翻译层，中文 [直播间名称]/[时间] 仅作旧配置兼容别名）。
 def test_build_push_title_default_carries_room_name(monkeypatch: pytest.MonkeyPatch) -> None:
     # 未配置自定义标题时，兜底标题必须含 record_name（而不是死文本）
-    monkeypatch.setattr(main, "push_message_title", "")
+    monkeypatch.setattr(state, "push_message_title", "")
     assert notify.build_push_title("序号37 哈那TωTira", "2026-10-22 18:11:45") == "序号37 哈那TωTira 正在直播中"
 
 
 def test_build_push_title_replaces_placeholders(monkeypatch: pytest.MonkeyPatch) -> None:
     # 自定义标题里的占位符按约定替换：正文与标题共用 {ROOM_NAME}/{TIME} 两个记号
-    monkeypatch.setattr(main, "push_message_title", "开播啦：{ROOM_NAME} @ {TIME}")
+    monkeypatch.setattr(state, "push_message_title", "开播啦：{ROOM_NAME} @ {TIME}")
     title = notify.build_push_title("序号37 哈那TωTira", "2026-10-22 18:11:45")
     assert title == "开播啦：序号37 哈那TωTira @ 2026-10-22 18:11:45"
 
@@ -134,27 +115,27 @@ def test_build_push_title_replaces_placeholders(monkeypatch: pytest.MonkeyPatch)
 def test_build_push_title_accepts_legacy_chinese_placeholders(monkeypatch: pytest.MonkeyPatch) -> None:
     # 旧配置（改了占位符语法之前写下的）继续可用：中文别名在渲染时同样展开，
     # 不需要用户去 config.ini 里改一个字符
-    monkeypatch.setattr(main, "push_message_title", "开播啦：[直播间名称] @ [时间]")
+    monkeypatch.setattr(state, "push_message_title", "开播啦：[直播间名称] @ [时间]")
     title = notify.build_push_title("序号37 哈那TωTira", "2026-10-22 18:11:45")
     assert title == "开播啦：序号37 哈那TωTira @ 2026-10-22 18:11:45"
 
 
 def test_build_push_title_without_placeholder_is_literal(monkeypatch: pytest.MonkeyPatch) -> None:
     # 没写占位符的自定义标题保持原样：不给老用户的通知标题强插主播名（对齐「只加占位符支持」的取舍）
-    monkeypatch.setattr(main, "push_message_title", "直播间状态更新通知")
+    monkeypatch.setattr(state, "push_message_title", "直播间状态更新通知")
     assert notify.build_push_title("序号37 哈那TωTira", "2026-10-22 18:11:45") == "直播间状态更新通知"
 
 
 def test_build_push_title_survives_braces_in_room_name(monkeypatch: pytest.MonkeyPatch) -> None:
     # 主播昵称带花括号是常态（如「兔{酱}」）；渲染走 str.replace 而非 str.format，才不会被当占位符炸掉
-    monkeypatch.setattr(main, "push_message_title", "{ROOM_NAME} 开播")
+    monkeypatch.setattr(state, "push_message_title", "{ROOM_NAME} 开播")
     assert notify.build_push_title("序号1 兔{酱}", "t") == "序号1 兔{酱} 开播"
 
 
 def test_push_message_sends_room_name_as_bark_title(monkeypatch: pytest.MonkeyPatch) -> None:
     # 端到端：push_message 传给 bark 的 title 必须带主播名，body 维持 main.py 拼好的正文
-    monkeypatch.setattr(main, "push_message_title", "")
-    monkeypatch.setattr(main, "live_status_push", "BARK")
+    monkeypatch.setattr(state, "push_message_title", "")
+    monkeypatch.setattr(state, "live_status_push", "BARK")
     sent: dict[str, object] = {}
 
     def fake_bark(api: str, title: str = "", content: str = "", **kwargs: object) -> dict[str, list[str | int]]:
@@ -177,10 +158,10 @@ def test_push_message_sends_room_name_as_bark_title(monkeypatch: pytest.MonkeyPa
 # 占位符、也没有被翻译的字段」，坏掉会立刻红。
 @pytest.mark.parametrize("lang", ["zh_CN", "en_US"])
 def test_build_push_title_keeps_placeholder_out_of_translation(monkeypatch: pytest.MonkeyPatch, lang: str) -> None:
-    from src import i18n
+    from src.support import i18n
 
     original = i18n.get_language()
-    monkeypatch.setattr(main, "push_message_title", "")
+    monkeypatch.setattr(state, "push_message_title", "")
     try:
         i18n.set_language(lang)
         title = notify.build_push_title("序号37 哈那TωTira", "2026-10-22 18:11:45")

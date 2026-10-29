@@ -10,7 +10,7 @@
 
 from pathlib import Path
 
-from src.srt_writer import SrtWriter
+from src.danmaku.srt_writer import SrtWriter
 
 
 def _block_numbers(content: str) -> list[int]:

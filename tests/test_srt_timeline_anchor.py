@@ -19,9 +19,9 @@ from typing import Any
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.base import DanmakuBase
-from src.collector import DanmakuCollector
-from src.srt_writer import SrtWriter
+from src.danmaku.base import DanmakuBase
+from src.danmaku.collector import DanmakuCollector
+from src.danmaku.srt_writer import SrtWriter
 
 
 # 守护正常路径：start() 须同步创建 SRT 文件（即使尚无弹幕）；弹幕时间戳相对录像起点

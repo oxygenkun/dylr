@@ -1,4 +1,4 @@
-# CR-08/09/10 面板配置脱敏与房间地址校验的回归锁（src/web_config.py，2026-09-21 补）。
+# CR-08/09/10 面板配置脱敏与房间地址校验的回归锁（src/api/config.py，2026-09-21 补）。
 #
 # 本文件只补「零引用」的那三个点，不重复 tests/test_web_config.py 已经覆盖的
 # validate_room_target 内网/换行/画质白名单表：
@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from src.web_config import (
+from src.api.config import (
     SENSITIVE_MASK,
     _looks_like_secret_value,
     _validate_room_url_target,
@@ -24,13 +24,14 @@ from src.web_config import (
     is_sensitive_key,
     read_config_safe,
 )
+from src.network import targets
 
 # 三行解析桩：离线化，避免用例随真实 DNS 漂移（本文件只验裁决，不验 DNS）
 _PUBLIC_IPS = ["114.114.114.114"]
 
 
 def _stub_dns(monkeypatch: pytest.MonkeyPatch, table: dict[str, list[str] | OSError]) -> None:
-    from src import web_config as wc
+    from src.api import config as wc
 
     def _resolve(host: str) -> list[str]:
         answer = table.get(host, _PUBLIC_IPS)
@@ -38,7 +39,7 @@ def _stub_dns(monkeypatch: pytest.MonkeyPatch, table: dict[str, list[str] | OSEr
             raise answer
         return list(answer)
 
-    monkeypatch.setattr(wc, "_resolve_host_ips", _resolve)
+    monkeypatch.setattr(targets, "resolve_host_ips", _resolve)
 
 
 @pytest.mark.parametrize(

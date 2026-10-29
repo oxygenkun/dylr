@@ -10,8 +10,8 @@
 # -----------------------------------------------------------------------------
 # * **零第三方依赖**：只使用 Python 标准库(urllib/math/subprocess/threading 等)，
 #   无需 pip install 即可运行(录制本身仍需 ffmpeg 可执行文件)。
-# * **本文件是被整合模块的独立副本，不是薄封装**：src/scheduler.py 的并发实现、src/spider.py
-#   的部分平台解析、src/stream_select.py 的探针/退避、src/ffmpeg_install.py 的包内 ffmpeg 判据，
+# * **本文件是被整合模块的独立副本，不是薄封装**：src/recording/scheduler.py 的并发实现、src/streams/spider.py
+#   的部分平台解析、src/streams/selection.py 的探针/退避、src/runtime/ffmpeg.py 的包内 ffmpeg 判据，
 #   以及 ffmpeg 命令构造(本文件有**两处**定义点，main.py 只有一处)都在此各有一份拷贝。副本的
 #   通病是「单边修改 → 语义漂移」，故改判据必须两处同改、两边注释互相点名；并发两份实现的
 #   **等价性并不完整**，逐条差异见 PlatformBreaker 类注释。漂移的机检面：
@@ -196,7 +196,7 @@ class ProbeResult:
         return (self.headers.get("content-type") or "").lower()
 
 
-# 显式协议白名单 handler 集（S-01，2026-09-30）：与主程序 src/sync_http.py 的定稿同构。
+# 显式协议白名单 handler 集：独立工具的 urllib 路径只注册 HTTP/HTTPS handler。
 # build_opener 即使显式传入 ProxyHandler，默认 Handler 集合（含 FileHandler/FTPHandler/
 # DataHandler）**仍然生效**——file:// 会被本地读出 200，与「平台 API 候选属不可信输入面」
 # 叠加成「候选 → 探针 → ffmpeg 读本地文件」的完整利用链。现只显式注册 http/https 相关
@@ -207,7 +207,7 @@ class ProbeResult:
 # 不复检，公网候选 302 到内网/云元数据时逐跳判定缺失；现改挂下方 _HopGuardRedirectHandler。
 class _HopGuardRedirectHandler(urllib.request.HTTPRedirectHandler):
     # SR-02（2026-10-02）：重定向逐跳复检（主线防线回灌）。主线同层防线是探针客户端挂
-    # src/async_http.build_sync_hop_guard（response 事件钩子，每跳含落地跳均判内网/协议，
+    # src/network/targets.validate_http_target（request 事件钩子，每跳含落地跳均判内网/协议，
     # 命中即断），本副本按设计不 import src，故在 urllib 的重定向单点复刻同判据：
     # HTTPRedirectHandler 的 301/302/303/307/308 全部经 redirect_request() 发起下一跳，
     # 在此复用 _untrusted_stream_target_reason(newurl)（定义在下方，与初始候选同一份判定，
@@ -356,7 +356,7 @@ def strip_query(url: str) -> str:
 # --- 不可信流地址候选的协议/目标判定(S-01，2026-09-30) ---
 #
 # 平台 API 响应是不可信输入面(恶意/被劫持代理、接口投毒、MITM 都可能改写候选)，
-# 候选在进探针与 ffmpeg 命令之前必须先过这道闸。与主程序 src/web_config.py 的
+# 候选在进探针与 ffmpeg 命令之前必须先过这道闸。与主程序 src/api/config.py 的
 # _host_internal_reason / _internal_ip_reason 同判据的**离线子集**：不解析 DNS
 # (与主线派生跳判定同一边界，DNS 重绑定窗口不在本层闭合)，只做「协议白名单 +
 # IP 字面量(含 inet_aton 缩写形态) + 内部用途主机名」三类零 DNS 判定。
@@ -589,14 +589,14 @@ def record_headers(platform: str, cookies: str) -> dict[str, str]:
 
 
 # =============================================================================
-# 4. 并发调度中枢(整合自 src/scheduler.py)
+# 4. 并发调度中枢(整合自 src/recording/scheduler.py)
 # =============================================================================
 
 
 class ResizableSemaphore:
     # 可运行时调容的信号量(消除重建竞态)，支持上下文管理器协议。本类是
-    # src/scheduler.py::ResizableSemaphore 的**独立副本**(standalone 不 import src/)：
-    # 改并发语义必须两处同改，改动此处时同步改 src/scheduler.py::ResizableSemaphore。
+    # src/recording/scheduler.py::ResizableSemaphore 的**独立副本**(standalone 不 import src/)：
+    # 改并发语义必须两处同改，改动此处时同步改 src/recording/scheduler.py::ResizableSemaphore。
     # 内部严格分离两个量：_capacity = 并发上限(只由 set_value 改)、_used = 当前已持有
     # 许可数(只由 acquire/release 改)。**不得合并成单一字段**：一旦共用，该字段实际表示
     # 「剩余可用许可」而类注释与调用方都按「容量」理解它，于是任何「按目标容量绝对赋值」
@@ -684,7 +684,7 @@ class PlatformBreaker:
     # 的回报才允许驱动状态迁移，其余回报只入窗口。缺门控的后果不是「统计略偏」而是行为相反：
     # 熔断前已放行、此刻才收尾的普通轮次 record_success 会直接 clear() 样本窗口并置 closed →
     # 坏 CDN 立刻重新拿到全部房间流量；租约重授予后那条陈旧探针的回报同样能关掉新探针。
-    # 同源副本：src/scheduler.py::PlatformBreaker(本类按设计不 import src/)。**两份实现并不等价**，
+    # 同源副本：src/recording/scheduler.py::PlatformBreaker(本类按设计不 import src/)。**两份实现并不等价**，
     # 且方法集合会随单边改动漂移，故不在此抄快照 —— 要下结论就现场跑 `grep -n "^    def "`
     # 逐方法 diff 后再显式决定同步方向。
     # 已知的刻意保留差异(逐条显式决定，不是漏同步)：① 时间源用 time.monotonic() 而非 src 的
@@ -695,7 +695,7 @@ class PlatformBreaker:
     # error_rate / backoff_seconds，样本入队函数名为 _push 而非 _push_sample —— 属**已登记**的
     # 行为无关差异，不是待回灌项。
     LEASE_SECONDS = 60.0
-    MIN_SAMPLES = 8  # 与 src/scheduler.py::PlatformBreaker 的 min_samples 默认值同值
+    MIN_SAMPLES = 8  # 与 src/recording/scheduler.py::PlatformBreaker 的 min_samples 默认值同值
 
     def __init__(self, name: str, window: int = 40, fail_rate: float = 0.5, cooldown: float = 45.0) -> None:
         self.name = name
@@ -832,7 +832,7 @@ class Scheduler:
 
 
 # =============================================================================
-# 5. 平台解析(整合自 src/spider.py 对应平台分支)
+# 5. 平台解析(整合自 src/streams/spider.py 对应平台分支)
 # =============================================================================
 
 
@@ -901,7 +901,7 @@ def resolve_douyin(url: str, proxy: str | None = None, cookies: str = "") -> Str
     # 第二道检测：抖音风控的第二形态是「HTTP 200 + 合法 JSON，但业务层 status_code 非零」
     # （如 status_code=8 需登录、=4002 参数异常）。只看 HTTP 状态与空响应体会漏掉这一形态
     # → 风控被误报成"未开播"，用户得不到「去配 cookie」的有效提示，只会反复重试。
-    # 与主工程 src/spider.py 同判据（该侧在 200+合法 JSON 后同样检 status_code 非零）。
+    # 与主工程 src/streams/spider.py 同判据（该侧在 200+合法 JSON 后同样检 status_code 非零）。
     # [历史注] 2026-09-12 审查 6.7 补齐此处。
     if isinstance(data, dict):
         try:
@@ -943,7 +943,7 @@ def resolve_douyin(url: str, proxy: str | None = None, cookies: str = "") -> Str
 # 虎牙页面中的 stream 数据：非贪婪匹配到 "iWebDefaultBitRate" 结束(与原工程一致)
 _HUYA_STREAM_RE = re.compile(r'stream: (\{"data".*?),"iWebDefaultBitRate"')
 # 房间别名(含字母)时从 HTML 提取数字房间号(与原工程 get_huya_app_stream_url 一致)
-# 孪生点(2026-09-23 MIN-2201)：主实现 src/spider.py::get_huya_app_stream_url 的正则现已与本
+# 孪生点(2026-09-23 MIN-2201)：主实现 src/streams/spider.py::get_huya_app_stream_url 的正则现已与本
 # 副本**逐字同串**(键名起始引号作锚点)，且两侧都在取回后剥引号 + 判 isdigit。改此处须两处同改。
 _HUYA_PROFILE_ROOM_RE = re.compile(r'"ProfileRoom":(.*?),"sPrivateHost')
 
@@ -1027,7 +1027,7 @@ def resolve_huya(url: str, proxy: str | None = None, cookies: str = "") -> Strea
         if m:
             # 页面的 "ProfileRoom" 有数字(:6030242)与字符串(:"6030242")两种内联形态，
             # 非贪婪捕获对后者会连引号一起收下 → 不剥引号则恒判非数字、白丢兜底接口
-            # (2026-09-23 与 src/spider.py 同步，见上方 _HUYA_PROFILE_ROOM_RE 的孪生点注释)。
+            # (2026-09-23 与 src/streams/spider.py 同步，见上方 _HUYA_PROFILE_ROOM_RE 的孪生点注释)。
             room_id = m.group(1).strip().strip('"')
     if not room_id.isdigit():
         info_.error = f"{fetch_failed_reason}；未能解析 stream 数据，且未取得数字房间号，无法走兜底接口".strip("；")
@@ -1283,7 +1283,7 @@ def dispatch(url: str, proxy: str | None = None, cookies: str = "") -> StreamInf
 
 
 # =============================================================================
-# 6. 流地址校验(整合自 src/stream_select.py)
+# 6. 流地址校验(整合自 src/streams/selection.py)
 # =============================================================================
 
 # 同 host 探针最小间隔 + 抖动：多房间并发时避免毫秒级连击触发风控
@@ -1323,7 +1323,7 @@ def _recheck_delay() -> float:
     return _GET_RECHECK_INTERVAL + _SYS_RANDOM.uniform(0, _GET_RECHECK_JITTER)
 
 
-# ---------- 探针退避(整合自 src/stream_select.py，白名单仅虎牙) ----------
+# ---------- 探针退避(整合自 src/streams/selection.py，白名单仅虎牙) ----------
 #
 # 虎牙 CDN 按连接预算限流：每轮「探针 + ffmpeg 拉流」烧光预算后，校验 GET 复核通过、
 # ffmpeg 立即 403，录制陷入秒级失败循环。观测到 401/403 后把该线路记入退避窗口：
@@ -1380,7 +1380,7 @@ def clear_probe_reject(url: str, platform: str) -> None:
 
 
 def _registrable_domain_lite(host: str) -> str:
-    # 近似注册域（末两段），仅用于派生跳的 Cookie 裁决（主线 src/stream_select.py
+    # 近似注册域（末两段），仅用于派生跳的 Cookie 裁决（主线 src/streams/selection.py
     # _registrable_domain 同判据）；IP 字面量与双段主机返回空串（不成域、只认精确相等）。
     if _parse_ip_literal(host) is not None or ":" in host:
         return ""
@@ -1576,8 +1576,8 @@ def validate_stream_url(
     # 的两处命令构造)必须同口径。大写 .M3U8 若落进「非 m3u8」分支就会走 content-type 启发式
     # + _confirm_get_ok，而 m3u8 在多家 CDN 上 HEAD 恒回 4xx → 正好命中「探针误杀可用源」
     # (非末位候选被直接拒，整轮回退或放弃录制)，并连带漏掉 -reconnect_at_eof 的移除、
-    # 复现 HLS 挂起事故。主程序侧 main.py::_validate_stream_url / src/stream_select.py /
-    # src/async_http.py 同样 lower。
+    # 复现 HLS 挂起事故。主程序侧 main.py::_validate_stream_url / src/streams/selection.py /
+    # src/network/http.py 同样 lower。
     # [历史注] 2026-09-23 MIN-2259 补齐此处；命令构造两处早在 2026-09-12 审查时已 lower。
     url_lower = url.lower()
     try:
@@ -1701,7 +1701,7 @@ def select_source_url(stream: StreamInfo, proxy: str | None = None, record_forma
 
 
 # 包内 ffmpeg 是否优先于系统 PATH 上那份 —— 与 `src/ffmpeg_install.should_prepend_bundled_ffmpeg_dir()`
-# 是**刻意维护的孪生副本**（本文件按设计不 import src/，可独立单文件分发；同 src/scheduler.py 的
+# 是**刻意维护的孪生副本**（本文件按设计不 import src/，可独立单文件分发；同 src/recording/scheduler.py 的
 # 副本先例：改判据必须两处同改，且两边注释互相点名）。
 # 判据与主程序逐条一致，任一不成立即维持「包内优先」的既有顺序：
 #   darwin ∧ arm64 ∧ 包内目录存在 ∧ 注入前 PATH 上另有 ffmpeg ∧ 那份 realpath 不在包内目录里。
@@ -1727,9 +1727,7 @@ def should_prepend_bundled_ffmpeg_dir(bundled_dir: str, current_path: str) -> bo
     candidate_real = os.path.realpath(system_ffmpeg)
     bundle_real = os.path.realpath(bundled_dir)
     # 自我遮蔽（探到的其实就是包内那份）→ 不让位，否则日志会承诺「原生 arm64」而实际仍是 x86_64。
-    if candidate_real == bundle_real or candidate_real.startswith(bundle_real + os.sep):
-        return True
-    return False
+    return bool(candidate_real == bundle_real or candidate_real.startswith(bundle_real + os.sep))
 
 
 def find_ffmpeg(explicit: str = "") -> str:
@@ -1873,7 +1871,7 @@ def terminate_all_ffmpeg() -> int:
     # M-16（2026-10-02 回灌主线三级终止链）：在最前增加「写 q 到 stdin + 关闭」一级——
     # Windows 下 terminate() 即 TerminateProcess 硬杀，上方 3 秒宽限对它毫无作用，
     # 只有 ffmpeg 自己读到 q/SIGINT 才会走收尾流程补写 moov。主线实现见
-    # src/ffmpeg_proc.py::_terminate_ffmpeg_process（写 q / SIGINT → terminate → kill）。
+    # src/recording/process.py::_terminate_ffmpeg_process（写 q / SIGINT → terminate → kill）。
     # run_ffmpeg 的 Popen 须配 stdin=PIPE 才有管道可写（同批修改）。
     with _ACTIVE_FFMPEG_LOCK:
         procs = list(_ACTIVE_FFMPEG)
@@ -1978,7 +1976,7 @@ def run_ffmpeg(
             stdout=subprocess.DEVNULL,
             stderr=logf,
             # M-20（2026-10-19 审查修复）：stdin 必须是二进制管道——本文件 terminate_all_ffmpeg
-            # 按主线 src/ffmpeg_proc.py::_terminate_ffmpeg_process 口径写 b"q"，而 text=True 时
+            # 按主线 src/recording/process.py::_terminate_ffmpeg_process 口径写 b"q"，而 text=True 时
             # stdin 是 TextIOWrapper、写 bytes 必抛 TypeError 并被写 q 处的 except 吞没，
             # 「写 q 优雅收尾补 moov」一级恒失效，Windows 下退化为 TerminateProcess 硬杀。
             # 该 Popen 的 stdout=DEVNULL、stderr=文件句柄，副本内无 communicate()/读 stdout 的点，
@@ -2005,7 +2003,7 @@ def run_ffmpeg(
 # 8. 配置
 # =============================================================================
 
-# 布尔配置值解析（M-18，2026-10-02 回灌主线 src/config_bool.py 统一口径）：旧前缀判断
+# 布尔配置值解析（M-18，2026-10-02 回灌主线 src/config/booleans.py 统一口径）：旧前缀判断
 # (`startswith("是")` / `not startswith("否")`) 在 true/false、1/0、yes/no、on/off 取值下
 # 静默反向生效（主线 2026-09-17 P0 同款：8 项配置漂移、9 个海外平台 100% 无法录制）。
 # token 集与主线逐字同源（比较前 strip + lower）；空值与未识别值返回 default，调用方传
@@ -2140,7 +2138,7 @@ def load_urls(url_config_path: str) -> list[str]:
     with open(url_config_path, encoding="utf-8-sig", errors="replace") as f:
         for line in f:
             line = line.strip()
-            if not line or line.startswith("#") or line.startswith(";"):
+            if not line or line.startswith(("#", ";")):
                 continue
             urls.append(line.split(",")[0].strip())
     return urls

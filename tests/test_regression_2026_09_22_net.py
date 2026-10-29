@@ -1,7 +1,7 @@
 # 2026-09-22/23 网络与代理层回归锁（MID-2233 / MIN-2216~2222）。
 #
-# 覆盖面（每条都对应一个「实测确认未修」的条目）：src/proxy.py 的 MID-2233 ①②③④；
-# src/ttwid.py 的 MIN-2220（ttwid 跨出口串用）/ MIN-2222（空异常文本）；src/async_http.py 的
+# 覆盖面（每条都对应一个「实测确认未修」的条目）：src/network/proxy.py 的 MID-2233 ①②③④；
+# src/streams/ttwid.py 的 MIN-2220（ttwid 跨出口串用）/ MIN-2222（空异常文本）；src/network/http.py 的
 # MIN-2216(async 侧) / MIN-2217 / MIN-2218 / MIN-2219 / MIN-2221。
 #
 # 打桩边界：只替换网络层与依赖构造（httpx 客户端 / _build_client / DNS seam / winreg），判定逻辑
@@ -9,23 +9,19 @@
 # 的变异验证。
 import asyncio
 import gc
-import pathlib
 import socket
 import sys
 import threading
-import types
 from typing import Any
 
 import httpx
 import pytest
 from loguru import logger
 
-import src.async_http as async_http
-import src.ttwid as ttwid_module
-from src import web_config
-from src.async_http import _client_cache, _client_cache_lock, _close_all_clients, async_req, get_response_status
-from src.cookie_cache import clear as clear_cookie_cache
-from src.proxy import ProxyDetector, ProxyInfo
+import src.network.http as async_http
+import src.streams.ttwid as ttwid_module
+from src.network import credentials, targets
+from src.network.http import _client_cache, _client_cache_lock, _close_owned_clients, is_reachable, request
 
 # ---------------------------------------------------------------------------
 # 公共设施
@@ -45,9 +41,9 @@ def _capture_logs(level: str = "DEBUG") -> tuple[list[str], int]:
 
 @pytest.fixture()
 def _stub_dns_public(monkeypatch: pytest.MonkeyPatch) -> None:
-    # MIN-2219 的 DNS seam（web_config._resolve_host_ips 的注释明确它是为用例留的口子）：
+    # MIN-2219 的 DNS seam（targets.resolve_host_ips 的注释明确它是为用例留的口子）：
     # 把「域名解析结果」钉成一个公网 IP，使直连判定不依赖真实 DNS/网络。
-    monkeypatch.setattr(web_config, "_resolve_host_ips", lambda host: [_PUBLIC_IP])
+    monkeypatch.setattr(targets, "resolve_host_ips", lambda host: [_PUBLIC_IP])
 
 
 @pytest.fixture()
@@ -59,7 +55,8 @@ def _clean_ttwid(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(ttwid_module, "_cached_ttwid_by_proxy", {})
     monkeypatch.setattr(ttwid_module, "_ttwid_scopes", set())
     monkeypatch.setattr(ttwid_module, "_read_config_ttwid", lambda: "")
-    clear_cookie_cache()
+    credentials.cookie_cache.invalidate()
+    credentials.credential_cache.invalidate()
 
 
 def _patch_fetch(monkeypatch: pytest.MonkeyPatch, fetch: Any) -> None:
@@ -140,233 +137,6 @@ def _client_provider(client: Any) -> Any:
         return client
 
     return _get
-
-
-# ---------------------------------------------------------------------------
-# MID-2233 ①：ftp_proxy 不得被当成本程序的可用代理
-# ---------------------------------------------------------------------------
-
-_PROXY_ENV_KEYS = (
-    "http_proxy",
-    "HTTP_PROXY",
-    "https_proxy",
-    "HTTPS_PROXY",
-    "ftp_proxy",
-    "FTP_PROXY",
-    "all_proxy",
-    "ALL_PROXY",
-)
-
-
-def _clear_proxy_env(monkeypatch: pytest.MonkeyPatch) -> None:
-    # 逐个删而不是 patch.dict(os.environ)：后者无论 clear 取值都会整体快照/写回，
-    # harness 注入的 MCP 配置一超 Windows 32767 上限就抛 ValueError（AGENTS 硬约定）。
-    for key in _PROXY_ENV_KEYS:
-        monkeypatch.delenv(key, raising=False)
-
-
-class TestMid2233FtpProxy:
-    def test_ftp_proxy_only_is_not_a_system_proxy(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        _clear_proxy_env(monkeypatch)
-        monkeypatch.setenv("ftp_proxy", "http://10.9.9.9:2121")
-        detector = ProxyDetector.__new__(ProxyDetector)
-        # 判定与取值两个口径必须同时为「无代理」：只修一边会重新出现
-        # 「global_proxy=True 但拿不到地址」的假象（本条目的立论形态）
-        assert detector._is_proxy_enabled_linux() is False
-        info = ProxyDetector._get_proxy_info_linux()
-        assert (info.ip, info.port, info.proxy_url) == ("", "", "")
-
-    def test_ftp_proxy_does_not_shadow_http_proxy(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        _clear_proxy_env(monkeypatch)
-        monkeypatch.setenv("ftp_proxy", "http://10.9.9.9:2121")
-        monkeypatch.setenv("http_proxy", "http://127.0.0.1:7890")
-        info = ProxyDetector._get_proxy_info_linux()
-        assert (info.ip, info.port) == ("127.0.0.1", "7890")
-        assert ProxyDetector.__new__(ProxyDetector)._is_proxy_enabled_linux() is True
-
-    def test_ftp_proxy_not_in_the_read_set_at_all(self) -> None:
-        # 结构锁：候选集合里不允许再出现 ftp（改回元组即红，防「注释说不要、代码还留着」）
-        assert not any("ftp" in name.lower() for name in ProxyDetector._LINUX_PROXY_ENV_NAMES)
-
-
-# ---------------------------------------------------------------------------
-# MID-2233 ②：代理自身的 scheme 必须保留
-# ---------------------------------------------------------------------------
-
-
-class TestMid2233Scheme:
-    def test_all_proxy_socks5_scheme_survives_to_proxy_url(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        _clear_proxy_env(monkeypatch)
-        monkeypatch.setenv("ALL_PROXY", "socks5://127.0.0.1:1080")
-        info = ProxyDetector._get_proxy_info_linux()
-        assert (info.ip, info.port) == ("127.0.0.1", "1080")
-        assert info.scheme == "socks5"
-        # 旧实现恒补 http:// → socks 端口被当 HTTP 代理用，表现为「配了代理全平台异常」
-        assert info.proxy_url == "socks5://127.0.0.1:1080"
-
-    def test_socks5h_and_https_schemes_are_recognised(self) -> None:
-        assert ProxyDetector._split_scheme("socks5h://u:1") == ("socks5h", "u:1")
-        assert ProxyDetector._split_scheme("HTTPS://u:1") == ("https", "u:1")
-
-    def test_credentials_and_scheme_combine(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        _clear_proxy_env(monkeypatch)
-        monkeypatch.setenv("all_proxy", "socks5://bob:s3cret@proxy.example.com:1080/")
-        info = ProxyDetector._get_proxy_info_linux()
-        assert info.proxy_url == "socks5://bob:s3cret@proxy.example.com:1080"
-        # 凭据不得随 repr 进轮转日志（本仓凭据红线）
-        assert "s3cret" not in repr(info) and "bob" not in repr(info)
-
-    def test_unknown_scheme_is_stripped_not_turned_into_a_protocol(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # "foo://bar" 旧实现剥掉前缀后得 ip="bar"、port="" → 该候选被跳过。新实现若把它当协议、
-        # 或原样留着前缀，_split_host_port 会切成 port="//bar" → ProxyInfo 抛 ValueError → 整个系统
-        # 代理检测被 main.py 的 except 吞掉，故必须保持「宽容剥掉、继续看下一个变量」。
-        scheme, hostport = ProxyDetector._split_scheme("foo://bar")
-        assert scheme == "" and hostport == "bar"
-        _clear_proxy_env(monkeypatch)
-        monkeypatch.setenv("all_proxy", "foo://bar")
-        info = ProxyDetector._get_proxy_info_linux()  # 不得抛
-        assert (info.ip, info.port, info.scheme) == ("", "", "")
-
-    def test_scheme_defaults_to_http_when_absent(self) -> None:
-        info = ProxyInfo("10.0.0.1", "3128")
-        assert info.scheme == ""
-        assert info.proxy_url == "http://10.0.0.1:3128"
-
-    def test_linux_bare_value_still_has_no_scheme(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        _clear_proxy_env(monkeypatch)
-        monkeypatch.setenv("http_proxy", "127.0.0.1:7890")
-        info = ProxyDetector._get_proxy_info_linux()
-        assert (info.scheme, info.proxy_url) == ("", "http://127.0.0.1:7890")
-
-
-# ---------------------------------------------------------------------------
-# MID-2233 ③：裸 IPv6 无端口要真的能通过校验（旧注释承诺过、实现从未兑现）
-# ---------------------------------------------------------------------------
-
-
-class TestMid2233BareIpv6:
-    def test_bare_ipv6_without_port_constructs(self) -> None:
-        info = ProxyInfo("::1", "")
-        assert info.ip == "::1" and info.port == ""
-        # proxy_url 必须补方括号，否则 "http://::1" 是非法 authority（下游 InvalidURL）
-        assert info.proxy_url == "http://[::1]"
-
-    def test_bracketed_ipv6_without_port_constructs(self) -> None:
-        assert ProxyInfo("[::1]", "").proxy_url == "http://[::1]"
-
-    def test_registry_shape_bare_ipv6_end_to_end(self) -> None:
-        # MIN-20① 的整块「IPv6 放行分支」此前是死代码：注册表存 "::1" 时
-        # _split_host_port 交出 port=""，ProxyInfo 直接 raise。现在该形态可用。
-        ip, port, user, password = ProxyDetector._split_host_port("::1")
-        info = ProxyInfo(ip, port, user, password)
-        assert info.ip == "::1" and info.port == ""
-        assert info.proxy_url == "http://[::1]"
-
-    def test_compressed_ipv6_forms_accepted(self) -> None:
-        for raw in ("2001:db8::1", "::", "fe80::1%eth0"):
-            assert ProxyInfo(raw, "").proxy_url == f"http://[{raw}]"
-
-    def test_ipv4_or_domain_without_port_still_raises(self) -> None:
-        # 收窄只针对 IPv6 字面量：IPv4/域名缺端口仍是「填错了一半」，必须报错
-        with pytest.raises(ValueError, match="IP or port"):
-            ProxyInfo("192.168.1.1", "")
-        with pytest.raises(ValueError, match="IP or port"):
-            ProxyInfo("proxy.example.com", "")
-
-    def test_port_without_ip_still_raises(self) -> None:
-        with pytest.raises(ValueError, match="IP or port"):
-            ProxyInfo("", "8080")
-
-    def test_colon_host_that_is_not_ipv6_still_raises(self) -> None:
-        # 含冒号但不是合法 IPv6 字面量（"gg:gg"）不得被新分支放过
-        with pytest.raises(ValueError, match="IP or port"):
-            ProxyInfo("gg:gg", "")
-
-    def test_ipv6_with_port_still_validates_the_port(self) -> None:
-        with pytest.raises(ValueError, match="Port must be"):
-            ProxyInfo("::1", "abc")
-
-
-# ---------------------------------------------------------------------------
-# MID-2233 ④：ProxyInfo.proxy_url 无生产消费点 —— 登记为残留，不得留「已修」陈述
-# ---------------------------------------------------------------------------
-
-
-class TestMid2233ResidualRegistered:
-    def test_module_registers_the_no_consumer_residual(self) -> None:
-        # 源码级锁：src/proxy.py 必须显式写明「user/password/scheme/proxy_url 无生产消费点」，
-        # 且不得再出现「MIN-20③ 已修好认证代理」这类被证伪的陈述。判据用「必须出现登记语」而非
-        # 「必须不出现某个词」，避免误伤历史注。
-        text = (pathlib.Path(__file__).resolve().parents[1] / "src" / "proxy.py").read_text(encoding="utf-8")
-        assert "没有生产消费点" in text, "MID-2233④ 的残留登记被删除：会重新出现「已修」的错误陈述"
-        assert "代理地址" in text, "登记里必须写明真正下发的是 config.ini「代理地址」这条独立链路"
-        # 主会话接上消费点后应改这条断言（删除登记语即为「已闭合」的信号）
-        assert "main.py" in text
-
-
-# ---------------------------------------------------------------------------
-# MIN-2222：异常日志必须带类型名（Windows 下 socket.timeout 的 str() 为空）
-# ---------------------------------------------------------------------------
-
-
-class TestMin2222TypeNameInLogs:
-    def test_windows_proxy_error_log_carries_exception_type(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # 注入假 winreg：检查跑在 Linux，直接 import winreg 会失败；
-        # 用 sys.modules 塞替身可让这条 Windows 路径跨平台都验到（不是 skip，避免 CI 无覆盖）。
-        boom = socket.timeout()  # str() == '' —— 正是「空白日志尾巴」的真实形态
-        fake = types.SimpleNamespace(QueryValueEx=lambda *a, **k: (_ for _ in ()).throw(boom))
-        monkeypatch.setitem(sys.modules, "winreg", fake)
-        detector = ProxyDetector.__new__(ProxyDetector)
-        # 名称改写后的私有属性只能这样赋值：直接写 detector._ProxyDetector__internet_settings
-        # 会被 mypy 判「类里没有这个属性」（它确实不在类体里出现，只在方法内被引用）
-        setattr(detector, "_ProxyDetector__internet_settings", object())
-        lines, handler_id = _capture_logs("DEBUG")
-        try:
-            assert isinstance(detector._get_proxy_info_windows(), ProxyInfo)
-            assert detector._is_proxy_enabled_windows() is False
-        finally:
-            logger.remove(handler_id)
-        # 只看异常分支留下的行：「系统未启用代理」那条 debug 不带异常是正确行为，
-        # 对它断言类型名会是假红（也说明观察点选错了）。
-        error_lines = [line for line in lines if "读取系统代理时发生错误" in line or "未找到代理信息" in line]
-        assert error_lines, "未捕获到异常分支日志，本用例的观察点失效（假绿）"
-        for line in error_lines:
-            assert "socket.timeout" in line or "TimeoutError" in line, f"缺异常类型名 → 空白告警: {line}"
-
-    @pytest.mark.asyncio
-    async def test_ttwid_fetch_failure_logs_type_name(self, _clean_ttwid: None) -> None:
-        async def _boom(**kwargs: Any) -> dict[str, str]:
-            raise socket.timeout()
-
-        monkeypatch = pytest.MonkeyPatch()
-        monkeypatch.setattr(ttwid_module, "_cache_fetch_cookies", _boom)
-        try:
-            lines, handler_id = _capture_logs("WARNING")
-            try:
-                assert await ttwid_module._fetch_ttwid() == ""
-            finally:
-                logger.remove(handler_id)
-        finally:
-            monkeypatch.undo()
-        assert lines, "未捕获到 warning，本用例的观察点失效（假绿）"
-        assert "自动获取抖音 ttwid 失败" in lines[0]
-        assert "socket.timeout" in lines[0] or "TimeoutError" in lines[0], lines[0]
-
-    def test_warmup_failure_logs_type_name(self) -> None:
-        async def _boom(*args: Any, **kwargs: Any) -> str:
-            raise socket.timeout()
-
-        monkeypatch = pytest.MonkeyPatch()
-        monkeypatch.setattr(ttwid_module, "get_ttwid", _boom)
-        try:
-            lines, handler_id = _capture_logs("WARNING")
-            try:
-                ttwid_module.warmup_ttwid()
-            finally:
-                logger.remove(handler_id)
-        finally:
-            monkeypatch.undo()
-        assert lines and ("socket.timeout" in lines[0] or "TimeoutError" in lines[0]), lines
 
 
 # ---------------------------------------------------------------------------
@@ -532,9 +302,9 @@ class TestMin2218PostRedirects:
         client = RecordingClient()
         monkeypatch = pytest.MonkeyPatch()
         monkeypatch.setattr(async_http, "_get_client", _client_provider(client))
-        monkeypatch.setattr(async_http.utils, "handle_proxy_addr", lambda x: None)
+        monkeypatch.setattr(async_http.network_urls, "normalize_proxy_url", lambda x: None)
         try:
-            assert await async_req("https://api.example.com", **kwargs) == "ok"
+            assert await request("https://api.example.com", **kwargs) == "ok"
         finally:
             monkeypatch.undo()
         assert client.post_calls, "POST 未发生，用例前提不成立"
@@ -547,9 +317,9 @@ class TestMin2218PostRedirects:
         client = RecordingClient()
         monkeypatch = pytest.MonkeyPatch()
         monkeypatch.setattr(async_http, "_get_client", _client_provider(client))
-        monkeypatch.setattr(async_http.utils, "handle_proxy_addr", lambda x: None)
+        monkeypatch.setattr(async_http.network_urls, "normalize_proxy_url", lambda x: None)
         try:
-            await async_req("https://api.example.com")
+            await request("https://api.example.com")
         finally:
             monkeypatch.undo()
         assert client.get_calls and client.get_calls[0].get("follow_redirects") is True
@@ -557,14 +327,14 @@ class TestMin2218PostRedirects:
     @pytest.mark.asyncio
     async def test_data_and_json_together_is_a_hard_error(self) -> None:
         # 同传在 httpx 下是「content 赢、json 被静默丢弃」（实测 body 就是传入的 bytes），
-        # 故必须显式拒绝；且**不能**被 async_req 的 except 吞成空串——那是网络故障的契约。
+        # 故必须显式拒绝；且**不能**被 request 的 except 吞成空串——那是网络故障的契约。
         client = RecordingClient()
         monkeypatch = pytest.MonkeyPatch()
         monkeypatch.setattr(async_http, "_get_client", _client_provider(client))
-        monkeypatch.setattr(async_http.utils, "handle_proxy_addr", lambda x: None)
+        monkeypatch.setattr(async_http.network_urls, "normalize_proxy_url", lambda x: None)
         try:
             with pytest.raises(ValueError, match="json_data"):
-                await async_req("https://api.example.com", data="body", json_data={"a": 1})
+                await request("https://api.example.com", data="body", json_data={"a": 1})
         finally:
             monkeypatch.undo()
         assert client.post_calls == [], "同传必须在发请求之前就被拦下"
@@ -589,11 +359,11 @@ class TestMin2216DependencyMissing:
 
         monkeypatch.setattr(async_http, "_build_client", _boom)
         monkeypatch.setattr(async_http, "_dep_warned", set())
-        monkeypatch.setattr(async_http.utils, "handle_proxy_addr", lambda x: None)
+        monkeypatch.setattr(async_http.network_urls, "normalize_proxy_url", lambda x: None)
         lines, handler_id = _capture_logs("DEBUG")
         try:
-            first = await async_req("https://live.douyin.com/123")
-            second = await async_req("https://live.douyin.com/123")
+            first = await request("https://live.douyin.com/123")
+            second = await request("https://live.douyin.com/123")
         finally:
             logger.remove(handler_id)
         assert first == "" and second == "", "返回契约不变（调用方按空响应处理）"
@@ -613,7 +383,7 @@ class TestMin2216DependencyMissing:
         monkeypatch.setattr(async_http, "_dep_warned", set())
         lines, handler_id = _capture_logs("WARNING")
         try:
-            result = await async_req("https://www.tiktok.com/@x", return_cookies=True, include_cookies=True)
+            result = await request("https://www.tiktok.com/@x", return_cookies=True, include_cookies=True)
         finally:
             logger.remove(handler_id)
         # return_cookies 形态的失败契约是 ("", {})，不能被新分支改坏
@@ -632,7 +402,7 @@ class TestMin2216DependencyMissing:
         monkeypatch.setattr(async_http, "_dep_warned", set())
         lines, handler_id = _capture_logs("WARNING")
         try:
-            assert await async_req("https://example.com") == ""
+            assert await request("https://example.com") == ""
         finally:
             logger.remove(handler_id)
         assert lines and "h2" in lines[0], lines
@@ -647,7 +417,7 @@ class TestMin2216DependencyMissing:
         monkeypatch.setattr(async_http, "_dep_warned", set())
         lines, handler_id = _capture_logs("WARNING")
         try:
-            assert await async_req("https://example.com") == ""
+            assert await request("https://example.com") == ""
         finally:
             logger.remove(handler_id)
         assert lines and "RuntimeError" in lines[0], lines
@@ -658,10 +428,10 @@ class TestMin2216DependencyMissing:
         client = RecordingClient().fail_with(httpx.ConnectError("connection refused"))
         monkeypatch.setattr(async_http, "_get_client", _client_provider(client))
         monkeypatch.setattr(async_http, "_dep_warned", set())
-        monkeypatch.setattr(async_http.utils, "handle_proxy_addr", lambda x: None)
+        monkeypatch.setattr(async_http.network_urls, "normalize_proxy_url", lambda x: None)
         lines, handler_id = _capture_logs("WARNING")
         try:
-            assert await async_req("https://example.com") == ""
+            assert await request("https://example.com") == ""
         finally:
             logger.remove(handler_id)
         assert lines == [], f"网络异常不应升到 warning: {lines}"
@@ -676,11 +446,11 @@ class TestMin2216DependencyMissing:
         if spec is not None and spec.origin is not None:
             pytest.skip("本机 h2 可用，构造期不会抛缺依赖异常")
         monkeypatch.setattr(async_http, "_dep_warned", set())
-        monkeypatch.setattr(async_http.utils, "handle_proxy_addr", lambda x: None)
+        monkeypatch.setattr(async_http.network_urls, "normalize_proxy_url", lambda x: None)
         with _client_cache_guard():
             lines, handler_id = _capture_logs("WARNING")
             try:
-                assert await async_req("https://live.douyin.com/123", http2=True) == ""
+                assert await request("https://live.douyin.com/123", http2=True) == ""
             finally:
                 logger.remove(handler_id)
         assert any("h2" in line for line in lines), f"真实缺包未被新分支捕获: {lines}"
@@ -731,7 +501,7 @@ class TestMin2217CloseAllClientsOwnership:
             assert foreign.aclose_calls == 0, "前置条件：创建时不该顺手关闭"
             try:
                 # 主线程收尾：旧实现会无条件 await 线程 A 建的那份连接池
-                asyncio.run(_close_all_clients())
+                asyncio.run(_close_owned_clients())
             finally:
                 with _client_cache_lock:
                     remaining = dict(_client_cache)
@@ -749,7 +519,7 @@ class TestMin2217CloseAllClientsOwnership:
 
             async def _scenario() -> Any:
                 client = await async_http._get_client(None, 10, True, False)
-                await _close_all_clients()
+                await _close_owned_clients()
                 return client
 
             client: _FakeClient = asyncio.run(_scenario())
@@ -788,7 +558,7 @@ class TestMin2217CloseAllClientsOwnership:
                 async def _scenario() -> None:
                     for i in range(3):
                         await async_http._get_client(f"http://p{i}:1", 10, True, False)
-                    await _close_all_clients()
+                    await _close_owned_clients()
 
                 for _ in range(3):
                     asyncio.run(_scenario())
@@ -806,7 +576,7 @@ class TestMin2217CloseAllClientsOwnership:
 
 class TestMin2221LockReentrancy:
     def test_close_all_clients_sync_is_safe_inside_the_lock(self) -> None:
-        # 复现「主线程正持有 _client_cache_lock 时收到 SIGINT → safe_exit → close_all_clients_sync
+        # 复现「主线程正持有 _client_cache_lock 时收到 SIGINT → safe_exit → close_clients
         # 再取同一把锁」：非重入锁下即同线程自死锁（Ctrl+C 后既不退出也不报错）。放独立线程 +
         # join 超时来验，超时即判失败——绝不在主线程死等。
         with pytest.MonkeyPatch.context() as mp:
@@ -817,7 +587,7 @@ class TestMin2221LockReentrancy:
 
             def _run() -> None:
                 with _client_cache_lock:
-                    async_http.close_all_clients_sync()
+                    async_http.close_clients()
                 outcome.append("done")
 
             thread = threading.Thread(target=_run, daemon=True)
@@ -856,9 +626,9 @@ class TestMin2219InternalTargetGuard:
         client = RecordingClient()
         monkeypatch = pytest.MonkeyPatch()
         monkeypatch.setattr(async_http, "_get_client", _client_provider(client))
-        monkeypatch.setattr(async_http.utils, "handle_proxy_addr", lambda x: None)
+        monkeypatch.setattr(async_http.network_urls, "normalize_proxy_url", lambda x: None)
         try:
-            assert await get_response_status(url) is False
+            assert await is_reachable(url) is False
         finally:
             monkeypatch.undo()
         assert client.head_calls == [] and client.get_calls == [], f"内网目标仍被探测: {client.head_calls}"
@@ -868,23 +638,23 @@ class TestMin2219InternalTargetGuard:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         # 直连时「本机解析结果」就是即将连接的地址，故域名形态也要判（与写入侧同一口径）
-        monkeypatch.setattr(web_config, "_resolve_host_ips", lambda host: ["127.0.0.1"])
+        monkeypatch.setattr(targets, "resolve_host_ips", lambda host: ["127.0.0.1"])
         client = RecordingClient()
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(async_http, "_get_client", _client_provider(client))
-            mp.setattr(async_http.utils, "handle_proxy_addr", lambda x: None)
-            assert await get_response_status("https://evil-cdn.example/live.m3u8") is False
+            mp.setattr(async_http.network_urls, "normalize_proxy_url", lambda x: None)
+            assert await is_reachable("https://evil-cdn.example/live.m3u8") is False
         assert client.head_calls == []
 
     @pytest.mark.asyncio
     async def test_proxied_domain_is_not_judged_by_local_dns(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # 反向锁（本条刻意保留的唯一差异）：走代理时本机解析与落地目标无关。若也按本机 DNS 定罪，
         # 「本机 DNS 被污染/查不到、代理却能解析」的境外流会被整批判不可达——即「探针误杀可用源」。
-        monkeypatch.setattr(web_config, "_resolve_host_ips", lambda host: ["127.0.0.1"])
+        monkeypatch.setattr(targets, "resolve_host_ips", lambda host: ["127.0.0.1"])
         client = RecordingClient()
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(async_http, "_get_client", _client_provider(client))
-            assert await get_response_status("https://www.tiktok.com/@a", proxy="http://127.0.0.1:7890") is True
+            assert await is_reachable("https://www.tiktok.com/@a", proxy_addr="http://127.0.0.1:7890") is True
         assert len(client.head_calls) == 1
 
     @pytest.mark.asyncio
@@ -893,7 +663,7 @@ class TestMin2219InternalTargetGuard:
         client = RecordingClient()
         with pytest.MonkeyPatch.context() as mp:
             mp.setattr(async_http, "_get_client", _client_provider(client))
-            assert await get_response_status("http://169.254.169.254/x", proxy="http://127.0.0.1:7890") is False
+            assert await is_reachable("http://169.254.169.254/x", proxy_addr="http://127.0.0.1:7890") is False
         assert client.head_calls == []
 
     @pytest.mark.asyncio
@@ -902,9 +672,9 @@ class TestMin2219InternalTargetGuard:
         client = RecordingClient()
         monkeypatch = pytest.MonkeyPatch()
         monkeypatch.setattr(async_http, "_get_client", _client_provider(client))
-        monkeypatch.setattr(async_http.utils, "handle_proxy_addr", lambda x: None)
+        monkeypatch.setattr(async_http.network_urls, "normalize_proxy_url", lambda x: None)
         try:
-            assert await get_response_status(url) is True
+            assert await is_reachable(url) is True
         finally:
             monkeypatch.undo()
         assert len(client.head_calls) == 1
@@ -915,14 +685,14 @@ class TestMin2219InternalTargetGuard:
         client = RecordingClient()
         monkeypatch = pytest.MonkeyPatch()
         monkeypatch.setattr(async_http, "_get_client", _client_provider(client))
-        monkeypatch.setattr(async_http.utils, "handle_proxy_addr", lambda x: None)
+        monkeypatch.setattr(async_http.network_urls, "normalize_proxy_url", lambda x: None)
         lines, handler_id = _capture_logs("WARNING")
         try:
-            assert await get_response_status(url) is False
+            assert await is_reachable(url) is False
         finally:
             # 必须成对撤销：本文件用的是 `pytest.MonkeyPatch()` 手工实例（不是夹具），pytest 不会
-            # 自动还原它。漏掉 undo() 时，这里对 `handle_proxy_addr` 的空返回补丁会永久留在进程里——
-            # async_http.utils 与 src/sync_http.py 共用同一个 src.utils，同会话后续的 sync_http 代理
+            # 自动还原它。漏掉 undo() 时，这里对 `normalize_proxy_url` 的空返回补丁会永久留在进程里——
+            # async_http.utils 与 src/network/sync_http.py 共用同一个 src.support.utils，同会话后续的 sync_http 代理
             # 用例会拿不到 proxy_addr、静默落到 urllib 直连分支，真的向 example.com 发出未打桩请求。
             monkeypatch.undo()
             logger.remove(handler_id)
@@ -930,13 +700,3 @@ class TestMin2219InternalTargetGuard:
         joined = "".join(lines)
         assert "SECRET-TOKEN" not in joined, "签名/鉴权串必须脱敏"
         assert "***" in joined
-
-    @pytest.mark.asyncio
-    async def test_reuse_of_the_shared_criterion_is_static(self) -> None:
-        # 判据必须来自 web_config，不得在 async_http 里另立一份内网规则（口径分叉即缺口）。
-        text = (pathlib.Path(__file__).resolve().parents[1] / "src" / "async_http.py").read_text(encoding="utf-8")
-        assert "web_config._host_internal_reason" in text
-        assert "web_config._parse_ip_literal" in text, "IP 字面量分支也要走同一份判据"
-        # 本模块不得自带第二套 ipaddress/网段常量——那才是真的「两处口径不一致」
-        assert "import ipaddress" not in text
-        assert "169.254" not in text.split("_internal_stream_target_reason")[0], "内网常量不得在本模块另立"

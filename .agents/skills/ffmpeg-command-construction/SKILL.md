@@ -11,10 +11,10 @@ description: 修改 ffmpeg 录制命令、保存类型、输入输出参数或�
 
 | 改动 | 入口 / 联动 |
 | --- | --- |
-| 输入选项、headers、代理、TLS | main._build_ffmpeg_input_args，按 -i 锚点操作，不用裸列表下标 |
+| 输入选项、headers、代理、TLS | recording._build_ffmpeg_input_args，按 -i 锚点操作，不用裸列表下标 |
 | 输出扩展名与分段路径 | _build_record_output_path、_build_ffmpeg_output_args 与现有格式表 |
 | 执行与录后转换 | _run_ffmpeg_record、_convert_after_record |
-| 平台解析分发 | _PLATFORM_RESOLVERS 与 _PlatformResolveContext，表顺序决定优先级 |
+| 平台解析分发 | platform_dispatch._PLATFORM_RESOLVERS 与 _PlatformResolveContext，表顺序决定优先级 |
 | 失败/成功反馈 | check_subprocess 与 stream_select 退避接线 |
 
 新增 per-file 选项先用目标版本 `ffmpeg -h full` 确认输入/输出归属，再检查参数位置和支持版本；兼顾镜像现有版本，不只看最新版本。

@@ -26,12 +26,12 @@ from typing import Any, cast
 import pytest
 from loguru import logger
 
-import src.danmaku_monitor as dm
-import src.ffmpeg_proc as fp
-import src.log_archive as la
-import src.srt_writer as sw
-from src.danmaku_monitor import DanmakuMonitorHub
-from src.srt_writer import SrtWriter
+import src.app.log_archive as la
+import src.danmaku.monitor as dm
+import src.danmaku.srt_writer as sw
+import src.recording.process as fp
+from src.danmaku.monitor import DanmakuMonitorHub
+from src.danmaku.srt_writer import SrtWriter
 
 
 def _capture_logs(level: str = "DEBUG") -> tuple[list[str], int]:
@@ -216,7 +216,7 @@ class TestSidecarArchiveWindow:
         # 弹幕边车、GUI/录制后台线程的 rename 一并命中「遇 danmaku_monitor.jsonl 就抛 PermissionError」。
         # 现按仓库口径：浅拷贝 + 只覆盖所需属性 + 落进被测模块命名空间。
         monkeypatch.setattr(la, "os", types.SimpleNamespace(**{**vars(os), "rename": _deny_sidecar_rename}))
-        # 反向见证：替身只落进 src.log_archive 的命名空间，进程全局 os.rename 必须仍是真实现
+        # 反向见证：替身只落进 src.app.log_archive 的命名空间，进程全局 os.rename 必须仍是真实现
         assert os.rename is real_rename
         try:
             assert la.archive_runtime_logs(reopen_streams=False) == []
@@ -249,7 +249,7 @@ class TestSidecarArchiveWindow:
 class TestSidecarRotateBackoff:
     # 三条锁都直接驱动 _append_sidecar_line（MID-25 起它既是生产实现也是给测试留的注入口），不经
     # hub/写线程：轮转只在句柄 tell() 越阈值时发生，用真线程反而要把队列排空时机也钉进断言。
-    # os.replace 替身按 M-27/MT-11 口径只落进 src.danmaku_monitor 的命名空间。
+    # os.replace 替身按 M-27/MT-11 口径只落进 src.danmaku.monitor 的命名空间。
     @staticmethod
     def _close_all(files: dict[str, Any]) -> None:
         for fh in files.values():
@@ -742,7 +742,7 @@ def test_confirmed_surviving_process_is_reported_as_failed(monkeypatch: pytest.M
 def test_registry_recheck_reads_the_same_fact_as_the_warning() -> None:
     # 结构锁：注册表复核处不得再出现 poll() 这第二套事实（「未确认」告警读 event、复核读 poll()
     # 正是 MIN-2236② 的根因形态）。只看有效代码行：本轮修复的注释里必然要提到旧写法。
-    source = (Path(__file__).resolve().parents[1] / "src" / "ffmpeg_proc.py").read_text(encoding="utf-8")
+    source = (Path(__file__).resolve().parents[1] / "src" / "recording/process.py").read_text(encoding="utf-8")
     tail = source[source.rindex("with _processes_lock:") :]
     code = "\n".join(ln.split("#", 1)[0] for ln in tail.splitlines())
     assert "confirmed_terminated" in code, code

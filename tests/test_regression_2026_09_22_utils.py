@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-# 2026-09-22 审查报告 / 组 C（src/utils.py + src/web_config.py + src/config_io.py + msg_push.py）回归锁。
+# 2026-09-22 审查报告 / 组 C（src/support/utils.py + src/api/config.py + src/config/io.py + msg_push.py）回归锁。
 #
 # 判据一律落在「失效形态本身」，而不是「调用了某个函数」：
 #   SEV-2210  mask_credentials() 对 camelCase / 全小写复合凭据键必须让**原值消失**，并给出变异判据；
-#   SEV-2211  面板配置写入必须与 src.utils.atomic_write_text 是**同一份实现**，且整文件重写保留原
+#   SEV-2211  面板配置写入必须与 src.support.utils.atomic_write_text 是**同一份实现**，且整文件重写保留原
 #             mode（Windows 条件跳过）；
 #   SEV-2212  send_email 的 SSL 与 STARTTLS 两条路径都必须收到「校验证书」的 context；
 #   SEV-2209  run_js_async 必须有超时预算——运行时侧 timeout= 与外层 asyncio.wait_for 双保险
@@ -12,7 +12,6 @@
 #             编码回退分支不得使用宿主 locale。
 #
 # 全部离线：SMTP 用记录型假类替换（不发真实连接）；JS 运行时用桩上下文替换（不启动 node）。
-
 import asyncio
 import builtins
 import inspect
@@ -28,13 +27,13 @@ from typing import IO, Any, cast
 
 import pytest
 
-import src.utils as utils_module
-from src import (
-    i18n,  # noqa: F401  与 conftest 的恒等翻译 fixture 同源，确保断言与语言配置解耦
-    msg_push,
-)
-from src import web_config as web_config_module
-from src.utils import _SECRET_KEYS, mask_credentials
+import src.support.utils as utils_module
+from src.api import config as web_config_module
+from src.config import files as config_files
+from src.notifications import msg_push
+from src.runtime import javascript
+from src.support import i18n
+from src.support.utils import _SECRET_KEYS, mask_credentials
 
 # ────────────────────────────────────────────────────────────
 # SEV-2210：camelCase / 全小写复合凭据键的掩码覆盖
@@ -146,7 +145,7 @@ class TestWebConfigDelegatesToUtilsAtomicWrite:
         # 失效形态：web_config 曾持有「第二份独立实现」（自造 tmp + open("w")），没有 mode 回填 /
         # fsync / 唯一临时名 / 失败清理四项加固。判据是**实现同一性**：用 monkeypatch 换掉 utils
         # 的符号，web_config 的写入必须跟着换（证明它真的在调用）。
-        import src.web_config as wc
+        import src.api.config as wc
 
         called: list[tuple[str, str, str]] = []
 
@@ -196,11 +195,10 @@ class TestWebConfigDelegatesToUtilsAtomicWrite:
     def test_no_second_mkstemp_implementation_across_owned_files(self) -> None:
         # 报告要求的可复核判据（grep -rn "mkstemp" src/ 仅 utils 命中）以 AST 形式锁死——文本匹配
         # 会命中文档性注释（SEV-2211 的修复注释本身就提到旧实现），故只看可执行调用点。
-        # 注意：main 必须先导入——直接 `import src.config_io` 会在其 `import main` 处触发循环导入。
+        # 注意：main 必须先导入——直接 `import src.config.io` 会在其 `import main` 处触发循环导入。
         import ast
 
-        import src.config_io as config_io
-        from src import main  # noqa: F401  先完整初始化 main，打破 config_io<->main 的循环导入
+        import src.config.io as config_io
 
         for module in (web_config_module, config_io):
             tree = ast.parse(inspect.getsource(module))
@@ -489,7 +487,7 @@ class _JsCtxLegacyPyExecJS:
 class TestRunJsAsyncTimeoutBudget:
     def test_signature_exposes_a_positive_timeout(self) -> None:
         # 判据①：预算存在、可关键字覆盖、默认值为正（与姊妹函数 run_node_script_async 同口径）
-        param = inspect.signature(utils_module.run_js_async).parameters["timeout"]
+        param = inspect.signature(javascript.run_js_async).parameters["timeout"]
         assert param.kind is inspect.Parameter.KEYWORD_ONLY
         assert isinstance(param.default, (int, float))
         assert cast("float", param.default) > 0
@@ -499,11 +497,11 @@ class TestRunJsAsyncTimeoutBudget:
         # 判据②：kwargs 里确实带 timeout。旧缺陷形态是「call(func_name, *args)」——运行时侧
         # 收到的 timeout 恒为 None，即子进程永不超时（node 卡住即整轮挂死）。
         ctx = _JsCtxAcceptingTimeout()
-        monkeypatch.setattr(utils_module, "get_compiled_js", lambda _js_path: ctx)
-        result = await utils_module.run_js_async("x.js", "sign", "query", "ua")
+        monkeypatch.setattr(javascript, "get_compiled_js", lambda _js_path: ctx)
+        result = await javascript.run_js_async("x.js", "sign", "query", "ua")
         assert result == "sign:('query', 'ua')"
         assert ctx.kwargs == {"timeout": 30.0}, "默认预算未透传"
-        _ = await utils_module.run_js_async("x.js", "sign", "query", timeout=5.5)
+        _ = await javascript.run_js_async("x.js", "sign", "query", timeout=5.5)
         assert ctx.kwargs == {"timeout": 5.5}, "显式预算未透传"
 
     @pytest.mark.asyncio
@@ -511,10 +509,10 @@ class TestRunJsAsyncTimeoutBudget:
         # 判据③：运行时侧完全不生效（桩忽略 timeout）时，await 侧仍必须在预算内脱身。这里刻意让桩
         # 睡到 delay（> 预算）：少了 wait_for 就是「睡满 delay 后正常返回」，多了则在预算处抛 TimeoutError。
         ctx = _JsCtxAcceptingTimeout(delay=1.0)
-        monkeypatch.setattr(utils_module, "get_compiled_js", lambda _js_path: ctx)
+        monkeypatch.setattr(javascript, "get_compiled_js", lambda _js_path: ctx)
         started = time.monotonic()
         with pytest.raises(TimeoutError):
-            _ = await utils_module.run_js_async("x.js", "sign", "query", timeout=0.2)
+            _ = await javascript.run_js_async("x.js", "sign", "query", timeout=0.2)
         elapsed = time.monotonic() - started
         assert elapsed < 1.0, f"未在预算内脱身（耗时 {elapsed:.2f}s）——to_thread 线程不可取消，必须靠 wait_for"
         # 被放弃的工作线程仍在睡：等它收尾，避免它的残余 sleep 跨到事件循环销毁之后
@@ -528,13 +526,13 @@ class TestRunJsAsyncTimeoutBudget:
         # 等待的 future 上。不主动取用的话，asyncio 会在该 future 被 GC 时向事件循环报 "Future
         # exception was never retrieved"——污染「pytest 0 警告」检查与用户日志，且真正归因被埋掉。
         ctx = _JsCtxAcceptingTimeout(raise_after=0.4)
-        monkeypatch.setattr(utils_module, "get_compiled_js", lambda _js_path: ctx)
+        monkeypatch.setattr(javascript, "get_compiled_js", lambda _js_path: ctx)
         loop = asyncio.get_running_loop()
         reported: list[dict[str, Any]] = []
         loop.set_exception_handler(lambda _loop, context: reported.append(dict(context)))
         try:
             with pytest.raises(TimeoutError):
-                _ = await utils_module.run_js_async("x.js", "sign", "query", timeout=0.1)
+                _ = await javascript.run_js_async("x.js", "sign", "query", timeout=0.1)
             # 给被放弃的工作线程时间把异常抛出来并触达 done 回调
             await asyncio.sleep(0.6)
         finally:
@@ -547,8 +545,8 @@ class TestRunJsAsyncTimeoutBudget:
         # 兼容闸的反向锁：旧版 PyExecJS 的 call() 不收 timeout，透传即 TypeError
         # → 该环境下所有 JS 签名平台瞬间全废。此处必须正常返回、且不带多余关键字。
         ctx = _JsCtxLegacyPyExecJS()
-        monkeypatch.setattr(utils_module, "get_compiled_js", lambda _js_path: ctx)
-        assert await utils_module.run_js_async("x.js", "sign", "query") == "legacy-ok"
+        monkeypatch.setattr(javascript, "get_compiled_js", lambda _js_path: ctx)
+        assert await javascript.run_js_async("x.js", "sign", "query") == "legacy-ok"
         assert ctx.args == ("sign", "query")
 
     def test_runtime_capability_probe_matches_all_three_backend_shapes(self) -> None:
@@ -561,9 +559,9 @@ class TestRunJsAsyncTimeoutBudget:
         def _without_kw(name: str, *args: object) -> str:
             return f"{name}{args}"
 
-        assert utils_module._js_runtime_accepts_timeout(_with_kw) is True
-        assert utils_module._js_runtime_accepts_timeout(_with_var_kw) is True
-        assert utils_module._js_runtime_accepts_timeout(_without_kw) is False
+        assert javascript._js_runtime_accepts_timeout(_with_kw) is True
+        assert javascript._js_runtime_accepts_timeout(_with_var_kw) is True
+        assert javascript._js_runtime_accepts_timeout(_without_kw) is False
 
     def test_await_side_has_its_own_deadline_and_does_not_swallow(self) -> None:
         # 变异判据（可复核）：
@@ -572,7 +570,7 @@ class TestRunJsAsyncTimeoutBudget:
         #     超时必须上抛，交调用方的 trace_error_decorator 兜底并计入按 host 的失败样本。
         import ast
 
-        tree = ast.parse(inspect.getsource(utils_module.run_js_async))
+        tree = ast.parse(inspect.getsource(javascript.run_js_async))
         attrs = {
             node.func.attr
             for node in ast.walk(tree)
@@ -604,7 +602,7 @@ class TestRemoveDuplicateLinesByteFidelity:
             b"https://b.example/2\r\n"  # 真重复：必须仍然被去掉
         )
         _ = target.write_bytes(payload)
-        utils_module.remove_duplicate_lines(target)
+        config_files.remove_duplicate_lines(target)
         out = target.read_bytes()
         # 整体字节判据（①②③ + BOM 一次锁死）
         assert out == (
@@ -628,7 +626,7 @@ class TestRemoveDuplicateLinesByteFidelity:
         # （setdefault 而非赋值：赋值会把行尾换成后到者的形态，等于悄悄改写文件）。
         target = tmp_path / "URL_config.ini"
         _ = target.write_bytes(b"\xef\xbb\xbfa\r\na\nb\n")
-        utils_module.remove_duplicate_lines(target)
+        config_files.remove_duplicate_lines(target)
         assert target.read_bytes() == b"\xef\xbb\xbfa\r\nb\n"
 
     def test_final_line_without_terminator_gets_one(self, tmp_path: Path) -> None:
@@ -636,7 +634,7 @@ class TestRemoveDuplicateLinesByteFidelity:
         # 会把新行拼到末行尾巴上（config_io 的行级写入按整行比较）。
         target = tmp_path / "URL_config.ini"
         _ = target.write_bytes(b"\xef\xbb\xbfa\r\nb")
-        utils_module.remove_duplicate_lines(target)
+        config_files.remove_duplicate_lines(target)
         assert target.read_bytes() == b"\xef\xbb\xbfa\r\nb\n"
 
     def test_non_utf8_bytes_round_trip_unchanged(self, tmp_path: Path) -> None:
@@ -645,7 +643,7 @@ class TestRemoveDuplicateLinesByteFidelity:
         # 落盘，故本用例不依赖宿主 locale，跨平台稳定。
         target = tmp_path / "URL_config.ini"
         _ = target.write_bytes(b"https://x.example/1\n\xb2\xe2\xca\xd4\n\xb2\xe2\xca\xd4\n")
-        utils_module.remove_duplicate_lines(target)
+        config_files.remove_duplicate_lines(target)
         assert target.read_bytes() == b"\xef\xbb\xbfhttps://x.example/1\n\xb2\xe2\xca\xd4\n"
 
     def test_both_reads_are_explicitly_encoded_and_untranslated(
@@ -666,7 +664,7 @@ class TestRemoveDuplicateLinesByteFidelity:
         monkeypatch.setattr(builtins, "open", spy_open)
         target = tmp_path / "URL_config.ini"
         _ = target.write_bytes(b"a\nb\n")
-        utils_module.remove_duplicate_lines(target)
+        config_files.remove_duplicate_lines(target)
         assert len(reads) == 2, f"回退轮未走到（或多了读轮）: {reads}"
         for kwargs in reads:
             assert kwargs.get("encoding") == "utf-8-sig", kwargs
@@ -679,7 +677,7 @@ class TestRemoveDuplicateLinesByteFidelity:
         # 故只看可执行调用点——与本文件 SEV-2211/MID-2252 同一手法）。
         import ast
 
-        tree = ast.parse(inspect.getsource(utils_module.remove_duplicate_lines))
+        tree = ast.parse(inspect.getsource(config_files.remove_duplicate_lines))
         opens = [
             node
             for node in ast.walk(tree)

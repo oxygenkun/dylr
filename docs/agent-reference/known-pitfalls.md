@@ -14,8 +14,8 @@
 - HEAD 非 2xx 走限量 Range GET（200/206 可达）；401/403 按现有复核流程重试，末位候选允许告警交 ffmpeg 决定，但不得绕过协议/内网安全判定。
 - 虎牙专用退避、FLV-first、抖动和至少一个主循环的退避窗口必须保留；斗鱼 HLS 优先。HLS 整组排除与候选调序是不同操作。
 - UA、proxy、verify 在签名、探针及 ffmpeg 间保持约定一致；UA 修改核对 MOBILE_UA、ffmpeg 默认、room.HEADERS 与 B站 H5。
-- 重定向安全校验复用 async_http._build_client 与 stream_select._probe_client 的接线点；不另建客户端绕开，不缓存 DNS 判定。响应钩子不等于建连前防护，不能声称已闭合 DNS 重绑定。
-- 响应决定的落地 URL 检查域族、userinfo 和内网地址；失败保留用户原始 URL、剥离 Cookie，下游拼接主机再次校验。sync_http opener 显式协议白名单，不修改进程全局 opener。
+- 重定向安全校验复用 network.http._build_client 与 streams.selection._probe_client 的接线点；不另建客户端绕开，不缓存 DNS 判定。每跳由 request 钩子先校验，response 钩子只限量读取；DNS 判定与实际建连仍有时间差，不能声称已闭合 DNS 重绑定。
+- 响应决定的落地 URL 检查域族、userinfo 和内网地址；失败保留用户原始 URL、剥离 Cookie，下游拼接主机再次校验。独立录制工具的 urllib opener 显式协议白名单，不修改进程全局 opener。
 - 小红书链接统一 parse_xhs_live_url；房间号只收 ASCII 数字，未开播保留主播信息与监控作业，失败不得伪装未开播或请求 /user/profile/None。
 
 ## 弹幕采集与 SRT 写入
@@ -41,8 +41,7 @@
 ## HTTP 客户端复用与连接管理
 
 - 探针客户端仅单次选源复用，不升级全局缓存或禁用 keepalive；业务请求头逐请求传，避免候选间凭据污染。
-- sync_http Session 按线程复用，不跨线程共享；不安全 SSL context/opener 惰性建立。没有生产调用时不宣称已获得性能收益。
-- 所有出站读取受上限体系约束：异步在唯一 response 钩子，sync_http 和探针走各自限量 helper；超限走原失败出口，不返回半截内容。新增读取点用超限响应的行为测试验证，不能靠变量名或登记表判定安全。
+- 所有出站读取受上限体系约束：异步在唯一 response 钩子，同步探针走限量 helper；超限走原失败出口，不返回半截内容。新增读取点用超限响应的行为测试验证，不能靠变量名或登记表判定安全。
 
 ## 并发、事件循环与锁
 
@@ -65,8 +64,8 @@ Web 安全拒绝启动必须早于 stdio 重定向，保留日志兜底；重定
 ## 配置键名、布尔口径与 SSL 验证
 
 - 配置键不含 = / :，读取 utf-8-sig，键名对比大小写归一；旧迁移键不盲补。补写原子、持锁、幂等，写回结果可被 strict parser 重读。
-- 容错读取用 config_read.tolerant_config_parser。utils 中该依赖保持函数内延迟导入，避免循环依赖。
-- SSL 平台覆盖经 http_config，异常平台只追加不删除用户项；全局已禁用校验时不重复应用覆盖。
+- 容错读取用 config_read.tolerant_config_parser。读取层不依赖 Web 配置或录制引擎，utils 直接复用该解析器。
+- TLS 平台覆盖经 network.policy，异常平台只追加不删除用户项；全局已禁用校验时不重复应用覆盖。
 
 ## 凭据与敏感配置脱敏
 

@@ -16,12 +16,12 @@ import vm from 'node:vm';
 const APP_JS = readFileSync(new URL('../../web/app.js', import.meta.url), 'utf8');
 const INDEX_HTML = readFileSync(new URL('../../web/index.html', import.meta.url), 'utf8');
 const ROOT_INDEX_HTML = readFileSync(new URL('../../index.html', import.meta.url), 'utf8');
-const WEB_API_PY = readFileSync(new URL('../../src/web_api.py', import.meta.url), 'utf8');
-// 请求模型（含 ConfigUpdate.reauth_password）在 src/web_models.py，字段级断言扫该文件；
+const WEB_API_PY = readFileSync(new URL('../../src/api/routes.py', import.meta.url), 'utf8');
+// 请求模型（含 ConfigUpdate.reauth_password）在 src/api/models.py，字段级断言扫该文件；
 // update_config 端点本体仍在 web_api.py。
-const WEB_MODELS_PY = readFileSync(new URL('../../src/web_models.py', import.meta.url), 'utf8');
+const WEB_MODELS_PY = readFileSync(new URL('../../src/api/models.py', import.meta.url), 'utf8');
 // SEV-2221 撤销锁要核对 main.py 里有没有轮次计数器（判据见该用例），读原文而不猜。
-const MAIN_PY = readFileSync(new URL('../../src/main.py', import.meta.url), 'utf8');
+const MAIN_PY = readFileSync(new URL('../../src/recording/engine.py', import.meta.url), 'utf8');
 
 // —— DOM / 定时器 / fetch 桩 ————————————————————————————————
 
@@ -344,13 +344,13 @@ test('SEV-2228：stale=true 的陈旧快照也要显式告知用户数据可能�
 // 原锁「main_loop_alive=false 的告警文案」。2026-09-23 实测证伪：该键读 main.main_loop_ticks，
 // 而这个名字在 main.py 里**从未定义、从未自增**（下面第一条用例把它做成了断言，防「以后有人
 // 以为还有效」）。键永不下发、前端 `=== false` 分支永不成立——「永不生效的存活信号」比「没有
-// 该信号」更危险，后端已把键从契约撤下（见 src/web_api.py::_read_engine_status），前端改用两个
+// 该信号」更危险，后端已把键从契约撤下（见 src/recording/status.py::get_status），前端改用两个
 // 真实信号：error（采样抛错）与 stale（超时回退）。
 
 test('SEV-2221 撤销：main_loop_alive 不得再出现在前端、后端或 main.py 任何一侧', () => {
     // 三侧同断言，缺一条就退化成「一半代码还在等一个永不来的键」：① app.js 不再读它（否则
     // 是一条永不成立的判定，还会在 main.py 接线那天静默失效）；② web_api.py 不再有探针实现
-    // （否则 _read_engine_status 忘挂键时它就是死码）；③ main.py 仍无轮次计数器——「撤下」的
+    // （否则 get_status 忘挂键时它就是死码）；③ main.py 仍无轮次计数器——「撤下」的
     // 事实依据。断言的是**代码引用**而非「文件里出现过这个名字」：撤下缘由要写在注释/契约速查里，
     // 按全文 includes 断言会把说明本身打成违规。
     assert.doesNotMatch(APP_JS, /s\.main_loop_alive\b/, 'app.js 仍在读取 main_loop_alive（死路径未清干净）');
@@ -487,7 +487,7 @@ test('SEV-2228 后半：danmaku_unavailable 不得推进增量游标（否则跳
 
 test('M-23：/api/danmaku 的 dropped 计数进 innerHTML 前必须转义（拼接路径一律 esc 的不变量）', async () => {
     // 失效形态：dmLineHtml 里 user/room/text 全过 esc()，唯独 dropped 是裸插值。后端当前把
-    // dropped 写成 int（src/danmaku_monitor.py 的采样折叠计数），现网不可利用；但契约一变
+    // dropped 写成 int（src/danmaku/monitor.py 的采样折叠计数），现网不可利用；但契约一变
     // （改成带标记的可读串或服务端拼文案）这里就是弹幕流的存储型注入点。用例按字符串形态喂，
     // 直接锁转义层，不依赖后端今天写什么类型。
     const hostile = '<img src=x onerror=alert(1)>';
@@ -708,7 +708,7 @@ test('MID-2253：i18n.tr 模板的字符串实参不得是中文常量（其它�
     // 失效形态：tr("[web] 认证: {web_auth_enable}", web_auth_enable="开启" if ... else "关闭")——
     // 模板被翻译成「Authentication: {web_auth_enable}」而值仍是中文 → en_US 下中英混杂，
     // 中文下完全看不出。锁做成**文件无关**：任何 i18n.tr(...) 里出现「中文常量 + 无 tr 包装」即判红。
-    const files = ['src/web.py', 'src/web_api.py'];
+    const files = ['src/web.py', 'src/api/routes.py'];
     const offenders = [];
     for (const rel of files) {
         const src = readFileSync(new URL('../../' + rel, import.meta.url), 'utf8');
@@ -863,7 +863,7 @@ test('MID-2241：saveConfig 对 Web 认证两键先 confirm 再要求复验口�
 });
 
 test('M-22/M-26：认证两键的复验口令经 password 弹窗采集、且只随认证键下发（正向锁）', () => {
-    // 契约事实源是生产代码：src/web_api.py::update_config 的 MID-2241 段已实现强制复验（认证开启时
+    // 契约事实源是生产代码：src/api/routes.py::update_config 的 MID-2241 段已实现强制复验（认证开启时
     // 写认证两键不带可过 verify_web_password 的 reauth_password 即 403），本条因此锁定「前端确实
     // 采集并下发」。M-26 教训：此前两条 doesNotMatch 文本锁因后端字面量改名而**空洞成立**（实测
     // 32/32 全绿，而 Python 侧锁的恰是相反契约），故：① 不再以源码字面量锁安全边界；② 后端行为
@@ -926,7 +926,7 @@ test('MIN-2241：integrity 哈希必须是 sha384 且长度为真哈希，不得
 test('MIN-2241：根 index.html 仍未被 Web 面板链路服务（修复不得把它挂进路由）', () => {
     // 反向边界：本条处置是「保留独立工具页 + 补 SRI」，不是接进面板。/ 必须仍指向 web/index.html，
     // 否则 CSP/鉴权/同源判定全被绕开（这正是本条要防的另一半）。
-    // 锚点用 \r?\n\r?\n：src/web_api.py 是纯 CRLF，node 的 readFileSync(...,'utf8') 不做换行归一，
+    // 锚点用 \r?\n\r?\n：src/api/routes.py 是纯 CRLF，node 的 readFileSync(...,'utf8') 不做换行归一，
     // 写死 \n\n 的「空行」在 CRLF 源上恒不匹配（AGENTS.md「注释检查工具」盲点 3 的现例）。
     const idx = WEB_API_PY.match(/async def index\(\)[\s\S]*?\r?\n\r?\n/);
     assert.ok(idx, '未找到 / 路由');

@@ -135,7 +135,7 @@ Windows 启动时缺少 FFmpeg，会按 `src/external_resources.json` 中的地�
 
 **海外站点（14 个）**：TikTok | SOOP(原AfreecaTV) | PandaTV | WinkTV | TTingLive(原Flextv) | PopkonTV | TwitchTV | LiveMe | ShowRoom | CHZZK | Shopee | YouTube | Faceit | Picarto
 
-> 合计 **51 个**平台（对外标称 60+，含持续添加中的平台）。各平台数据获取函数位于 `src/spider.py`，流地址解析位于 `src/stream.py`。
+> 合计 **51 个**平台（对外标称 60+，含持续添加中的平台）。各平台数据获取函数位于 `src/streams/spider.py`，流地址解析位于 `src/streams/stream.py`。
 
 **弹幕录制支持（5 个平台）**：抖音直播 | 斗鱼直播 | 虎牙直播 | B站直播 | TwitchTV
 
@@ -149,99 +149,52 @@ Windows 启动时缺少 FFmpeg，会按 `src/external_resources.json` 中的地�
 
 ## 📁 项目结构
 
-```
+运行时代码按职责组织在 `src/` 下。源码入口为 `src/main.py`（CLI）和 `src/web.py`（Web），两者共用 `src/recording/engine.py` 录制引擎。
+
+```text
 DouyinLiveRecorder/
-├── config/                     # 配置文件目录
-│   ├── config.ini             # 主配置文件
-│   └── URL_config.ini         # 直播间地址列表
-├── src/                        # 核心源码包
-│   ├── main.py                     # 命令行入口
-│   ├── web.py                      # Web 管理面板入口
-│   ├── msg_push.py                 # 消息推送模块
-│   ├── i18n.py                     # 国际化实现
-│   ├── __init__.py             # 包初始化 + Node.js 环境配置 + 弹幕平台注册表/工厂
-│   ├── spider.py              # 直播流地址解析（60+ 平台，已抽离弹幕逻辑）
-│   ├── stream.py              # 直播流录制编排（ffmpeg 命令/分段/格式）
-│   ├── stream_select.py       # 流地址选源/可达性校验/探针退避
-│   ├── scheduler.py           # 并发调度中枢（自适应容量 + 按平台熔断）
-│   ├── room.py                # 直播间信息解析
-│   ├── utils.py               # 工具函数库
-│   ├── logger.py              # Loguru 日志配置
-│   ├── proxy.py               # 代理检测
-│   ├── ttwid.py               # 抖音访客 ttwid 获取/缓存
-│   ├── runtime_install.py # FFmpeg / Node.js 共用直接下载与校验
-│   ├── node_install.py        # Node.js 自动安装/初始化
-│   ├── ffmpeg_install.py      # FFmpeg 安装脚本
-│   ├── ffmpeg_proc.py         # ffmpeg 子进程管理（抽离自 main.py）
-│   ├── video_postprocess.py   # 录制后处理（转封装/转码）
-│   ├── notify.py              # 直播状态消息推送（抽离自 main.py）
-│   ├── recorder_status.py     # 录制状态跟踪（抽离自 main.py）
-│   ├── config_io.py           # 配置读写/数值转换/备份（抽离自 main.py）
-│   ├── config_bool.py         # 布尔配置解析（是/否 与 true/false/1/0/yes/no 等价，零依赖）
-│   ├── config_read.py         # 容错配置读取（同节重复键折叠为最后一次取值并点名告警）
-│   ├── cookie_cache.py        # 访客 Cookie 进程级共享缓存
-│   ├── log_archive.py         # 运行日志归档（停止录制流程收尾：四日志按时间戳改名）
-│   ├── http_config.py          # HTTP 客户端共享配置（SSL 验证开关）
-│   ├── async_http.py          # 异步 HTTP 客户端 (httpx)
-│   ├── sync_http.py           # 同步 HTTP 客户端
-│   ├── web_api.py             # Web 管理面板 Starlette 应用
-│   ├── web_config.py          # Web 面板配置读写
-│   ├── base.py               # 弹幕采集基类（DanmakuBase / DanmakuMessage）
-│   ├── collector.py           # 弹幕采集器（线程桥接主流程）
-│   ├── danmaku_monitor.py     # 弹幕监控枢纽（DanmakuMonitorHub）
-│   ├── srt_writer.py         # 弹幕时间字幕（SRT）写入
-│   ├── ws_client.py          # WebSocket 传输层（弹幕直连、proxy=None）
-│   ├── platforms/            # 弹幕平台实现（按平台标识经工厂注册）
-│   │   ├── douyin.py         # 抖音弹幕（protobuf + _tars 心跳）
-│   │   ├── douyu.py          # 斗鱼弹幕（STT 协议）
-│   │   ├── huya.py           # 虎牙弹幕（WSP 协议）
-│   │   ├── bilibili.py       # B站弹幕（WebSocket）
-│   │   ├── twitch.py         # Twitch 弹幕（IRC/WS）
-│   │   ├── _tars.py          # TARS 私有协议编解码
-│   │   └── _xbogus.py        # X-Bogus 签名
-│   ├── proto/                # 抖音弹幕 protobuf 定义
-│   │   ├── douyin.proto      # protoc 源定义
-│   │   ├── douyin_pb2.py      # protoc 生成（DO NOT EDIT）
-│   │   └── douyin_pb2.pyi     # 类型存根
-│   └── javascript/            # JavaScript 签名脚本
-│       ├── crypto-js.min.js
-│       ├── x-bogus.js
-│       ├── haixiu.js
-│       ├── liveme.js
-│       └── migu.js
-├── web/                        # Web 管理面板前端
-│   ├── index.html              # 单页应用入口
-│   ├── app.js                  # 前端逻辑（API、SSE、渲染）
-│   └── style.css               # 样式表（主题、响应式）
-├── typings/                    # 第三方库类型存根（静态检查用）
-│   └── execjs/                 # PyExecJS 存根
-├── tool/                    # 工程辅助脚本
-│   ├── build_exe.py                # PyInstaller 打包脚本（CLI/Web 两入口）
-│   ├── smoke_test.py           # 通用 Web/接口冒烟测试（零依赖，配置驱动）
-│   ├── smoke_web.json          # 冒烟测试示例用例（探活 Web 面板）
-│   ├── check_coverage.py       # 逐模块覆盖率检查（CI 使用）
-├── downloads/                  # 录制文件保存目录（运行时生成）
-├── logs/                       # 日志文件目录（运行时生成，含 danmaku_monitor.jsonl）
-├── i18n/                       # 英文翻译（中文使用源码原文）
-│   └── en_US.json              # English (US)（JSON 格式目录）
-├── ffmpeg/                     # FFmpeg 目录（Windows）
-├── node/                       # Node.js 目录（Windows）
-├── index.html                  # M3U8 视频播放器（独立工具页）
-├── requirements.txt            # Python 依赖
-├── pyproject.toml             # Python 项目配置
-├── Dockerfile                  # Docker 构建文件（多阶段）
-├── docker-compose.yaml         # Docker Compose（recorder/web 两服务）
-├── .dockerignore               # Docker 构建上下文排除
-├── .gitignore                  # Git 排除
-├── CODE_WIKI.md               # 项目架构文档
-└── README.md                   # 项目说明文档
+├── src/
+│   ├── __init__.py                # 显式 Node 初始化与弹幕工厂
+│   ├── main.py / web.py           # CLI / Web 入口
+│   ├── app/                       # 启动清理、退出协调与日志归档
+│   ├── config/                    # INI 解析、读写、布尔值与配置备份
+│   ├── recording/                 # 录制引擎、房间会话、状态、调度、进程与后处理
+│   ├── streams/                   # 平台分派、数据获取、流地址/画质解析、选源与签名
+│   ├── danmaku/                   # 弹幕采集、字幕、监控、解压与 platforms/ 协议实现
+│   ├── monitors/                  # 账号关注与私信监控
+│   ├── notifications/             # 消息推送、录制反馈与自定义脚本
+│   ├── network/                   # HTTP、WebSocket、代理、凭据缓存与目标校验
+│   ├── runtime/                   # FFmpeg/Node 安装、资源校验与 JS 执行
+│   ├── api/                       # Web 路由、请求模型与面板配置
+│   ├── support/                   # 日志、国际化、终端与通用工具
+│   ├── proto/                     # 抖音弹幕协议定义、生成代码与类型存根
+│   ├── javascript/                # 平台签名资源
+│   └── external_resources.json    # 外部资源下载与完整性元数据
+├── web/                       # Web 面板静态资源
+├── i18n/en_US.json            # 英文翻译目录，中文使用源码原文
+├── tests/                     # Python 回归、真机采集脚本与 frontend/ 检查
+├── tool/                      # 构建、覆盖率、翻译、冒烟与独立录制工具
+├── typings/                   # 第三方类型存根
+├── docs/                      # 架构参考、日志归档与历史审查
+├── .agents/skills/            # 入库的项目技能
+├── .github/                   # CI、发布、镜像工作流与协作模板
+├── pyproject.toml             # 版本、依赖与工具配置
+├── uv.lock                    # 锁定依赖
+├── requirements.txt           # 基础依赖的 pip 兼容清单
+├── Dockerfile                 # 多阶段镜像构建
+├── docker-compose.yaml        # CLI / Web 服务编排
+└── index.html                 # 独立 M3U8 播放器
 ```
+
+运行期目录按需创建：`config/` 保存 `config.ini` 与 `URL_config.ini`，`downloads/`、`logs/`、`backup_config/` 保存录制、日志与备份，`ffmpeg/`、`node/` 保存本地运行时。根目录 `config/` 是用户数据，`src/config/` 是配置处理代码。
+
+完整文件与职责清单见[目录参考](docs/agent-reference/project-structure.md)，实现细节见[架构文档](CODE_WIKI.md#核心模块详解)，工程约定见 [AGENTS.md](AGENTS.md)。
 
 ## ⚙️ 配置说明
 
 ### 基础配置 (config/config.ini)
 
-> 同一节内出现重复键不再让整份配置失效：按最后一次取值读取，并落一条点名「节 / 键 / 行号」的告警（经 `src/config_read.py` 容错读取层，2026-10-17 起生效）。
+> 同一节内出现重复键不再让整份配置失效：按最后一次取值读取，并落一条点名「节 / 键 / 行号」的告警（经 `src/config/reader.py` 容错读取层，2026-10-17 起生效）。
 
 ```ini
 [录制设置]
@@ -273,7 +226,7 @@ language =
 # 录制画质 原画|超清|高清|标清|流畅
 原画|超清|高清|标清|流畅 = 原画
 # 自定义画质选项(逗号分隔) - 用户自选画质子集，留空或全部非法时回退引擎内置全集（默认 空）；
-# WEB 端增删画质 / GUI 端「切换画质」写回本项，选非默认画质按「画质,直播间地址」写回 config/URL_config.ini
+# Web 端增删画质写回本项，选非默认画质按「画质,直播间地址」写回 config/URL_config.ini
 自定义画质选项(逗号分隔) =
 # 是否使用代理ip(是/否)
 是否使用代理ip(是/否) = 否
@@ -381,7 +334,7 @@ pushplus推送token =
 # 录制抖音必填：请填入从浏览器 live.douyin.com 复制的有效 cookie（至少包含 ttwid）
 # 留空将自动尝试获取访客 ttwid（可能触发风控，建议填写）
 抖音cookie =
-# 单独指定抖音 ttwid（留空则由 src/ttwid.py 自动获取并进程级缓存）
+# 单独指定抖音 ttwid（留空则由 src/streams/ttwid.py 自动获取并进程级缓存）
 ttwid =
 快手cookie =
 tiktok_cookie =
@@ -398,7 +351,7 @@ bigo_cookie =
 # ... 共 51 个平台 cookie 键，其余详见 config.ini
 ```
 
-> 访客类 cookie（抖音 ttwid、快手 did 等）由 `src/cookie_cache.py` 以「归一化网址 + 代理」为 key 做进程级共享缓存（默认 30 分钟 TTL），多直播间并发时不会重复拉取触发风控。
+> 访客类 cookie（抖音 ttwid、快手 did 等）由 `src/network/credentials.py` 以「归一化网址 + 代理」为 key 做进程级共享缓存（默认 30 分钟 TTL），多直播间并发时不会重复拉取触发风控。
 
 ### 授权配置 (config/config.ini)
 
@@ -754,24 +707,27 @@ uv sync --locked --extra dev
 
 ```bash
 # 格式化代码（line-length = 120）
-ruff format .
+uv run --locked --extra dev ruff format .
 
-# 排序导入
-ruff check --fix .
+# 静态检查（需要自动整理导入时加 --fix）
+uv run --locked --extra dev ruff check .
 
-# 运行测试
-pytest
+# 准备提交时采集覆盖率并检查阈值
+uv run --locked --extra dev python -m pytest --cov=src
+uv run --locked --extra dev python tool/check_coverage.py
 ```
 
 > **注释规范**：见 [AGENTS.md](AGENTS.md) 的代码风格约定。
 
-> **质量检查**：Ruff 负责格式化和导入排序，pytest 要求 0 warnings；不配置常驻类型检查器。统一入口见 AGENTS.md 的「格式化命令」。
+> **质量检查**：Ruff 负责格式化和导入排序，pytest 要求 0 warnings；不配置常驻类型检查器。检查时机与命令以 AGENTS.md 为准；日常编辑不自动运行 pytest 或覆盖率检查。
 
 > **测试说明**：`tests/test_web_api.py` 的符号链接相关用例（`TestListFiles::test_broken_symlink_skipped` / `test_symlink_outside_skipped`）在无法创建真实符号链接的环境（未开启开发者模式的 Windows、部分沙箱）会自动 `pytest.skip`，属正常现象，不代表代码缺陷。
 
 ### 项目文档
 
-- [CODE_WIKI.md](CODE_WIKI.md) - 项目架构文档（详细的模块说明、依赖关系、设计模式）
+- [目录与文件职责](docs/agent-reference/project-structure.md) - 完整源码树、工具、测试、文档与运行期目录
+- [CODE_WIKI.md](CODE_WIKI.md) - 项目架构文档（模块说明、依赖关系、设计模式）
+- [AGENTS.md](AGENTS.md) - 工程约定与检查命令
 
 ### Web/接口冒烟测试
 
@@ -788,26 +744,26 @@ python tool/smoke_test.py -c tool/smoke_web.json -r smoke_report.html -f html
 - 配置驱动（JSON）：`url` / `method` / `expected_status` / `timeout` / 请求头 / 请求体 / 响应应包含文本 / 期望 JSON 字段
 - 支持 `base_url` 前缀拼接；控制台 / JSON / HTML 三种报告；失败时退出码非 0（可接入 CI）
 - 与 `tool/build_exe.py --smoke`（打包产物冒烟）不同，本工具针对**运行中的 HTTP 接口**做探活，两者互补
-- 默认用例 `tool/smoke_web.json` 探活 Web 面板 `/`（首页 200）与 `/health`（`{"status": "ok"}`，由 `src/web_api.py` 提供的公开探活端点，不受 `web_auth_enable` 支配）
+- 默认用例 `tool/smoke_web.json` 探活 Web 面板 `/`（首页 200）与 `/health`（`{"status": "ok"}`，由 `src/api/routes.py` 提供的公开探活端点，不受 `web_auth_enable` 支配）
 - **已接入 CI**：`.github/workflows/ci.yml` 的 `test` job 在 pytest 之后受控启动 `python -m src.web`，就绪后跑 `tool/smoke_web.json` 冒烟（经 `.github/actions/retry` 处理网络抖动、失败保留 `logs/web-smoke-*` 工件并使 job 变红），补齐「面板进程能否真正监听并应答」这条 TestClient 覆盖不到的链路
 
 ### 添加新平台支持
 
 **视频录制平台：**
 
-1. 在 `src/spider.py` 中添加平台流地址解析函数（参考现有平台实现）
-2. 在 `src/stream.py` 中添加流地址解析函数，返回值包含 `actual_quality` 和 `available_qualities` 字段
-3. 在 `main.py` 中添加平台识别逻辑（`PLATFORM_HOST` 列表和录制分支）
+1. 在 `src/streams/spider.py` 中添加平台数据获取函数（参考现有平台实现）
+2. 在 `src/streams/stream.py` 中添加流地址解析函数，返回值包含 `actual_quality` 和 `available_qualities` 字段
+3. 在 `src/streams/dispatch.py` 登记 URL 准入、平台 resolver 与房间上下文
 4. 更新 `README.md` 和 `CODE_WIKI.md`
 
 **弹幕录制平台（如需支持弹幕）：**
 
-1. 在 `src/platforms/` 下新建 `<平台>.py`，继承 `src/base.py` 的 `DanmakuBase`，实现连接/鉴权/消息解析
-2. 在 `src/__init__.py` 的弹幕平台注册表中登记（平台名与 `main.py` 的 platform 标识一致），由 `get_danmaku_class` / `get_danmaku_collector` 工厂解耦创建
-3. 在 `main.py` 的弹幕录制接线处补充平台分支（构造 `record_danmaku_args` 并传入 `check_subprocess`）
+1. 在 `src/danmaku/platforms/` 下新建 `<平台>.py`，继承 `src/danmaku/base.py` 的 `DanmakuBase`，实现连接/鉴权/消息解析
+2. 在 `src/__init__.py` 的弹幕平台注册表中登记（平台名与 `src/streams/dispatch.py` 的 platform 标识一致），由 `get_danmaku_class` / `get_danmaku_collector` 工厂解耦创建
+3. 在 `src/streams/dispatch.py` 的 resolver 中填充弹幕参数；`src/recording/session.py` 沿用公共采集器生命周期
 4. 更新 `README.md` 和 `CODE_WIKI.md`
 
-> 注：弹幕子系统与 `src/spider.py`（视频流地址解析）是平行解耦的两套抽象，`spider.py` 不 import `src/platforms`。
+> 注：弹幕子系统与 `src/streams/spider.py`（视频流地址解析）是平行解耦的两套抽象，`spider.py` 不导入 `src/danmaku/platforms/`。
 
 ## ❓ 常见问题
 
@@ -917,21 +873,21 @@ brew install node
 
 ### v4.5.0 (2026-10-02 ~ 2026-10-17) — GUI 窗口层迁移 PySide6（Qt6）与界面现代化阶段4~6 收尾 / 移动端与短链平台接入（b23.tv / m.douyu.com / hy.fan / 小红书四类归一）/ Linux arm64 ffmpeg 与 GHCR 多架构镜像 / 启动期字节码缓存清理与发布链在线来源层 / config.ini 重复键容错读取层与 i18n 三批机检 / 全工作区代码审查与两轮元数据对账
 
-> 本版本（v4.5.0，2026-10-02 ~ 10-17）是一次「GUI 全面现代化 + 平台接入扩张」周期：① **窗口层由 tkinter/ttk 迁到 PySide6（Qt6）**，新增 `src/gui_qt/`，令牌与 QSS 单一事实源、控制器层可离屏单测，打包侧靠 `QT_BLOAT_FILES` 剪除 Qt 死重；② **界面现代化阶段4~6 收尾**（CTk → ttk、`customtkinter` 摘除、字号 / 缩放 / 动效）；③ **平台接入扩张**（三类移动端短链 + 小红书四类链接归一，Linux arm64 与 GHCR 多架构补齐）；④ **config.ini 同节重复键不再整份失效**（新增 `src/config_read.py`）。**存在破坏性变更（GUI 实现与依赖面）**，见下方专节。详细根因与验证见 [CODE_WIKI.md](CODE_WIKI.md)。
+> 本版本（v4.5.0，2026-10-02 ~ 10-17）是一次「GUI 全面现代化 + 平台接入扩张」周期：① **窗口层由 tkinter/ttk 迁到 PySide6（Qt6）**，新增 `src/gui_qt/`，令牌与 QSS 单一事实源、控制器层可离屏单测，打包侧靠 `QT_BLOAT_FILES` 剪除 Qt 死重；② **界面现代化阶段4~6 收尾**（CTk → ttk、`customtkinter` 摘除、字号 / 缩放 / 动效）；③ **平台接入扩张**（三类移动端短链 + 小红书四类链接归一，Linux arm64 与 GHCR 多架构补齐）；④ **config.ini 同节重复键不再整份失效**（新增 `src/config/reader.py`）。**存在破坏性变更（GUI 实现与依赖面）**，见下方专节。详细根因与验证见 [CODE_WIKI.md](CODE_WIKI.md)。
 
 **✨ 新增功能 / 改进**
 - **GUI 窗口层迁移 PySide6（Qt6）**：新增 `src/gui_qt/`（16 文件 4189 行，含 `pages/` 五页），`gui.py:main()` 委托 `src.gui_qt.app.main()`（tkinter 实现留作 `_legacy_main()`）。令牌与 QSS 单一事实源在 `theme.py`，线程模型换轨 Qt Signal/Slot + `QTimer`；控制器层无 Qt 布局代码，`QT_QPA_PLATFORM=offscreen` 即可离屏单测。
 - **界面现代化阶段6（字号 / 缩放 / 动效）**：新增 `src/ui_scale.py`（语义字号七档 caption 10 → display 28、间距栅格、缩放档位、小屏自动降档）与 `src/ui_motion.py`（off/subtle/full，系统「关闭动画」优先）。缩放只改字号与间距，点值按 `factor ** 0.6` 温和增益（等宽再乘 0.9）。
 - **GUI 视觉语言改版（品牌蓝 → 暖赭橙）**：`src/ui_theme.py` light/dark 两表换 16 个槽位，`gui.py` 的 `Colors` 同批换值；主色 `#B5573A`（白字 4.78；原型 `#C96442` 实测 3.90 不达 AA），深色 hover `#A8502F`。`high_contrast`、`TERMINAL_*` 与语义色槽未动。
 - **GUI 自选字体**：新增 `src/ui_fonts.py`（SFNT name 表解析 + GDI 私有字体注册，拒收 woff2）；切族在同一 `configure` 完成、不重建控件树。可用性判据是让 Tk 解析一次并与缺失族名的兜底结果比对（`AddFontResourceExW(FR_PRIVATE)` 成功但 `tkfont.families()` 列不到私有字体）。
-- **GUI 静态标签接入 i18n**：新增 `src/ui_i18n.py`（`T()` + `retranslate_all` + `apply_title`），静态标签 54 处、运行时串约 60 处接线，语言切换整窗回填不重建；`src/web_api.py` 27 处展示类文案经 `tr()`（稳定机器码 detail 不翻）。
+- **GUI 静态标签接入 i18n**：新增 `src/ui_i18n.py`（`T()` + `retranslate_all` + `apply_title`），静态标签 54 处、运行时串约 60 处接线，语言切换整窗回填不重建；`src/api/routes.py` 27 处展示类文案经 `tr()`（稳定机器码 detail 不翻）。
 - **移动端与短链平台接入**：B站 `b23.tv`（纯数字直取 + 短码 302 跟随）、斗鱼 `m.douyu.com`（白名单 + 房间号归一）、虎牙 `hy.fan`（新 resolver + 301 跳转归一）、小红书 `parse_xhs_live_url`（`/livestream/<房间ID>` / 动态路径 / `xhslink` / 分享参数四类）。归一后复用既有取流链，`record_host` 仍取短链域以便熔断分桶计数。
 - **Linux arm64（aarch64）ffmpeg 三段落地**：发布矩阵新增 `ubuntu-24.04-arm`（四平台 × lite/full = 8 zip）；新增 `src/ffmpeg_linux_download.py`（官方 digest 优先、TOFU 降级、两趟安装）作无 root 兜底；新增 `docker-publish.yml`，原生双 runner 各出一架构层并按 digest 合成 manifest（仅 `v*` tag）。
-- **启动期字节码缓存清理**：新增 `src/startup_cleanup.py`——正向白名单扫描根、基线 = `sha256(相对路径 + 字节)` + 版本号、落 `logs/.pyc_stamp`，只在源码或版本变过时回收一次（默认开，可关）。
+- **启动期字节码缓存清理**：新增 `src/app/startup_cleanup.py`——正向白名单扫描根、基线 = `sha256(相对路径 + 字节)` + 版本号、落 `logs/.pyc_stamp`，只在源码或版本变过时回收一次（默认开，可关）。
 - **发布链运行时钉定「在线来源层」**：`tool/build_exe.py` 新增三态开关 `DLR_RUNTIME_PIN_SOURCE`（off/verify/adopt，默认 off 不发请求）；`adopt` 仅对「清单独立认证」（`trust=signed` 且验签通过）开放，在线值须过 64 位小写十六进制形状关。`_PINNED_RUNTIME_SHA256` 未改，默认行为与引入前一致。
 
 **🐛 修复的问题**
-- **config.ini 同节重复键让整份配置失效**：`[录制设置]` 同名键落两行时 `RawConfigParser()`（strict 默认 True）抛 `DuplicateOptionError`，一个键都读不出（`import main` 即崩、GUI 每 10s 报错）。新增 `src/config_read.py`（`tolerant_config_parser` / `find_duplicate_options` / `warn_duplicate_options`），接线 10 处读取点，缺键补写保持幂等。
+- **config.ini 同节重复键让整份配置失效**：`[录制设置]` 同名键落两行时 `RawConfigParser()`（strict 默认 True）抛 `DuplicateOptionError`，一个键都读不出（`import main` 即崩、GUI 每 10s 报错）。新增 `src/config/reader.py`（`tolerant_config_parser` / `find_duplicate_options` / `warn_duplicate_options`），接线 10 处读取点，缺键补写保持幂等。
 - **Qt 等宽字体族名告警**：`QFont` 族名位只收单个 family，`QFont("Consolas, Menlo, Courier New, monospace")` 在未装 Consolas 的机器按 `styleHint=Monospace`（枚举 7）落进 `Terminal`，打出 `CreateFontFaceFromHDC() failed` 与 `setPointSize(-1)`。新增 `fixed_font()` 按候选取本机首个命中族名。
 - **`src/ui_fonts.py` 两处缺陷**：① 复制失败被 `except Exception: return None` 吞掉且零日志 → 先落带 `{type_name}` / `{err}` 的 warning；② `_safe_filename` 不处理 Windows 保留设备名（`CON`/`PRN`/`AUX`/`NUL`/`COM1-9`/`LPT1-9`），按首个点之前的基名大小写不敏感比对并加 `_` 前缀。
 - **GUI 右边框裁切**：三条长提示初始 `wraplength=0` 把 `winfo_reqwidth()` 撑到 1248 > geometry 1120，而 grid 对「需求宽 > 分配宽」是裁切而非收缩。修法三段：抬首窗几何消首帧赤字、压到档位最小宽读出「收缩地板」后只抬 `minsize` 到地板、尺寸 clamp 到 `SCREEN_FILL_CEILING`。
@@ -963,7 +919,7 @@ brew install node
 
 **🧪 测试与验证**
 - 全量 `pytest` **4365 passed / 14 skipped / 0 failed、warnings 空**；`run_gates.py` **10/10 全绿 rc=0**（black 246 文件、无参 mypy 245 文件 + linux/win32 双跑）。
-- 覆盖率总 **83.10%**，`check_coverage.py` **69 模块全达标**（`src/config_read.py` 98%）；basedpyright 与裸跑 `pyright` 均 0 errors / 0 warnings。
+- 覆盖率总 **83.10%**，`check_coverage.py` **69 模块全达标**（`src/config/reader.py` 98%）；basedpyright 与裸跑 `pyright` 均 0 errors / 0 warnings。
 - 打包体积 **153.21MB / 359 文件**；`QT_BLOAT_FILES` 11 项 / 39.25MB 在 COLLECT 后按文件名剪除（excludes 管不到 hook 收的 DLL），冻结 GUI exe 实跑 9s 存活。
 - 真机：虎牙 660000（2 条 / 206 B）、B站 545068（33 / 2642 B）、b23.tv 22747736（18 / 1402 B）均 PASS；`hy.fan/JbmwoV` 真实 301 解析到 `www.huya.com/30764624`（在播，该时段无弹幕记 WARN）；小红书 570480456678837366 解析 OK（`liveStatus=end`）；斗鱼 `m.douyu.com/5526219` 完整取流链返回 `flv_url` / `m3u8_url` / `record_url`。
 - GUI 真窗：主题 ×4 / 缩放 ×5 / 动效 ×4 / 五页面 / 对话框 / 高级设置全 `ALL_OK`，85% / 100% / 150% 三档截图复核（「按钮内边距不跟随」「侧栏底部溢出」「页面滑入后消失」三缺陷即在此发现）。
@@ -975,7 +931,7 @@ brew install node
 **✨ 新增功能 / 改进**
 - **GUI 主题层（阶段3）**：新增 `src/ui_theme.py`（零显示依赖、可无头 import）——13 个语义槽位 × 三套主题（浅色 / 深色 / 高对比度），侧边栏「界面主题」菜单运行时切换并持久化到 `config.ini [GUI] gui_theme`；WCAG 对比度机检（正文 4.5 / 非文本与禁用 3.0）由 `tests/test_ui_theme.py`（34 用例）持续回归。
 - **Web 前端动效层（阶段1）**：新增 `web/motion.js`（零依赖 IIFE，挂载 `window.__dlrMotion`）——滚动入场（IntersectionObserver 错峰）/ 视差粒子（数量按视口自适应、低核设备减半）/ `prefers-reduced-motion` 全降级 / 页面隐藏暂停 / `destroy()` 无残留定时器；`web/index.html` + `web/style.css` 接线；`tests/frontend/test_motion.mjs` 5 用例（node:test 沙箱，零 npm 依赖）。
-- **Web 后端自研适配层**（随迁移新增）：`src/web_models.py`（9 个纯标准库 dataclass 请求模型，替代 pydantic）+ `src/web_api.py::_route` 路由适配器（JSON body 解析 / Query 上下界夹取 / 同步端点线程池派发 / JSONResponse 包装），24 个路由处理器函数体零改动。
+- **Web 后端自研适配层**（随迁移新增）：`src/api/models.py`（9 个纯标准库 dataclass 请求模型，替代 pydantic）+ `src/api/routes.py::_route` 路由适配器（JSON body 解析 / Query 上下界夹取 / 同步端点线程池派发 / JSONResponse 包装），24 个路由处理器函数体零改动。
 - **`retry` 复合动作新增 `fail_fast_codes` 入参（按退出码分档）**：不传时既有 16 个调用点行为逐字不变；web smoke 调用点传 `"2"`，配置类错误立即失败不进入退避——不得为了流水线变绿退 0 或降级 warning。
 - **两道新测试防线**：R7 真机脚本模板 AST 检查（`__main__` 守卫 / 收集期零副作用 / argv 两步守卫 / 按平台前缀清理，5 个 live_collector 同批加固）；R8 全仓 `MUTATION-` 残留扫描（变异验证未还原即判红，配套三条硬约束写回 AGENTS.md）。
 - **新增动态路由契约锁** `tests/test_web_api_routes.py`（24 条 method/path 精确集合 + `/web` 挂载点），取代被敏感检查拦截的静态基线 JSON。
@@ -1018,7 +974,7 @@ brew install node
 
 **🐛 修复的问题**
 - **P0：ffmpeg master 构建下录制 100% 失败**：`-thread_queue_size` 被上游收窄为 muxer 专属选项，置于 `-i` 之前时 ffmpeg 以 `Option thread_queue_size … cannot be applied to input url … Error opening input files: Invalid argument`（返回码 -22）退出；与房间 / 平台 / CDN 无关，该构建下每次录制都失败。
-- **P0：布尔配置解析口径统一**：散落四处的解析（原 `!= "否"` / `== "是"` / 前端 `=== '是'`）统一到 `src/config_bool.py::parse_config_bool`；修复后 `global_proxy` 不再被错误置 False，TikTok / SOOP / PandaTV / WinkTV / Flextv / PopkonTV / Twitch / LiveMe / Faceit 等 9 个海外平台恢复解析。
+- **P0：布尔配置解析口径统一**：散落四处的解析（原 `!= "否"` / `== "是"` / 前端 `=== '是'`）统一到 `src/config/booleans.py::parse_config_bool`；修复后 `global_proxy` 不再被错误置 False，TikTok / SOOP / PandaTV / WinkTV / Flextv / PopkonTV / Twitch / LiveMe / Faceit 等 9 个海外平台恢复解析。
 - **全量代码审查 62 项（09-19）**：GUI 空配置启动静默卡死；配置行多一个逗号致其后所有房间永久不录；Tars 解码缺边界校验致弹幕线程死循环；斗鱼弹幕被静默过滤（已修复项回归）；ffmpeg 挂起永久占用并发槽；零字节产物被判成功并撤销线路退避；`config.ini` 含凭据被明文复制到 `backup_config/`；Web 面板可被自身接口接管或锁死；房间 URL 零协议校验 → 盲 SSRF；脱敏黑名单漏掉「凭据嵌在值里」的 URL 型键；安装与打包链路零完整性校验。
 - **`CODE_REVIEW_2026-09-20` 全轮落地 106 项（09-21）**：并发信号量把「可用许可数」当容量（网络并发上限实质失控）；`PUT /api/rooms` 绕过房间入口校验；内网地址拦截用字符串前缀黑名单（实测 7 条放行 5 条）；面板认证可被单个写请求热关闭、大小写变体绕过口令哈希 / 防自锁 / token 吊销；CRLF 配置下删除房间永久静默失效却回报 `{"ok": true}`；Shopee 站点后缀解析拼出非法域名；兜底装饰器与返回契约错配（故障伪装「未开播」）；录制看门狗「停滞」判据基准用错（容忍窗口实际只有 30 秒）；`only_flv` 分支缺 `flv_url` 致时间字幕线程死循环写盘；发布链运行时二进制哈希钉定表为空。
 - **发布链与供应链**：macOS arm64 的 full 包**静默不含 ffmpeg**（上游无该产物，下载点已修复）；Windows 运行期 ffmpeg 主源经实测确认健康（gyan.dev 带 `.sha256` 文档，与发布期钉定互证）；官方 SHA256 钉定值回填 6/10 槽。
@@ -1028,7 +984,7 @@ brew install node
 - **元数据第二副本漂移（09-27）**：`DouyinLiveRecorder.egg-info/PKG-INFO` 的 `Requires-Dist: h2` 仍停在旧下限 `>=4.3.0`（清单早已抬到 `>=4.4.1` 却从未传播进元数据），内嵌 README 亦缺整段 v4.3.0 更新日志；重建修正。
 
 **✨ 新增功能 / 改进**
-- **日志房间关联字段 `extra[room]`**：`src/logger.py` 新增 `ROOM_FIELD` / `set_room_context()` / `get_room_context()`（内部 `ContextVar` + patcher），多房间交织日志可按房间切出。
+- **日志房间关联字段 `extra[room]`**：`src/support/logger.py` 新增 `ROOM_FIELD` / `set_room_context()` / `get_room_context()`（内部 `ContextVar` + patcher），多房间交织日志可按房间切出。
 - **Web 面板 `/health` 探活端点**：`GET /health` 返回 `{"status": "ok", "version": …}`，并把内置冒烟工具 `tool/smoke_test.py` 接通为 CI 可执行的真实 HTTP 探活。
 - **W6：Apple Silicon 的 ffmpeg PATH 让位策略**：darwin + arm64 且系统 PATH 上另有原生 ffmpeg 时，不再无条件前置包内那份 x86_64 构建（需经 Rosetta 转译），五条判据全部成立才让位；其余平台逐字不变。
 - **运行时二进制完整性**：`tool/build_exe.py` 新增 `_PINNED_RUNTIME_SHA256` 钉定表 + `--require-pinned`，配套 `tool/check_runtime_pins.py`（结构模式进检查 / `--strict` 进发布 prepare / `--emit-env` 供 CI 注入）；运行期首装改为「官方公布哈希优先」，发布期增加 GPG 验签与 full 包产物自检。

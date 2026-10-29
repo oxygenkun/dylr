@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
-# src/spider.py 批量平台函数测试：覆盖 60+ 直播平台的流地址解析函数（get_xxx_stream_url /
-# get_xxx_stream_data / get_xxx_room_info 等）。测试策略：用 AsyncMock 桩掉 src.spider.async_req
+# src/streams/spider.py 批量平台函数测试：覆盖 60+ 直播平台的流地址解析函数（get_xxx_stream_url /
+# get_xxx_stream_data / get_xxx_room_info 等）。测试策略：用 AsyncMock 桩掉 src.network.http.request
 # （屏蔽真实网络），喂入各平台真实响应 JSON/HTML 形态，断言解析出的 anchor_name / is_live /
 # 流地址契约。
 # 大量用例守护「离线/出错路径」：平台函数多经装饰器捕获异常，须返回 {is_live:False} 而非抛错
@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from src.spider import (
+from src.streams.spider import (
     _ensure_twitch_client_id,
     _generate_twitch_play_session_id,
     get_6room_stream_url,
@@ -94,7 +94,7 @@ class TestGenerateTwitchPlaySessionId:
 
 class TestEnsureTwitchClientId:
     # Twitch Web 端公开 Client-Id 的三态：主页 HTML 提取 / 进程内缓存命中 / 拉取失败回空串。
-    # 它是网页公共标识、非用户私人凭据（AGENTS 凭据红线不适用于本值，见 src/spider.py 函数头）。
+    # 它是网页公共标识、非用户私人凭据（AGENTS 凭据红线不适用于本值，见 src/streams/spider.py 函数头）。
 
     @pytest.mark.asyncio
     async def test_fetches_from_html(self) -> None:
@@ -104,10 +104,10 @@ class TestEnsureTwitchClientId:
         # 缓存非空时函数直接早退，故这里必须先把 _cached_twitch_client_id 置空并在 finally 还原。
         html = '<script>var config = {"Client-ID": "abcdef12345678901234567890ab"};</script>'
         with (
-            patch("src.spider.async_req", new_callable=AsyncMock, return_value=html),
-            patch("src.spider._cached_twitch_client_id", ""),
+            patch("src.network.http.request", new_callable=AsyncMock, return_value=html),
+            patch("src.streams.spider._cached_twitch_client_id", ""),
         ):
-            import src.spider as spider_mod
+            import src.streams.spider as spider_mod
 
             old = spider_mod._cached_twitch_client_id
             spider_mod._cached_twitch_client_id = ""
@@ -121,7 +121,7 @@ class TestEnsureTwitchClientId:
     async def test_returns_cached(self) -> None:
         # 缓存命中时直接返回已存 Client-ID、跳过网络拉取；锁住「免重复请求」契约，
         # 防止上层 Twitch 解析每房间都重拉凭据触发频控。
-        import src.spider as spider_mod
+        import src.streams.spider as spider_mod
 
         old = spider_mod._cached_twitch_client_id
         spider_mod._cached_twitch_client_id = "cached_id_value_12345678"
@@ -135,12 +135,12 @@ class TestEnsureTwitchClientId:
     async def test_network_error_returns_empty(self) -> None:
         # 拉取页面异常须返回空串而非抛错，避免上层 Twitch 解析整体失败；
         # 空 Client-ID 触发后续匿名兜底路径。
-        import src.spider as spider_mod
+        import src.streams.spider as spider_mod
 
         old = spider_mod._cached_twitch_client_id
         spider_mod._cached_twitch_client_id = ""
         try:
-            with patch("src.spider.async_req", new_callable=AsyncMock, side_effect=Exception("timeout")):
+            with patch("src.network.http.request", new_callable=AsyncMock, side_effect=Exception("timeout")):
                 result = await _ensure_twitch_client_id()
                 assert result == ""
         finally:
@@ -156,8 +156,8 @@ class TestTiktokStreamData:
         # 防解析器误拆字段导致主播名/状态丢失。
         html = '<script id="SIGI_STATE" type="application/json">{"room":{"status":2}}</script>'
         with (
-            patch("src.spider.async_req", new_callable=AsyncMock, return_value=html),
-            patch("src.spider.asyncio.sleep", new_callable=AsyncMock),
+            patch("src.network.http.request", new_callable=AsyncMock, return_value=html),
+            patch("src.streams.spider.asyncio.sleep", new_callable=AsyncMock),
         ):
             result = await get_tiktok_stream_data("https://www.tiktok.com/@test/live")
             assert result == {"room": {"status": 2}}
@@ -166,8 +166,8 @@ class TestTiktokStreamData:
     async def test_discontinued_returns_empty(self) -> None:
         html = "<p>\nWe regret to inform you that we have discontinued operating TikTok in this region.\n</p>"
         with (
-            patch("src.spider.async_req", new_callable=AsyncMock, return_value=html),
-            patch("src.spider.asyncio.sleep", new_callable=AsyncMock),
+            patch("src.network.http.request", new_callable=AsyncMock, return_value=html),
+            patch("src.streams.spider.asyncio.sleep", new_callable=AsyncMock),
         ):
             result = await get_tiktok_stream_data("https://www.tiktok.com/@test/live")
             assert result == {"is_live": False}
@@ -177,8 +177,8 @@ class TestTiktokStreamData:
         # 响应体为截断/异常 EOF 时解析失败须走 {is_live:False} 兜底而非抛错；
         # 此异常响应体正是触发重试耗尽的现实形态，验证离线兜底路径。
         with (
-            patch("src.spider.async_req", new_callable=AsyncMock, return_value="UNEXPECTED_EOF_WHILE_READING"),
-            patch("src.spider.asyncio.sleep", new_callable=AsyncMock),
+            patch("src.network.http.request", new_callable=AsyncMock, return_value="UNEXPECTED_EOF_WHILE_READING"),
+            patch("src.streams.spider.asyncio.sleep", new_callable=AsyncMock),
         ):
             result = await get_tiktok_stream_data("https://www.tiktok.com/@test/live")
             assert result == {"is_live": False}
@@ -193,7 +193,7 @@ class TestYYStreamData:
     @pytest.mark.asyncio
     async def test_no_anchor_name_returns_empty(self) -> None:
         # 无主播名时装饰器捕获异常，返回 {is_live: False}.
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value="<html>no data</html>"):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value="<html>no data</html>"):
             result = await get_yy_stream_data("https://www.yy.com/12345")
             assert result == {"is_live": False}
 
@@ -202,7 +202,7 @@ class TestYYStreamData:
         # 桩载荷 'nick: "YY主播",\n  logo' 走的是 nick 正则分支；断言仅到 isinstance(result, dict)，
         # 即锁住「非标准结构也返回 dict、不抛错」这一类型契约（昵称/开播取值见类注释的待补说明）。
         html = 'nick: "YY主播",\n  logo'
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=html):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=html):
             result = await get_yy_stream_data("https://www.yy.com/12345")
             assert isinstance(result, dict)
 
@@ -214,7 +214,7 @@ class TestPandatvStreamData:
     @pytest.mark.asyncio
     async def test_not_live(self) -> None:
         bj_info_response = json.dumps({"bjInfo": {"id": "user1", "nick": "Panda主播"}, "message": "ok"})
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=bj_info_response):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=bj_info_response):
             result = await get_pandatv_stream_data("https://www.pandalive.co.kr/user1")
             assert result["anchor_name"] == "Panda主播-user1"
             assert result["is_live"] is False
@@ -224,7 +224,7 @@ class TestPandatvStreamData:
         # User not found 时装饰器捕获 RuntimeError 转离线兜底；
         # 验证异常不向上抛、中断主循环。
         response = json.dumps({"message": "User not found"})
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=response):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=response):
             result = await get_pandatv_stream_data("https://www.pandalive.co.kr/unknown")
             # decorator catches RuntimeError → returns {is_live: False}
             assert result == {"is_live": False}
@@ -238,7 +238,7 @@ class TestBaiduStreamData:
         # data 为空仍可解析出空主播名+离线，不抛 KeyError；
         # 字段缺失是常态，须兜底而非崩溃。
         api_response = json.dumps({"data": {}})
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=api_response):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=api_response):
             result = await get_baidu_stream_data("https://live.baidu.com?room_id=12345&other=x")
             assert result["anchor_name"] == ""
             assert result["is_live"] is False
@@ -247,7 +247,7 @@ class TestBaiduStreamData:
     async def test_no_room_id_raises(self) -> None:
         # 无 room_id 无法拼请求 → 装饰器兜底 {is_live:False}；
         # 锁住缺参离线契约，防 KeyError 中断主循环。
-        with patch("src.spider.async_req", new_callable=AsyncMock):
+        with patch("src.network.http.request", new_callable=AsyncMock):
             result = await get_baidu_stream_data("https://live.baidu.com/no_room_id")
             assert result == {"is_live": False}
 
@@ -268,7 +268,7 @@ class TestWeiboStreamData:
                 }
             }
         )
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=live_response):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=live_response):
             result = await get_weibo_stream_data("https://weibo.com/l/show/12345")
             assert result["anchor_name"] == "微博主播"
             assert result["is_live"] is False
@@ -303,7 +303,7 @@ class TestWeiboStreamData:
                 }
             }
         )
-        with patch("src.spider.async_req", new_callable=AsyncMock, side_effect=[feed_response, live_response]):
+        with patch("src.network.http.request", new_callable=AsyncMock, side_effect=[feed_response, live_response]):
             result = await get_weibo_stream_data("https://weibo.com/u/5885340893")
             assert result["is_live"] is True
             assert result["anchor_name"] == "主播"
@@ -324,7 +324,7 @@ class TestChzzkStreamData:
                 }
             }
         )
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=api_response):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=api_response):
             result = await get_chzzk_stream_data("https://chzzk.naver.com/live/abc123")
             assert result["anchor_name"] == "CHZZK主播"
             assert result["is_live"] is False
@@ -343,7 +343,7 @@ class TestChzzkStreamData:
         )
         m3u8_content = "#EXTM3U\nhttps://live.chzzk.com/stream1.m3u8"
         with (
-            patch("src.spider.async_req", new_callable=AsyncMock, side_effect=[api_response, m3u8_content]),
+            patch("src.network.http.request", new_callable=AsyncMock, side_effect=[api_response, m3u8_content]),
         ):
             result = await get_chzzk_stream_data("https://chzzk.naver.com/live/abc123")
             assert result["is_live"] is True
@@ -359,7 +359,7 @@ class TestPpliveStreamUrl:
         # living=False 离线但仍解析主播名；
         # 锁住 living 字段分支，防误判在线。
         api_response = json.dumps({"data": {"name": "飘飘主播", "living": False, "pullUrl": ""}})
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=api_response):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=api_response):
             result = await get_pplive_stream_url("https://m.pp.weimipopo.com/?anchorUid=abc123")
             assert result["anchor_name"] == "飘飘主播"
             assert result["is_live"] is False
@@ -371,7 +371,7 @@ class TestPpliveStreamUrl:
         api_response = json.dumps(
             {"data": {"name": "主播", "living": True, "pullUrl": "https://pull.example.com/live.m3u8"}}
         )
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=api_response):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=api_response):
             result = await get_pplive_stream_url("https://m.pp.weimipopo.com/?anchorUid=abc123")
             assert result["is_live"] is True
             assert result["m3u8_url"] == "https://pull.example.com/live.m3u8"
@@ -391,7 +391,7 @@ class Test6roomStreamUrl:
                 }
             }
         )
-        with patch("src.spider.async_req", new_callable=AsyncMock, side_effect=[html, api_response]):
+        with patch("src.network.http.request", new_callable=AsyncMock, side_effect=[html, api_response]):
             result = await get_6room_stream_url("https://v.6.cn/12345")
             assert result["anchor_name"] == "六间房主播"
             assert result["is_live"] is True
@@ -404,7 +404,7 @@ class Test6roomStreamUrl:
         # 页面无 rid 则无法拼房间号 → 装饰器兜底 {is_live:False}；
         # 锁住缺参离线契约。
         html = "<html>no rid here</html>"
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=html):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=html):
             result = await get_6room_stream_url("https://v.6.cn/12345")
             assert result == {"is_live": False}
 
@@ -416,7 +416,7 @@ class TestYoutubeStreamUrl:
     async def test_no_player_response_raises(self) -> None:
         # 页面无 ytInitialPlayerResponse 时无法定位播放元数据 → 装饰器兜底 {is_live:False}；
         # 锁住缺数据离线契约，防 KeyError 中断主循环。
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value="<html>no data</html>"):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value="<html>no data</html>"):
             result = await get_youtube_stream_url("https://www.youtube.com/watch?v=abc")
             assert result == {"is_live": False}
 
@@ -430,7 +430,7 @@ class TestYoutubeStreamUrl:
             }
         )
         html = f"var ytInitialPlayerResponse = {player_response};var meta = document.createElement"
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=html):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=html):
             result = await get_youtube_stream_url("https://www.youtube.com/watch?v=abc")
             assert result["anchor_name"] == "YT主播"
             assert result["is_live"] is False
@@ -444,7 +444,7 @@ class TestShowroomStreamData:
         # live_status=1 在该平台语义为离线（与常规相反）→ is_live=False 但仍解析 room_name；
         # 锁住反直觉状态映射，防误判在线。
         info_response = json.dumps({"room_name": "ShowRoom主播", "live_status": 1})
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=info_response):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=info_response):
             result = await get_showroom_stream_data("https://www.showroom-live.com/room/profile?room_id=123")
             assert result["anchor_name"] == "ShowRoom主播"
             assert result["is_live"] is False
@@ -492,7 +492,7 @@ class TestKugouStreamUrl:
                 }
             }
         )
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=room_info):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=room_info):
             result = await get_kugou_stream_url("https://fanxing2.kugou.com/12345?roomId=12345")
             assert result["anchor_name"] == "酷狗主播"
             assert result["is_live"] is False
@@ -504,7 +504,7 @@ class TestJdStreamUrl:
     @pytest.mark.asyncio
     async def test_no_author_id_no_live_id(self) -> None:
         # 无 authorId 且无 live_id 时返回空.
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value="https://lives.jd.com/"):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value="https://lives.jd.com/"):
             result = await get_jd_stream_url("https://lives.jd.com/")
             assert result["anchor_name"] == ""
             assert result["is_live"] is False
@@ -522,7 +522,7 @@ class TestFaceitStreamData:
         stream_response = json.dumps(
             {"payload": [{"userNickname": "Faceit主播", "platformId": "id123", "platform": "youtube"}]}
         )
-        with patch("src.spider.async_req", new_callable=AsyncMock, side_effect=[user_response, stream_response]):
+        with patch("src.network.http.request", new_callable=AsyncMock, side_effect=[user_response, stream_response]):
             result = await get_faceit_stream_data("https://www.faceit.com/zh/players/testuser/stream")
             assert result["anchor_name"] == "Faceit主播"
             assert result["is_live"] is False
@@ -543,14 +543,14 @@ class TestYingkeStreamUrl:
                 }
             }
         )
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=api_response):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=api_response):
             result = await get_yingke_stream_url("https://www.inke.cn/live.html?uid=abc&id=123")
             assert result["anchor_name"] == "映客主播"
             assert result["is_live"] is False
 
     @pytest.mark.asyncio
     async def test_no_uid_raises(self) -> None:
-        with patch("src.spider.async_req", new_callable=AsyncMock):
+        with patch("src.network.http.request", new_callable=AsyncMock):
             result = await get_yingke_stream_url("https://www.inke.cn/live.html")
             assert result == {"is_live": False}
 
@@ -563,7 +563,7 @@ class TestLiuxingStreamUrl:
         # live_stat=0 离线但仍解析 nickname；
         # 锁住 live_stat 字段分支。
         api_response = json.dumps({"data": {"roomInfo": {"nickname": "流星主播", "live_stat": 0}}})
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=api_response):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=api_response):
             result = await get_liuxing_stream_url("https://wap.7u66.com/12345")
             assert result["anchor_name"] == "流星主播"
             assert result["is_live"] is False
@@ -577,7 +577,7 @@ class TestLangliveStreamUrl:
         # live_status=0 离线但仍解析 nickname；
         # 锁住 live_status 字段分支（与 test_live 对称）。
         api_response = json.dumps({"data": {"live_info": {"nickname": "浪Live主播", "live_status": 0}}})
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=api_response):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=api_response):
             result = await get_langlive_stream_url("https://www.lang.live/room/12345")
             assert result["anchor_name"] == "浪Live主播"
             assert result["is_live"] is False
@@ -596,7 +596,7 @@ class TestLangliveStreamUrl:
                 }
             }
         )
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=api_response):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=api_response):
             result = await get_langlive_stream_url("https://www.lang.live/room/12345")
             assert result["is_live"] is True
 
@@ -610,7 +610,7 @@ class Test17LiveStreamUrl:
         # 防离线时丢掉主播名。
         user_response = json.dumps({"displayName": "17主播"})
         live_response = json.dumps({"status": 0, "pullURLsInfo": {}})
-        with patch("src.spider.async_req", new_callable=AsyncMock, side_effect=[user_response, live_response]):
+        with patch("src.network.http.request", new_callable=AsyncMock, side_effect=[user_response, live_response]):
             result = await get_17live_stream_url("https://17.live/live/12345")
             assert result["anchor_name"] == "17主播"
             assert result["is_live"] is False
@@ -624,7 +624,7 @@ class TestVvxqiuStreamUrl:
         # 房间信息接口返回「Not Found」→ 离线但仍解析 anchorName；
         # 验证多响应分支均走离线兜底。
         api_response = json.dumps({"data": {"anchorName": "VV主播"}})
-        with patch("src.spider.async_req", new_callable=AsyncMock, side_effect=[api_response, "Not Found"]):
+        with patch("src.network.http.request", new_callable=AsyncMock, side_effect=[api_response, "Not Found"]):
             result = await get_vvxqiu_stream_url("https://h5.vvxqiu.com/?roomId=12345")
             assert result["anchor_name"] == "VV主播"
             assert result["is_live"] is False
@@ -636,7 +636,7 @@ class TestPicartoStreamUrl:
     @pytest.mark.asyncio
     async def test_not_live(self) -> None:
         api_response = json.dumps({"channel": {"name": "PicartoArtist", "online": False, "title": ""}})
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=api_response):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=api_response):
             result = await get_picarto_stream_url("https://picarto.tv/PicartoArtist")
             assert result["anchor_name"] == "PicartoArtist"
             assert result["is_live"] is False
@@ -644,7 +644,7 @@ class TestPicartoStreamUrl:
     @pytest.mark.asyncio
     async def test_live(self) -> None:
         api_response = json.dumps({"channel": {"name": "Artist", "online": True, "title": "Drawing"}})
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=api_response):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=api_response):
             result = await get_picarto_stream_url("https://picarto.tv/Artist")
             assert result["is_live"] is True
             assert "m3u8_url" in result
@@ -658,7 +658,7 @@ class TestChangliaoStreamUrl:
         # live_stat=0 离线但仍解析 nickname；
         # 与流星/音播同字段语义，锁住分支。
         api_response = json.dumps({"data": {"roomInfo": {"nickname": "畅聊主播", "live_stat": 0}}})
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=api_response):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=api_response):
             result = await get_changliao_stream_url("https://wap.tlclw.com/12345")
             assert result["anchor_name"] == "畅聊主播"
             assert result["is_live"] is False
@@ -672,7 +672,7 @@ class TestYinboStreamUrl:
         # live_stat=0 离线但仍解析 nickname；
         # 锁住 live_stat 字段分支。
         api_response = json.dumps({"data": {"roomInfo": {"nickname": "音播主播", "live_stat": 0}}})
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=api_response):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=api_response):
             result = await get_yinbo_stream_url("https://live.ybw1666.com/800005143")
             assert result["anchor_name"] == "音播主播"
             assert result["is_live"] is False
@@ -687,7 +687,7 @@ class TestZhihuStreamUrl:
         # 页面无 __INITIAL_STATE__ 初始数据 → 无法定位直播信息，装饰器兜底 {is_live:False}；
         # 锁住缺数据离线契约。
         html = "<html><body>no data</body></html>"
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=html):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=html):
             result = await get_zhihu_stream_url("https://www.zhihu.com/theater/12345")
             assert result == {"is_live": False}
 
@@ -701,7 +701,7 @@ class TestLianjieStreamUrl:
         api_response = json.dumps(
             {"data": {"nickname": "连接主播", "isonline": 0, "defaultRoomTitle": "", "videoUrl": ""}}
         )
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=api_response):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=api_response):
             result = await get_lianjie_stream_url("https://www.lailianjie.com/room/12345")
             assert result["anchor_name"] == "连接主播"
             assert result["is_live"] is False
@@ -713,7 +713,7 @@ class TestLaixiuStreamUrl:
     @pytest.mark.asyncio
     async def test_not_live(self) -> None:
         api_response = json.dumps({"data": {"nickname": "来秀主播", "playStatus": 1}})
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=api_response):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=api_response):
             result = await get_laixiu_stream_url("https://www.imkktv.com/?roomId=12345")
             assert result["anchor_name"] == "来秀主播"
             assert result["is_live"] is False
@@ -727,7 +727,7 @@ class TestHuajiaoStreamUrlApp:
         # errmsg 错误响应须返回 None（app 接口返回非 dict，调用方以 None 判失败）；
         # 验证类型匹配兜底而非 {is_live:False}。
         api_response = json.dumps({"errmsg": "error", "data": {}})
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=api_response):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=api_response):
             result = await get_huajiao_stream_url_app("https://www.huajiao.com/l/12345")
             assert result is None
 
@@ -747,7 +747,7 @@ class TestHuajiaoUserInfo:
     async def test_not_live(self) -> None:
         feeds_response = json.dumps({"data": {"feeds": []}})
         html = "<title>主播的主页.*</title>"
-        with patch("src.spider.async_req", new_callable=AsyncMock, side_effect=[feeds_response, html]):
+        with patch("src.network.http.request", new_callable=AsyncMock, side_effect=[feeds_response, html]):
             result = await get_huajiao_user_info("https://www.huajiao.com/user/12345")
             assert result is not None
             assert result["is_live"] is False
@@ -766,7 +766,7 @@ class TestAcfunStreamData:
         # 无 live 状态字段时离线但仍解析 profile.name；
         # 锁住字段契约。
         api_response = json.dumps({"profile": {"name": "A站主播"}})
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=api_response):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=api_response):
             result = await get_acfun_stream_data("https://live.acfun.cn/live/12345")
             assert result["anchor_name"] == "A站主播"
             assert result["is_live"] is False
@@ -779,7 +779,7 @@ class TestMaoerfmStreamUrl:
     async def test_error_returns_empty(self) -> None:
         # 网络异常（音频直播接口不稳定）→ 装饰器兜底 {is_live:False}；
         # 验证异常不向上抛。
-        with patch("src.spider.async_req", new_callable=AsyncMock, side_effect=Exception("network error")):
+        with patch("src.network.http.request", new_callable=AsyncMock, side_effect=Exception("network error")):
             result = await get_maoerfm_stream_url("https://www.missevan.com/live/12345")
             assert result == {"is_live": False}
 
@@ -799,7 +799,7 @@ class TestMaoerfmStreamUrlLive:
                 }
             }
         )
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=api_response):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=api_response):
             result = await get_maoerfm_stream_url("https://www.missevan.com/live/12345")
             assert result["anchor_name"] == "猫耳主播"
             assert result["is_live"] is False
@@ -813,7 +813,7 @@ class TestBilibiliRoomInfoH5:
         # H5 入口只回传标题字符串（非完整直播字典）；锁住「返回 str 而非 dict」契约，
         # 调用方据此直接显示房间标题。
         api_response = json.dumps({"data": {"room_info": {"title": "B站直播"}}})
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=api_response):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=api_response):
             result = await get_bilibili_room_info_h5("https://live.bilibili.com/26066074")
             assert result == "B站直播"
 
@@ -838,7 +838,7 @@ class TestWinktvBjInfo:
     @pytest.mark.asyncio
     async def test_error_returns_empty(self) -> None:
         # 出错返回 None（类型匹配兜底）：返回 tuple 的函数不能再拿到 dict 兜底值
-        with patch("src.spider.async_req", new_callable=AsyncMock, side_effect=Exception("network")):
+        with patch("src.network.http.request", new_callable=AsyncMock, side_effect=Exception("network")):
             result = await get_winktv_bj_info("https://www.winktv.co.kr/test")
             assert result is None
 
@@ -851,9 +851,11 @@ class TestKuaishouStreamData2:
     async def test_no_eid_falls_back(self) -> None:
         fallback = json.dumps({"is_live": False})
         with (
-            patch("src.spider.async_req", new_callable=AsyncMock, return_value=fallback),
-            patch("src.spider._ensure_kuaishou_did", new_callable=AsyncMock, return_value="did=abc"),
-            patch("src.spider.get_kuaishou_stream_data", new_callable=AsyncMock, return_value={"is_live": False}),
+            patch("src.network.http.request", new_callable=AsyncMock, return_value=fallback),
+            patch("src.streams.spider._ensure_kuaishou_did", new_callable=AsyncMock, return_value="did=abc"),
+            patch(
+                "src.streams.spider.get_kuaishou_stream_data", new_callable=AsyncMock, return_value={"is_live": False}
+            ),
         ):
             result = await get_kuaishou_stream_data2("https://live.kuaishou.com/u/testuser")
             assert isinstance(result, dict)
@@ -869,7 +871,7 @@ class TestBigoStreamUrl:
         # alive=0 离线但仍解析 nick_name；
         # 锁住 alive 字段分支。
         resp1 = json.dumps({"data": {"nick_name": "test_anchor", "alive": 0, "roomTopic": "", "hls_src": ""}})
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=resp1):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=resp1):
             result = await get_bigo_stream_url("https://www.bigo.tv/test/12345")
             assert result["anchor_name"] == "test_anchor"
             assert result["is_live"] is False
@@ -886,7 +888,7 @@ class TestBigoStreamUrl:
                 }
             }
         )
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=resp1):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=resp1):
             result = await get_bigo_stream_url("https://www.bigo.tv/test/12345")
             assert result["is_live"] is True
             assert result["m3u8_url"] == "https://example.com/live.m3u8"
@@ -895,7 +897,7 @@ class TestBigoStreamUrl:
     async def test_error_returns_false(self) -> None:
         # 网络异常 → 装饰器兜底 {is_live:False}；
         # 验证异常不向上抛中断主循环。
-        with patch("src.spider.async_req", new_callable=AsyncMock, side_effect=Exception("net")):
+        with patch("src.network.http.request", new_callable=AsyncMock, side_effect=Exception("net")):
             result = await get_bigo_stream_url("https://www.bigo.tv/test/12345")
             assert result == {"is_live": False}
 
@@ -910,7 +912,7 @@ class TestBluedStreamUrl:
         inner_json = json.dumps({"userInfo": {"name": "anchor", "onLive": False}, "liveInfo": {}})
         encoded = urllib.parse.quote(inner_json)
         html = f'decodeURIComponent("{encoded}")),window.Promise'
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=html):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=html):
             result = await get_blued_stream_url("https://www.blued.test/test")
             assert result["anchor_name"] == "anchor"
             assert result["is_live"] is False
@@ -924,14 +926,14 @@ class TestBluedStreamUrl:
         )
         encoded = urllib.parse.quote(inner_json)
         html = f'decodeURIComponent("{encoded}")),window.Promise'
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=html):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=html):
             result = await get_blued_stream_url("https://www.blued.test/test")
             assert result["is_live"] is True
             assert result["m3u8_url"] == "https://example.com/live.m3u8"
 
     @pytest.mark.asyncio
     async def test_error_returns_false(self) -> None:
-        with patch("src.spider.async_req", new_callable=AsyncMock, side_effect=Exception("net")):
+        with patch("src.network.http.request", new_callable=AsyncMock, side_effect=Exception("net")):
             result = await get_blued_stream_url("https://www.blued.test/test")
             assert result == {"is_live": False}
 
@@ -961,13 +963,13 @@ class TestSoopliveCdnUrl:
         # CDN 接口返回 view_url 即直推地址；锁住「原始 JSON 透传」契约，
         # 供上层拼接最终流地址。
         resp = json.dumps({"view_url": "http://cdn.example.com/live"})
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=resp):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=resp):
             result = await get_sooplive_cdn_url("12345")
             assert result["view_url"] == "http://cdn.example.com/live"
 
     @pytest.mark.asyncio
     async def test_error_returns_false(self) -> None:
-        with patch("src.spider.async_req", new_callable=AsyncMock, side_effect=Exception("net")):
+        with patch("src.network.http.request", new_callable=AsyncMock, side_effect=Exception("net")):
             result = await get_sooplive_cdn_url("12345")
             assert result == {"is_live": False}
 
@@ -979,21 +981,21 @@ class TestSoopliveTk:
     @pytest.mark.asyncio
     async def test_aid_mode(self) -> None:
         resp = json.dumps({"CHANNEL": {"AID": "test_token_123"}})
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=resp):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=resp):
             result = await get_sooplive_tk("https://play.sooplive.co.kr/testbj/123", rtype="aid")
             assert result == "test_token_123"
 
     @pytest.mark.asyncio
     async def test_info_mode(self) -> None:
         resp = json.dumps({"CHANNEL": {"BJNICK": "anchor", "BJID": "testbj", "BNO": "456"}})
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=resp):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=resp):
             result = await get_sooplive_tk("https://play.sooplive.co.kr/testbj/123", rtype="info")
             assert result == ("anchor-testbj", "456")
 
     @pytest.mark.asyncio
     async def test_error_returns_false(self) -> None:
         # 出错返回 None（类型匹配兜底）：返回 str/tuple 的函数不能再拿到 dict 兜底值
-        with patch("src.spider.async_req", new_callable=AsyncMock, side_effect=Exception("net")):
+        with patch("src.network.http.request", new_callable=AsyncMock, side_effect=Exception("net")):
             result = await get_sooplive_tk("https://play.sooplive.co.kr/testbj/123", rtype="live")
             assert result is None
 
@@ -1010,7 +1012,7 @@ class TestHuyaAppStreamUrl:
         resp = json.dumps(
             {"data": {"profileInfo": {"nick": "anchor"}, "realLiveStatus": "OFF", "liveData": {}, "stream": {}}}
         )
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=resp):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=resp):
             result = await get_huya_app_stream_url("https://www.huya.com/12345")
             assert result["anchor_name"] == "anchor"
             assert result["is_live"] is False
@@ -1038,7 +1040,7 @@ class TestHuyaAppStreamUrl:
                 }
             }
         )
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=resp):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=resp):
             result = await get_huya_app_stream_url("https://www.huya.com/12345")
             assert result["is_live"] is True
             assert result["title"] == "test title"
@@ -1079,7 +1081,7 @@ class TestHuyaAppStreamUrl:
                 }
             }
         )
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=resp):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=resp):
             result = await get_huya_app_stream_url("https://www.huya.com/12345")
             assert result["is_live"] is True
             # 三项均来自 TX（TX 优先于 AL，且非 index0 的 AL），scheme 为 http
@@ -1138,7 +1140,7 @@ class TestHuyaAppStreamUrl:
                 }
             }
         )
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=resp):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=resp):
             result = await get_huya_app_stream_url("https://www.huya.com/12345")
             assert result["is_live"] is True
             # 主源取 HS
@@ -1178,7 +1180,7 @@ class TestHuyaAppStreamUrl:
                 }
             }
         )
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=resp):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=resp):
             result = await get_huya_app_stream_url("https://www.huya.com/12345")
             assert result["is_live"] is True
             assert result["m3u8_url"] == "http://al.hls.example.com/alstream.m3u8?auth=al"
@@ -1190,7 +1192,7 @@ class TestHuyaAppStreamUrl:
     async def test_error_returns_false(self) -> None:
         # 网络异常 → 兜底 {is_live:False}；
         # 验证异常不向上抛。
-        with patch("src.spider.async_req", new_callable=AsyncMock, side_effect=Exception("net")):
+        with patch("src.network.http.request", new_callable=AsyncMock, side_effect=Exception("net")):
             result = await get_huya_app_stream_url("https://www.huya.com/12345")
             assert result == {"is_live": False}
 
@@ -1202,7 +1204,7 @@ class TestXhsStreamUrl:
     async def test_not_live_no_match(self) -> None:
         html1 = '<script>window.__INITIAL_STATE__={"liveStream":null}</script>'
         html2 = "<title>@testuser 的个人主页</title>"
-        with patch("src.spider.async_req", new_callable=AsyncMock, side_effect=[html1, html2]):
+        with patch("src.network.http.request", new_callable=AsyncMock, side_effect=[html1, html2]):
             result = await get_xhs_stream_url("https://www.xiaohongshu.com/user/profile/test123")
             assert result["anchor_name"] == "testuser"
             assert result["is_live"] is False
@@ -1211,7 +1213,7 @@ class TestXhsStreamUrl:
     async def test_error_returns_false(self) -> None:
         # 网络异常 → 兜底 {is_live:False}；
         # 验证异常不向上抛。
-        with patch("src.spider.async_req", new_callable=AsyncMock, side_effect=Exception("net")):
+        with patch("src.network.http.request", new_callable=AsyncMock, side_effect=Exception("net")):
             result = await get_xhs_stream_url("https://www.xiaohongshu.com/user/profile/test123")
             assert result == {"is_live": False}
 
@@ -1226,7 +1228,7 @@ class TestTokenJs:
         key_resp = json.dumps(
             {"error": 0, "data": {"rand_str": "abc", "key": "k", "enc_time": 1, "enc_data": "enc123", "is_special": 0}}
         )
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=key_resp):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=key_resp):
             result = await get_token_js("12345", "did123")
             assert "enc_data" in result
             assert result["did"] == "did123"
@@ -1236,7 +1238,7 @@ class TestTokenJs:
     async def test_error_returns_empty(self) -> None:
         # 拉取密钥异常 → 返回空 dict（调用方据空 dict 判失败）；
         # 验证类型匹配兜底。
-        with patch("src.spider.async_req", new_callable=AsyncMock, side_effect=Exception("net")):
+        with patch("src.network.http.request", new_callable=AsyncMock, side_effect=Exception("net")):
             result = await get_token_js("12345", "did123")
             assert result == {}
 
@@ -1245,7 +1247,7 @@ class TestTokenJs:
         # 密钥接口返回 error!=0（业务失败）须返回空 dict 而非抛错；
         # 与网络异常同走类型匹配兜底，调用方据空 dict 判失败。
         key_resp = json.dumps({"error": 1})
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=key_resp):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=key_resp):
             result = await get_token_js("12345", "did123")
             assert result == {}
 
@@ -1262,7 +1264,7 @@ class TestDouyuInfoData:
         resp = json.dumps(
             {"room": {"nickname": "anchor", "videoLoop": 0, "show_status": 0, "room_name": "test", "room_id": 1}}
         )
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=resp):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=resp):
             result = await get_douyu_info_data("https://www.douyu.com/12345?rid=12345")
             assert result["anchor_name"] == "anchor"
             assert result["is_live"] is False
@@ -1282,7 +1284,7 @@ class TestDouyuInfoData:
                 }
             }
         )
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=resp):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=resp):
             result = await get_douyu_info_data("https://www.douyu.com/12345?rid=12345")
             assert result["is_live"] is True
             assert result["title"] == "testlive"
@@ -1291,7 +1293,7 @@ class TestDouyuInfoData:
     @pytest.mark.asyncio
     async def test_error_returns_false(self) -> None:
         # 网络异常 → 装饰器兜底 {is_live:False}；验证异常不向上抛中断主循环。
-        with patch("src.spider.async_req", new_callable=AsyncMock, side_effect=Exception("net")):
+        with patch("src.network.http.request", new_callable=AsyncMock, side_effect=Exception("net")):
             result = await get_douyu_info_data("https://www.douyu.com/12345")
             assert result == {"is_live": False}
 
@@ -1305,7 +1307,7 @@ class TestAcfunSignParams:
         # 访客接口返回 (userId, ..., visitor_st) 元组；锁住下标契约（0=userId、2=visitor_st），
         # 供后续签名流程取用访问凭据。
         resp = json.dumps({"userId": 12345, "acfun.api.visitor_st": "st123"})
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=resp):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=resp):
             result = await get_acfun_sign_params()
             assert result[0] == 12345
             assert result[2] == "st123"
@@ -1315,7 +1317,7 @@ class TestAcfunSignParams:
         # CR-12 修复后语义：返回三元组的函数失败时回 None，而不是 {"is_live": False}。
         # 旧断言锁定的 dict 兜底会让调用方元组解包抛 ValueError，二次吞没后 AcFun
         # 整条链路静默失效；此处对齐正确设计语义（None = 取不到签名三件套）。
-        with patch("src.spider.async_req", new_callable=AsyncMock, side_effect=Exception("net")):
+        with patch("src.network.http.request", new_callable=AsyncMock, side_effect=Exception("net")):
             result = await get_acfun_sign_params()
             assert result is None
 
@@ -1330,15 +1332,15 @@ class TestDouyuStreamData:
         sign_params = {"enc_data": "enc", "did": "did123", "ts": 1000, "auth": "auth123"}
         stream_resp = json.dumps({"error": 0, "data": {"url": "http://stream.example.com"}})
         with (
-            patch("src.spider.get_token_js", new_callable=AsyncMock, return_value=sign_params),
-            patch("src.spider.async_req", new_callable=AsyncMock, return_value=stream_resp),
+            patch("src.streams.spider.get_token_js", new_callable=AsyncMock, return_value=sign_params),
+            patch("src.network.http.request", new_callable=AsyncMock, return_value=stream_resp),
         ):
             result = await get_douyu_stream_data("12345")
             assert isinstance(result, dict)
 
     @pytest.mark.asyncio
     async def test_no_sign_params(self) -> None:
-        with patch("src.spider.get_token_js", new_callable=AsyncMock, return_value={}):
+        with patch("src.streams.spider.get_token_js", new_callable=AsyncMock, return_value={}):
             result = await get_douyu_stream_data("12345")
             assert result["error"] == -1
 
@@ -1348,7 +1350,7 @@ class TestSoopliveStreamData:
 
     @pytest.mark.asyncio
     async def test_error_returns_false(self) -> None:
-        with patch("src.spider.async_req", new_callable=AsyncMock, side_effect=Exception("net")):
+        with patch("src.network.http.request", new_callable=AsyncMock, side_effect=Exception("net")):
             result = await get_sooplive_stream_data("https://play.sooplive.co.kr/testbj/123")
             assert result == {"is_live": False}
 
@@ -1359,7 +1361,7 @@ class TestLoginSooplive:
     @pytest.mark.asyncio
     async def test_short_username_raises(self) -> None:
         # 出错返回 None（类型匹配兜底）：返回 cookie 字符串的函数不能再拿到 dict 兜底值
-        with patch("src.spider.async_req", new_callable=AsyncMock):
+        with patch("src.network.http.request", new_callable=AsyncMock):
             result = await login_sooplive("short", "longpassword1")
             assert result is None
 
@@ -1367,7 +1369,7 @@ class TestLoginSooplive:
     async def test_short_password_raises(self) -> None:
         # 密码过短须返回 None（类型匹配兜底）；
         # 返回 cookie 串的函数不拿 dict 兜底，避免被 if 误判登录成功。
-        with patch("src.spider.async_req", new_callable=AsyncMock):
+        with patch("src.network.http.request", new_callable=AsyncMock):
             result = await login_sooplive("validuser", "short")
             assert result is None
 
@@ -1380,7 +1382,7 @@ class TestBilibiliStreamData:
         # code=0 且 durl 非空 → 在线并含流地址；锁住 B 站「code=0 即成功」契约，
         # 防把成功响应误判离线。
         resp = json.dumps({"code": 0, "data": {"durl": [{"url": "http://live.example.com/stream?d1--cn-gotcha=1"}]}})
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=resp):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=resp):
             result = await get_bilibili_stream_data("https://live.bilibili.com/12345")
             assert result is not None
             assert "url" in result
@@ -1388,7 +1390,7 @@ class TestBilibiliStreamData:
     @pytest.mark.asyncio
     async def test_code_zero_empty_durl(self) -> None:
         resp = json.dumps({"code": 0, "data": {"durl": []}})
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=resp):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=resp):
             result = await get_bilibili_stream_data("https://live.bilibili.com/12345")
             assert result is None
 
@@ -1396,13 +1398,13 @@ class TestBilibiliStreamData:
     async def test_code_nonzero_not_live(self) -> None:
         resp1 = json.dumps({"code": -1, "data": {}})
         resp2 = json.dumps({"data": {"live_status": 0, "playurl_info": {"playurl": {"stream": []}}}})
-        with patch("src.spider.async_req", new_callable=AsyncMock, side_effect=[resp1, resp2]):
+        with patch("src.network.http.request", new_callable=AsyncMock, side_effect=[resp1, resp2]):
             result = await get_bilibili_stream_data("https://live.bilibili.com/12345")
             assert result is None
 
     @pytest.mark.asyncio
     async def test_error_returns_false(self) -> None:
-        with patch("src.spider.async_req", new_callable=AsyncMock, side_effect=Exception("net")):
+        with patch("src.network.http.request", new_callable=AsyncMock, side_effect=Exception("net")):
             result = await get_bilibili_stream_data("https://live.bilibili.com/12345")
             assert result == {"is_live": False}
 
@@ -1444,7 +1446,7 @@ class TestBilibiliStreamData:
                 }
             }
         )
-        with patch("src.spider.async_req", new_callable=AsyncMock, side_effect=[resp1, resp2]):
+        with patch("src.network.http.request", new_callable=AsyncMock, side_effect=[resp1, resp2]):
             result = await get_bilibili_stream_data("https://live.bilibili.com/12345")
             assert result is not None
             assert "url" in result
@@ -1483,7 +1485,7 @@ class TestNeteaseStreamDataLive:
         html = (
             f'<script id="__NEXT_DATA__" type="application/json" crossorigin="anonymous">{inner_json}</script></body>'
         )
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=html):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=html):
             result = await get_netease_stream_data("https://cc.163.com/12345")
             assert result["is_live"] is True
             assert result["anchor_name"] == "anchor"
@@ -1505,7 +1507,7 @@ class TestNeteaseStreamDataLive:
         html = (
             f'<script id="__NEXT_DATA__" type="application/json" crossorigin="anonymous">{inner_json}</script></body>'
         )
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=html):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=html):
             result = await get_netease_stream_data("https://cc.163.com/12345")
             assert result["is_live"] is False
 
@@ -1522,7 +1524,7 @@ class TestBilibiliRoomInfo:
         resp1 = json.dumps({"data": {"uid": 123, "live_status": 1}})
         resp2 = json.dumps({"data": {"info": {"uname": "anchor_name"}}})
         resp3 = json.dumps({"data": {"room_info": {"title": "test title"}}})
-        with patch("src.spider.async_req", new_callable=AsyncMock, side_effect=[resp1, resp2, resp3]):
+        with patch("src.network.http.request", new_callable=AsyncMock, side_effect=[resp1, resp2, resp3]):
             result = await get_bilibili_room_info("https://live.bilibili.com/12345")
             assert result["anchor_name"] == "anchor_name"
             assert result["live_status"] is True
@@ -1530,7 +1532,7 @@ class TestBilibiliRoomInfo:
 
     @pytest.mark.asyncio
     async def test_error_returns_default(self) -> None:
-        with patch("src.spider.async_req", new_callable=AsyncMock, side_effect=Exception("net")):
+        with patch("src.network.http.request", new_callable=AsyncMock, side_effect=Exception("net")):
             result = await get_bilibili_room_info("https://live.bilibili.com/12345")
             assert result["anchor_name"] == ""
             assert result["live_status"] is False
@@ -1544,7 +1546,7 @@ class TestLoginFlexTv:
     @pytest.mark.asyncio
     async def test_success_returns_cookie_str(self) -> None:
         cookie_dict = {"flx_oauth_access": "abc123", "other": "val"}
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=cookie_dict):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=cookie_dict):
             result = await login_flextv("user123", "pass123")
             # 固化 cookie 串完整格式：分隔符 "; " + 全部条目（弱子串断言会漏检分隔符/漏项回归）。
             assert result == "flx_oauth_access=abc123; other=val"
@@ -1552,7 +1554,7 @@ class TestLoginFlexTv:
     @pytest.mark.asyncio
     async def test_success_tuple_format(self) -> None:
         cookie_dict = {"flx_oauth_access": "tok", "x": "y"}
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=("ignored", cookie_dict)):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=("ignored", cookie_dict)):
             result = await login_flextv("user", "pass")
             # 固化 cookie 串完整格式：分隔符 "; " + 全部条目（弱子串断言会漏检分隔符/漏项回归）。
             assert result == "flx_oauth_access=tok; x=y"
@@ -1561,14 +1563,14 @@ class TestLoginFlexTv:
     async def test_no_access_token_returns_none(self) -> None:
         # 响应缺 flx_oauth_access 字段 → 登录失败返回 None（类型匹配兜底）；
         # 返回 cookie 串的函数不拿 dict 兜底，避免被 if 误判登录成功。
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value={"other": "val"}):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value={"other": "val"}):
             result = await login_flextv("user", "pass")
             assert result is None
 
     @pytest.mark.asyncio
     async def test_error_returns_false(self) -> None:
         # 出错返回 None（类型匹配兜底）：旧 dict 兜底会被 if new_cookies 误判为登录成功
-        with patch("src.spider.async_req", new_callable=AsyncMock, side_effect=Exception("net")):
+        with patch("src.network.http.request", new_callable=AsyncMock, side_effect=Exception("net")):
             result = await login_flextv("user", "pass")
             assert result is None
 
@@ -1580,14 +1582,14 @@ class TestGetFlexTvStreamUrl:
     @pytest.mark.asyncio
     async def test_returns_play_url(self) -> None:
         resp = json.dumps({"sources": [{"url": "http://live.m3u8"}]})
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=resp):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=resp):
             result = await get_flextv_stream_url("https://www.ttinglive.com/user123/live")
             assert result == "http://live.m3u8"
 
     @pytest.mark.asyncio
     async def test_no_sources_returns_none(self) -> None:
         resp = json.dumps({"sources": []})
-        with patch("src.spider.async_req", new_callable=AsyncMock, return_value=resp):
+        with patch("src.network.http.request", new_callable=AsyncMock, return_value=resp):
             result = await get_flextv_stream_url("https://www.ttinglive.com/user123/live")
             assert result is None
 
@@ -1595,7 +1597,7 @@ class TestGetFlexTvStreamUrl:
     async def test_error_raises(self) -> None:
         # 网络异常须向上抛（该层不兜底），由调用方处理；
         # 与多数平台 {is_live:False} 兜底不同。
-        with patch("src.spider.async_req", new_callable=AsyncMock, side_effect=Exception("net")):
+        with patch("src.network.http.request", new_callable=AsyncMock, side_effect=Exception("net")):
             with pytest.raises(Exception):
                 await get_flextv_stream_url("https://www.ttinglive.com/user123/live")
 
@@ -1610,8 +1612,8 @@ class TestGetWinkTvStreamData:
         play_resp = json.dumps({"PlayList": {"hls": [{"url": "http://wink.m3u8"}]}})
         m3u8_content = "#EXTM3U\n#EXTINF:2,auth_playlist0.ts\nhttp://cdn/auth_playlist0.ts"
         with (
-            patch("src.spider.get_winktv_bj_info", new_callable=AsyncMock, return_value=bj_resp),
-            patch("src.spider.async_req", new_callable=AsyncMock, side_effect=[play_resp, m3u8_content]),
+            patch("src.streams.spider.get_winktv_bj_info", new_callable=AsyncMock, return_value=bj_resp),
+            patch("src.network.http.request", new_callable=AsyncMock, side_effect=[play_resp, m3u8_content]),
         ):
             result = await get_winktv_stream_data("https://www.winktv.co.kr/testuser")
             assert result["is_live"] is True
@@ -1621,7 +1623,7 @@ class TestGetWinkTvStreamData:
     @pytest.mark.asyncio
     async def test_not_live(self) -> None:
         bj_resp = ("wink_anchor", False)
-        with patch("src.spider.get_winktv_bj_info", new_callable=AsyncMock, return_value=bj_resp):
+        with patch("src.streams.spider.get_winktv_bj_info", new_callable=AsyncMock, return_value=bj_resp):
             result = await get_winktv_stream_data("https://www.winktv.co.kr/testuser")
             assert result["is_live"] is False
 
@@ -1629,6 +1631,6 @@ class TestGetWinkTvStreamData:
     async def test_error_returns_false(self) -> None:
         # bj_info 拉取异常 → {is_live:False}（桩掉 bj_info 隔离）；
         # 验证异常不向上抛。
-        with patch("src.spider.get_winktv_bj_info", new_callable=AsyncMock, side_effect=Exception("net")):
+        with patch("src.streams.spider.get_winktv_bj_info", new_callable=AsyncMock, side_effect=Exception("net")):
             result = await get_winktv_stream_data("https://www.winktv.co.kr/testuser")
             assert result == {"is_live": False}

@@ -12,11 +12,11 @@
 - 2026-09-22 | 供应链判定 | 面（发布期/运行期/签名脚本层）与满足方式（钉官方哈希 vs 源码可复现构建）是两个维度；新增满足方式不等于新增一个面，也不得用来盖另一面的缺口。 | `build_exe.py`
 - 2026-09-22 | 检查实现坑 | 表值经 `_pinned_slots()` 统一 `.strip().lower()`，任何「按常量原样逐字比」的判定（如类别标记）都会对注入通道失效——比较一律大小写无关。 | `tests/test_build_exe.py`
 - 2026-09-22 | 选项前提 | 采纳任何技术方案（包括自己列出的选项）前先回源核实其前提；Homebrew bottle 的 runtime_deps dylib 不在 bottle 内，故不能作分发源，否决要带证据留档。 | `PROPOSAL_2026-09-22_binary-trust-policy.md`
-- 2026-09-22 | PATH 语义 | 判据函数要接收调用点的 pre-injection PATH 快照而不是自读 `os.environ["PATH"]`，否则探测到刚前置进来的那一份，形成自我遮蔽的假绿。 | `src/ffmpeg_install.py`
+- 2026-09-22 | PATH 语义 | 判据函数要接收调用点的 pre-injection PATH 快照而不是自读 `os.environ["PATH"]`，否则探测到刚前置进来的那一份，形成自我遮蔽的假绿。 | `src/runtime/ffmpeg.py`
 - 2026-09-22 | 多判据真值表 | 写等价/真值表锁时，每个「拒绝」分支都要有一个「其余条件全满足、只缺它」的场景；若公共前置条件（如 PATH 上根本没有 ffmpeg）在所有场景里都成立，它会先短路，删掉任何后续判据都测不出来。 | `tests/test_ffmpeg_path_preference.py`
-- 2026-09-22 | 外链取证 | 接任何「下载直链」进代码前先跑最小探测集：GET 首 8 字节魔数 + `Content-Length`/`ETag`/`Last-Modified` 三件套 + 伴生 `.sha256`/`.md5`/`.sig` 是否存在 + `HEAD` 是否被拒；fengyuan/fyhub 那条即典型——`200 + text/html` 的人机验证（PoW）页，HEAD 回 `405 + application/json`，哈希文档全 404。 | `src/ffmpeg_install.py`
+- 2026-09-22 | 外链取证 | 接任何「下载直链」进代码前先跑最小探测集：GET 首 8 字节魔数 + `Content-Length`/`ETag`/`Last-Modified` 三件套 + 伴生 `.sha256`/`.md5`/`.sig` 是否存在 + `HEAD` 是否被拒；fengyuan/fyhub 那条即典型——`200 + text/html` 的人机验证（PoW）页，HEAD 回 `405 + application/json`，哈希文档全 404。 | `src/runtime/ffmpeg.py`
 - 2026-09-22 | 需求前提 | 「把 X 改成 Y / 移除 X 依赖」这类指令，先核实 X 在现行代码里的真实地位：本例蓝奏云只是**默认关闭的兜底**，Windows 主源一直是 gyan.dev；按字面「替换主源」会误删健康主源。 | `AGENTS.md`
-- 2026-09-22 | 守卫判序 | 完整性回路的正确顺序是「形态 → 哈希记账 → 解压」；把 zip 形态判定放到解压前看似等价，实则让非压缩包（HTML 挑战页）先污染 TOFU 旁路基准，失败还要晚好几步才暴露。 | `src/ffmpeg_install.py`
+- 2026-09-22 | 守卫判序 | 完整性回路的正确顺序是「形态 → 哈希记账 → 解压」；把 zip 形态判定放到解压前看似等价，实则让非压缩包（HTML 挑战页）先污染 TOFU 旁路基准，失败还要晚好几步才暴露。 | `src/runtime/ffmpeg.py`
 - 2026-09-22 | 新增守卫的连带失效 | 加一道前置守卫后，必须复核「原有哪条用例的覆盖意图被它抢走」：`test_unexpected_error_*` 用 `b"not-a-zip"` 当载荷，守卫上线后它在守卫处就返回，`except Exception` 分支静默失覆——测试仍全绿但不再测它想测的东西。 | `tests/test_ffmpeg_install.py`
 - 2026-09-22 | 约束的可绕过性 | 「只允许一条下载源」这类约束要按 AST 里的 URL 常量集合锁，不能 grep 关键字：换个镜像名就绕过，且会被刻意保留的历史注释误报。 | `tests/test_ffmpeg_install.py`
 - 2026-09-22 | i18n 目录清理 | 按关键词批量删目录键会误删仍被其他模块共用的键（`删除残缺压缩包失败: {e}` 归 node_install 用）；判据必须是「该键不被任何存活源码引用」。另：`zh_TW.yaml` 用不加引号的键（`"k":` 形态只匹配到一半），四份目录全是 CRLF，脚本须 `newline=""` 读写。 | `i18n/`
@@ -24,7 +24,7 @@
 - 2026-09-22 | 接受他人删除 | 用户裁决「接受删除」意味着**我的文档必须跟随现状**，而不是把已批准的方案当现状：本轮把 8 处仍写「P-1b = 显式开关」的正文改齐（含中英双份标题/小节/同源段/快照表/覆盖率表 + 提案影响表两行），并让**待确认项随被删契约一起作废**（`ALLOW_UNVERIFIED` 字面集合是否放宽——变量已不存在，不要再排期）。收敛手法是「改断言现状的句子 + 保留带日期的修订注」，不是重写历史。 | `CODE_WIKI.md`
 - 2026-09-22 | 会漂移的计数 | 目录条数这类会被并发写入改变的量，落文档必须同时给「取数命令 + 读数时刻 + 两种口径（`.mo` 头部 N 与键数，N=键数+1）」。当天同一工作树先后读到 663/662 与 667/666，而两份修复报告分别报 679/663 与 680/679；处置不是裁定谁造假，而是把「先复跑再落文档」写成约定。判断证据是否出自本机，最便宜的两招：`date`（报告给的 mtime 20:13 晚于当时时钟 16:14）与 `git worktree list`（只有一个工作树）。 | `AGENTS.md`
 - 2026-09-22 | 孤儿目录键 | 「删了源码」不会让检查发现目录侧的残留：`extract_i18n_strings.py` 的「疑似冗余」只是参考级，16:11 的一次写入让 4 条 `蓝奏云 …` msgid 回到四目录而源码 `grep lanzou` 0 命中。删功能时要按「键含该功能专有字样 **且** 不被存活源码引用」手工回查目录侧。 | `i18n/`
-- 2026-09-22 | 用户指南别照注释写 | 写「手动安装 ffmpeg」指南时发现 `src/ffmpeg_install.py:71`（称产物在 `ffmpeg/bin/ffmpeg.exe`）与 `:68`（称冻结态 `execute_dir` 指向 `_internal/`）都与 `src/logger.py::_app_root()` 的实现和 `copytree` 目标矛盾；指南按**实现语义**写（扁平一层 `ffmpeg\ffmpeg.exe`，`PATH` 前置不进子目录），注释归文件作者改。 | `README.md`
+- 2026-09-22 | 用户指南别照注释写 | 写「手动安装 ffmpeg」指南时发现 `src/runtime/ffmpeg.py:71`（称产物在 `ffmpeg/bin/ffmpeg.exe`）与 `:68`（称冻结态 `execute_dir` 指向 `_internal/`）都与 `src/support/logger.py::_app_root()` 的实现和 `copytree` 目标矛盾；指南按**实现语义**写（扁平一层 `ffmpeg\ffmpeg.exe`，`PATH` 前置不进子目录），注释归文件作者改。 | `README.md`
 - 2026-09-22 | 全量跑的串行约束 | 全量 `pytest` 期间任何第二个会话退出都会 `rmtree` 共享的 `tests/_out_e2e`，把 `test_srt_timeline_anchor.py` 打成 4 条假红（识别特征：单文件复跑立刻 4 passed）。本轮自己触发一次、并发工作流触发一次；改 `tmp_path` 之前请保持串行。**【2026-09-24 已闭环】**该用例已改走 `tmp_path`、`_TEST_OUT_DIRS` 与 hygiene 白名单同步去掉 `_out_e2e`，导入期共享目录这条竞态从根上消失，「串行」约束不再适用（现行判据见 AGENTS.md「测试产物一律走 `tmp_path`」条）。 | `tests/conftest.py`
 - 2026-09-22 | 我犯过的转述错 | 把并行工作流**声称**的读数（「16:58:17 写入 → 667/666，随后被回退」）当成自己的观测写进实测序列表，还替它编了「被回退」的机制解释；该行在本盘六次复测里从未出现，已删除。**别人的数字只能进「外部未复现声明」这一栏，不得进自己的实测表**——一行伪装成定量，就够让后来者拿真实数据去「校正」它。 | `CODE_WIKI.md`
 - 2026-09-22 | 时钟不是判据 | 我一度写下「报告里的时刻晚于本机时钟 ⇒ 它没做实盘测量」并据此否证对方三轮数据：**该判据不成立**（跨会话时钟不可比）。站得住的只有两条：目标文件在本盘的 mtime，以及读者自己复跑同一条命令。本例中 `.mo` 的 mtime 在 40 分钟内恒为 16:31:15，说明「正在被写」的猜测本身也不成立。 | `AGENTS.md`
@@ -106,7 +106,7 @@
   `FakePopen` 合一反而 +33 B，因合并时补了因果框架文字——如实记），7 项事实同步 **+699 B**，全批净 **+529 B**。
 - **文档里的用例数 / 调用点数 / 符号名一定漂移，改动前先取一次实读**：本轮抓到 5 处——`tests/test_scheduler.py`
   16→29、`tests/test_record_failure_feedback.py` 5→8（均 `pytest --collect-only -q`）、「6 处 `check_subprocess` 调用」
-  →1 处（F-01 收敛后各平台只填 `ctx.record_danmaku_args`）、`_loads_dict`「约 40 处」→104 行、`src/scheduler.py` 的
+  →1 处（F-01 收敛后各平台只填 `ctx.record_danmaku_args`）、`_loads_dict`「约 40 处」→104 行、`src/recording/scheduler.py` 的
   `_allow_sleep` 实为 `_sleep`。反方向的准确读数也存在：`BARE_JSON_LOADS_CEILING = 1`、retry 真 bash 行为锁 8 格、
   arm64 让位 9 格矩阵、web_api 路由 24 条全部复核为真，不要一律怀疑。
 - **外迁出去的参考文档会失去入口**：`docs/agent-reference/measured-evidence.md` 与 `lock-classification.md` 早已由
@@ -115,7 +115,7 @@
 - **并行派发 Agent 受并发上限约束，实测约 5 个**：2026-09-30 全仓审查曾一次消息并行派 18 个 Agent，仅 5 个成功，其余全部报 `user concurrency limit exceeded` / `model concurrency limit exceeded` 且不自动重试；改为每批 3-5 个、共 6 批串行派发后 18 个全部完成。批量审查/批量任务类工作直接按 3-5/批派发，不要赌上限，也不要为凑并发把 prompt 压缩到失真。
 - **`scripts/douyin_live_recorder_standalone.py` 是安全修复的「回灌盲区」**：主线 2026-09-12/09-20/09-29 的协议白名单（`main.py:3466`）、同步探针内网判定、MID-49 斗鱼签名 POST、`ffmpeg_proc` 三级终止四轮修复全部未回灌该独立副本——2026-09-30 全仓审查仅有的两条严重（SSRF/file:// 探测录制链、ffmpeg 命令含 Cookie 落盘 `logs/ffmpeg.log`）都在它身上；现有 9 格孪生矩阵锁只覆盖 PATH 让位判据一项。主线安全/正确性修复落地时必须逐项核对该文件，并在提交信息写明「已回灌 / 刻意不回灌及原因」。
 - **审查报告的修复建议本身也要当假设验证；需要 commit 时通过全量 pytest 检查跨模块影响**：2026-09-30 P0 批次，M-17 按报告字面建议把 `_SECRET_HEADER_RE` 的 `(?<![A-Za-z0-9"'])` guard「移到 plain 分支」，触碰面用例全绿；全量 pytest 却在看似无关的 `tests/test_notify_script_guard.py` 抓出 8 红——shell 命令串 `--header "Authorization: Bearer X"` 的键名前恰是引号，quote 排除让带引号 header 形态整体漏抹（该形态此前由 plain 分支无 quote 排除地兜住）。正确修法：驼峰分支摘掉恒死 guard 即可，plain 分支保持与查询串形态逐字同构；「guard 防 https: 误抹」的旧注释在当前键名表下已被证伪（无键名可匹配 `https:`，`_PUBLIC_UNTOUCHED` 恒绿）。复盘：① 报告条目的「修复建议」列是建议不是事实源，落地前先枚举该正则的既有消费形态（带引号 header 正是被忽略的那个）；② 回归锁要补「修的方向」与「别把既有行为修没」两个方向（本次在 `_CAMEL_LEAK_CASES` 同时加了驼峰复合键与带引号 header 两类）。
-- **CRLF 仓里做变异验证/字节级改写，锚点必须 CRLF 感知，且 Bash heredoc 不可靠**：`src/utils.py` 是纯 CRLF 文件，用 `\n` 拼的锚点两次 `not found`；即便带引号定界符，Bash 工具层也会吃掉 heredoc 里的双反斜杠转义（脚本里写两个反斜杠+n，到达 Python 时已折成一个）。可靠做法：把变异脚本经 Write 工具写成 `%TEMP%` 下的临时 .py（内容原样落盘），`chr(92)` 构造反斜杠、`"\r\n".join(lines)` 拼块，跑完删脚本并在 finally 里断言 `read_bytes()` 与原字节相等。
+- **CRLF 仓里做变异验证/字节级改写，锚点必须 CRLF 感知，且 Bash heredoc 不可靠**：`src/support/utils.py` 是纯 CRLF 文件，用 `\n` 拼的锚点两次 `not found`；即便带引号定界符，Bash 工具层也会吃掉 heredoc 里的双反斜杠转义（脚本里写两个反斜杠+n，到达 Python 时已折成一个）。可靠做法：把变异脚本经 Write 工具写成 `%TEMP%` 下的临时 .py（内容原样落盘），`chr(92)` 构造反斜杠、`"\r\n".join(lines)` 拼块，跑完删脚本并在 finally 里断言 `read_bytes()` 与原字节相等。
 
 ## 2026-10-01 — GUI 单飞回归锁的 Linux CI 假红（POSIX 分支替身缺失）
 
@@ -139,7 +139,7 @@
 
 ## 2026-10-02 — 整改批收尾：审查建议本身可能是错的，以及「补日志/过码/移动状态位」三类改动的隐性破坏面
 
-- **落地外部审查的修法建议前，先给它构造一格反例**：`CODE_REVIEW_2026-10-02` M-05 的建议是「`int(cast(str, is_private))` 改按真值判定」。照抄后 `bool("0")` 是 True，API 以字符串 `"0"` 下发时**公开房间被误判私有**、整轮报错——即修复把「恒判未开播」换成了「恒报错」，而实现者还在注释里写「对 "0"/0/False 均语义正确」。判据：凡「换一种判定写法」类建议，先列出该字段的**全部现实下发形态**（JSON 数字 / 布尔 / 字符串 / null）做成矩阵用例，再决定写法；本仓已有 `src/config_bool.parse_config_bool` 这一份统一 token 口径，外部 API 的字符串布尔字段同样该复用它，而不是新写一套真值判断。 | `src/spider.py`
+- **落地外部审查的修法建议前，先给它构造一格反例**：`CODE_REVIEW_2026-10-02` M-05 的建议是「`int(cast(str, is_private))` 改按真值判定」。照抄后 `bool("0")` 是 True，API 以字符串 `"0"` 下发时**公开房间被误判私有**、整轮报错——即修复把「恒判未开播」换成了「恒报错」，而实现者还在注释里写「对 "0"/0/False 均语义正确」。判据：凡「换一种判定写法」类建议，先列出该字段的**全部现实下发形态**（JSON 数字 / 布尔 / 字符串 / null）做成矩阵用例，再决定写法；本仓已有 `src/config_bool.parse_config_bool` 这一份统一 token 口径，外部 API 的字符串布尔字段同样该复用它，而不是新写一套真值判断。 | `src/streams/spider.py`
 - **移动一个「链是否续期」的状态位，可能同时满足一把锁、打穿另一把锁**：L-39 把 `gui._log_queue_has_data = False` 从「渲染成功后」上移到「取空队列即清」，正确修掉了哨兵单独取空时的永久空转；但 M-15 的锁 `test_log_flush_chain_rearms_when_render_raises` 依赖的正是「渲染中途抛错 ⇒ has_data 仍为 True ⇒ finally 照常续期」，上移即打穿（jobs 变空 + `still_has_data` 变假）。两条约束可以共存：清除留在原地，由**持有续期决策的那一站**（`_schedule_log_flush` 的 except 分支）在异常路径上复位。判据：改自续期链附近的共享状态位之前，先跑 `tests/test_gui_tail_robustness.py`；改完再跑一次，别只看目标用例变绿。 | `gui.py`
 - **写死条数的 AST 锁在合法删除后必须改成反向见证，而不是把数字改小**：`assert len(runs) == 4` 的本意是「扫描面非空、别假绿」，L-40 删掉两段不可达兜底后实际只剩 2，改数字会让这把锁继续跟着每次合法增删漂移且不表达任何判据。正确形态：`assert runs`（0 处即红，保住反假绿的那一半）+ 对 `ast.walk` 自动纳入的每一个调用点逐条断言（新增的第 N+1 处照样被检查）。 | `tests/test_regression_2026_09_22_gui.py`
 - **覆盖率检查的「数据陈旧」rc=2 会被同字节重写触发**：`check_coverage.py` 比的是 `.coverage` mtime 与 `src/` 最新 mtime；收尾时发现 `src/ffmpeg_linux_download.py` 与 `tests/test_ffmpeg_linux_download.py` 被**内容零差异**地重写（`git diff` 对 HEAD 与索引均空、行尾形态不变），仅 mtime 变新即足以让检查拒评。遇到这条红先看 `git diff` 有没有实际内容变化，再决定是重跑采集还是查改动来源。 | `scripts/check_coverage.py`
@@ -148,7 +148,7 @@
 ## 2026-10-03 — 虎牙 hy.fan 短链接入：同树并行会话、直喂短链的真机脚本边界与熔断桶口径
 
 - **同树并行会话是本仓的现实工作形态，编辑前必须重 Read**：同一天里斗鱼（m.douyu.com）、虎牙（hy.fan，本批）、B站（b23.tv）三个同构工作包在同一工作区并行落地，后启动的会话把先落地者的代码当模板并在注释里逐字引用（b23.tv 注释写「与 `_hy_fan_path_segment` 同口径」），还会替你同步被你插入扰动的锁（`test_resolver_table_priority_head` 由斗鱼批次按含我方表项的实际顺序同步为前六项）；`.mo` 条目数在会话中途 856→858→860 递增。判据与对策：Edit 报「多 matches」时先用多行锚点消歧；三个短链 resolver 的归一化行**逐字相同**，变异验证必须带上下文多行替换并 `assert count == 1`；全量 pytest 一次红（459.7s）复跑全绿，先疑并行批次的编辑中间态再归因自己。 | `main.py`
-- **「直喂短链给平台函数」的真机脚本红是脚本边界，不是功能回归**：`tests/test_huya_live_collector.py` 把 URL 直接传给 `spider.get_huya_app_stream_url`，绕过 main.py 解析层——短码形态在 ProfileRoom 反查处失败（app UA 下 301 落地页正则未命中）→ 脚本报 FAIL/SKIP。生产链路中 resolver 先行归一、spider 只收数字房间链接，该路径不可达。判据：真机脚本红先画调用链，看失败点在「本批改动面」还是「被本批归一化绕开的既有路径」；是后者就归档为已知边界（写进 CODE_WIKI），不为让脚本变绿去改生产函数。 | `tests/test_huya_live_collector.py` / `src/spider.py`
+- **「直喂短链给平台函数」的真机脚本红是脚本边界，不是功能回归**：`tests/test_huya_live_collector.py` 把 URL 直接传给 `spider.get_huya_app_stream_url`，绕过 main.py 解析层——短码形态在 ProfileRoom 反查处失败（app UA 下 301 落地页正则未命中）→ 脚本报 FAIL/SKIP。生产链路中 resolver 先行归一、spider 只收数字房间链接，该路径不可达。判据：真机脚本红先画调用链，看失败点在「本批改动面」还是「被本批归一化绕开的既有路径」；是后者就归档为已知边界（写进 CODE_WIKI），不为让脚本变绿去改生产函数。 | `tests/test_huya_live_collector.py` / `src/streams/spider.py`
 - **短链房间的 `record_host` 保留短链域是特性不是遗漏**：按 host 隔离的熔断桶把「短链解析失败」与桌面链接的取流失败分开计数，桶隔离语义比回填成桌面域更准。同日三个短链工作包（hy.fan / b23.tv，m.douyu.com 走同表项不经此路径）都按此口径；后续新增短链域照抄，不要「顺手统一」record_host。 | `main.py`
 
 ## 2026-10-03 — Linux arm64 ffmpeg 支持批次取到的四条可复用判据
@@ -253,8 +253,8 @@
   不凭记忆填 SHA 或 tag；③ `pre-commit validate-config` 只证明 YAML 合法，**不等于**钩子能装起来——本机 clone 被代理拦时，
   「钩子实际运行过」必须如实写「未验证」，不得用 validate-config 的绿替代。
   | .github/workflows/ci.yml / .pre-commit-config.yaml / tests/test_pre_commit_config.py
-- **异常消息「登记进目录」之前，必须先确认它是被查表还是被插值**（2026-10-17，C 项 21 站点逐条顺消费链实测）：本仓大量日志写法是 `logger.error(i18n.tr("…: {record_url} - {reason}", reason=str(err)))`，模板查了表、**消息本身从没查**；此时只把原文登记进四目录 = 造死条目，唯一有目录意义的修法是在 **产生点** 包 `raise ValueError(i18n.tr(…))`。反过来的陷阱也存在：`XhsUrlError` 一类「消息 + 稳定 code」双通道异常，消费点（`src/spider.py` 两处 except 与 `main._resolve_xhslink_com`）**一律只读 `e.code`**，message 从不显示——这类站点接 tr() 也无人看，应当进白名单并写明「谁消费它、为什么不需要译」。判据一律用 AST 顺 raise→except→日志/返回值三级，别靠 grep 猜（非 ASCII + 空格形态会静默漏配）。
-  | main.py `_hy_fan_path_segment` / `src/web_models.py::_as_*` / `src/spider.py::parse_xhs_live_url` / `tests/test_i18n_raise_site_tr.py`
+- **异常消息「登记进目录」之前，必须先确认它是被查表还是被插值**（2026-10-17，C 项 21 站点逐条顺消费链实测）：本仓大量日志写法是 `logger.error(i18n.tr("…: {record_url} - {reason}", reason=str(err)))`，模板查了表、**消息本身从没查**；此时只把原文登记进四目录 = 造死条目，唯一有目录意义的修法是在 **产生点** 包 `raise ValueError(i18n.tr(…))`。反过来的陷阱也存在：`XhsUrlError` 一类「消息 + 稳定 code」双通道异常，消费点（`src/streams/spider.py` 两处 except 与 `main._resolve_xhslink_com`）**一律只读 `e.code`**，message 从不显示——这类站点接 tr() 也无人看，应当进白名单并写明「谁消费它、为什么不需要译」。判据一律用 AST 顺 raise→except→日志/返回值三级，别靠 grep 猜（非 ASCII + 空格形态会静默漏配）。
+  | main.py `_hy_fan_path_segment` / `src/api/models.py::_as_*` / `src/streams/spider.py::parse_xhs_live_url` / `tests/test_i18n_raise_site_tr.py`
 - **「两套文本必须同源」的故障只能用静态结构锁看见**（2026-10-17，9 处 Qt 按钮图标消失）：`action_button("📥  X")` 与 `set_text(btn, T("X"))` 单看任一行都成立，但 `set_text` 建时即回填 + 登记重译，构造期文本会在启动回填和每次 `retranslate_all()` 被打回登记键的形态。修法不是改回填顺序，而是**让两处指向同一个 msgid**，且优先取目录里已存在的键（本轮复用 Tk 遗留的三空格形态 → 四目录零新增）。锁的形态：AST 收集「构造字面量」与「登记键」两张表按属性名配对判等，另配 emoji 下限 + 键必须四目录齐全两条判据；行为侧证据走 `QT_QPA_PLATFORM=offscreen` 真建页面读 `text()`，比断言源码字符串更硬。副作用要预先说明：孤儿裸文本键不会判红，改完必须 AST 复核哪些键就此失去调用点，再决定是否收回目录。
   | `src/gui_qt/pages/dashboard.py` / `src/ui_i18n.py::set_text` / `tests/test_gui_qt_label_parity.py`
 - **构建 `MainWindow` 的探针脚本不能用普通 `sys.exit` 收尾**（2026-10-17 实测挂满 240s 超时）：窗口构造会起非守护线程/定时器，解释器退出时 join 永不归零的线程 → 整脚本挂死，而控件文本其实早已拿到。探针一律先 `flush()` 再 `os._exit(0)`；另记两条同源坑：`MainWindow.__init__` 自带语言探测，探针里 `set_language()` 之后仍可能被持久化配置改判（读标签前必须钉语言并 `retranslate_all()`）；以及 `import main` 的脚本在解释器退出时会触发既有的 ffmpeg 进程清理 atexit（探针环境须确认无在录任务）。
@@ -266,7 +266,7 @@
 - **精简一份「事实源」文档前先把冗余度量出来，再区分「重复」与「长」**（2026-10-17，AGENTS.md 复核）：本轮实测 547 行 / 93 696 字符，尾部空白 0、连续空行 0、完全重复行只有 6 组且全是 ``` 与 > 这类结构符，>120 字符条目的两两相似度 >0.45 仅 3 对，其中 1 对还是 Black/isort 两个「取值」小标题的假阳性。真正能减的只有三种：① 同标题双条目（其实是标题复制粘贴，内容各自成立——只能分标题，不能合并正文）；②  checklist 条目把别处清单重述了一遍（改指针）；③ 一次性实测读数（外迁 + 留约束与指针）。剩下的长句全是「为什么」，压它等于删判据。结论要如实报体积方向：本轮根文件反而 +902 B，因为同时新增了两条长期约定。
   | AGENTS.md「可达性约定」/ docs/agent-reference/measured-evidence.md
 - **`RawConfigParser` 默认 `strict=True` 让「同节重复键」成为配置文件级损坏**（2026-10-17 实测）：补写路径写出两行同名键后，`read()` 直接 `DuplicateOptionError`，入口起不来；且这种损坏**不是确定性可复现**的（单跑一次读取+补写不改写文件，`config_parser.write()` 也只产出一份键），属于「两个持有不同快照的写者并发」。要点有二：① 判据要写成「对同一份文件连跑两轮读取+补写，断言该键出现次数仍为 1」，而不是只看单轮结果；② 工作区里出现了运行期写产物时，**索引可能已带着它**（本例 `git diff --cached` 仍显示那 1 行），还原工作区不等于还原暂存区，必须分开报告交回用户。
-  | config/config.ini / src/config_io.py::read_config_value / AGENTS.md 配置键名节
+  | config/config.ini / src/config/io.py::read_config_value / AGENTS.md 配置键名节
 - **收回「孤儿」翻译条目时，测试夹具也是调用点**（2026-10-17，四目录收回 6 条、留 1 条）：生产侧 AST 扫 `T()`/`tr()` 首参会漏掉一整类消费者——`开始录制` 在生产侧零调用点，却被 `tests/test_i18n.py` 的两条用例当样本 msgid 用来验证「`.mo` 优先于 JSON/YAML」与热切换，删它 = 打红两条机制用例。判据：删键前 AST 扫**全部字符串常量**（含 tests/ 与前端 js 的**值位**），把「只作值出现」与「被查表」区分开——`停止录制` 在 `web/app.js` 里是内嵌目录的值，与后端键无关，可删；被查表的一律留下并写明谁在用。
   | i18n/zh_CN/LC_MESSAGES/zh_CN.po / tests/test_i18n.py / AGENTS.md 关键约定 #14
 - **四份目录不是同一种文本，删条目要按各自语法收口**（2026-10-17 实测三处坑）：① `.po` 是 `msgid`+`msgstr`+其后空行 的块；② JSON 删行后必须**只在条目区内**做逗号归一（末条目不带逗号、其余都带），否则删掉末条目会让前一行缺逗号而 `json.loads` 直接非法——先 `loads` 验证再落盘，并断言「键集合 == 原集合 − 待删集合」；③ `zh_TW.yaml` 的键**单双引号混用**（正文 `'键': '值'`、尾部 `"键": "值"`），只按一种引号匹配会静默少删（实测断言抓到 2≠6 才没留下半截状态）。收尾口径统一用 `.mo` 头部 N == 键数 + 1 与「四目录键集合逐项相等」两条复验。
@@ -276,7 +276,7 @@
 - **Qt 的 `QFont` 族名位只收单个 family，且字体解析只能在 windows/mac 平台插件下验**（2026-10-17，用户日志两条 Qt 告警）：`QFont("Consolas, Menlo, Courier New, monospace")` 这种 CSS 式候选串在装了 Consolas 的机器上侥幸命中（`QFontInfo` 回读 `Consolas`），在没装的机器上由 `styleHint=Monospace`（枚举值实测 7）导流到 Qt 遗留别名表的 `Terminal`，产出 `DirectWrite: CreateFontFaceFromHDC() failed` + `QFont::setPointSize: Point size <= 0 (-1)` 两条同源告警。正确形态：按候选顺序取本机第一个真实存在的族名，候选全缺时交回 `QFontDatabase.systemFont(FixedFont)`，**不得**硬写 `setFontFamily("<某款>")`。**验证面的坑比缺陷本身更贵**：`QT_QPA_PLATFORM=offscreen` 下 `QFontDatabase.families()` 返回**空集合**、`QFontInfo().family()` 返回 `''`，任何「解析成了哪一款」的断言在 offscreen 上都是全假绿；要么用 windows 平台插件真建控件（`qInstallMessageHandler` 顺带抓 Qt 自己的告警），要么在测试里打桩 `QFontDatabase.families` / `systemFont` 把两条分支都钉住（本仓选后者，判据不随本机字体表漂移）。
   | src/gui_qt/widgets.py::fixed_font / tests/test_gui_qt_units.py / AGENTS.md GUI 窗口层条目 ⑦
 - **「该键出现次数仍为 1」不足以证明写回幂等——判据要落到「产物仍能被 strict 解析器整份读出」**（2026-10-17，变异 M4 实测）：给缺键补写加一条幂等锁时，第一版只数目标键的出现次数；把写回改成「追加式落盘」（`open(..., "a")` 追加整份序列化结果）后用例**仍然全绿**——因为原文件本来就没有那个键，追加一份后计数恰好为 1，而文件里已经被重复追加了整个节/键集合。补上「用默认 `strict=True` 的解析器重读一遍不抛」这条判据后同一变异当场转红。推广口径：验「幂等/不重复」时，计数式断言只在**基线已含该项**的形态下有效；对「可能整块被重复写出」的产物，判据应是「下游消费者能否无差别接受这份产物」。
-  | tests/test_config_io.py::TestMissingKeyWritebackIdempotency / src/config_io.py::read_config_value / AGENTS.md 配置键名节
+  | tests/test_config_io.py::TestMissingKeyWritebackIdempotency / src/config/io.py::read_config_value / AGENTS.md 配置键名节
 - **「缺件」报错点离根因两跳远，判定链的关键是异常属于 `Exception` 还是 `BaseException`**（2026-10-18，evermeet macOS 取数端点被上游 410 整体下架）：CI 日志只点名 `full 包产物自检：ffmpeg/ 内找不到非空的 ffmpeg / ffprobe`，真因在两跳之前的 `[build] ffmpeg 下载失败：HTTPError: HTTP Error 410: Gone`——`_download_ffmpeg` 的 `except Exception` 把它收成一行 warning 并返回 False，空目录直到出包前自检才被硬判缺件。两条可推广的判法：① 见到「产物自检报缺件、同轮另一个组件（node）却正常」，先假定**下载阶段就被吞了**，去要自检行之前的完整日志而不是直接查解包逻辑；② 本仓把「归档里没取到件」写成 `raise SystemExit`（BaseException，不被上层吞），而 HTTP 层异常天然走 `except Exception`——所以「上游端点没了」永远是**降级成 warning + 末尾兜住**的形态，而「上游换了内部布局」才是**当场终止**的形态；据此可从日志位置反推故障发生在哪一层。上游侧的确认方式：直接 `curl -L` 打那个端点看状态码与响应体（410 的 JSON 里写着 `removed due to exorbitant abuse`），再读它的说明页正文，不要靠猜「是不是我这边网络/代理」。
   | build_exe.py::_download_ffmpeg / build_exe.py::verify_runtime_binaries / docs/agent-reference/measured-evidence.md
 - **换出站下载点时，测试桩的 URL 必须从生产表推导，且要新造「多支归档版本一致」的不变量**（2026-10-18，同一轮）：darwin 端到端用例原先把 `/getrelease/zip` 之类的路径字面量抄进 `_install_routed_urlopen` 的 payload 键——表改了 URL 后这类用例不是变红而是**同时护住旧 URL**（桩按旧键匹配、生产按新键请求，只在匹配失败时才炸，等于把漂移的检测权交给运气）。改法：桩键经 `_artifact_url_for_slot()` 从 `_FFMPEG_DOWNLOAD_URLS` / `_EXTRA_EXECUTABLE_URLS` 取，用例只锁「按表取两支归档 + 按登记的签名 URL 验签」这层结构。另一条：macOS 的 ffmpeg 与 ffprobe 是**两支独立归档、版本号各写各的**，抬版只挪一支会得到跨代次的 full 包，而既有锁全都不会红（各自形状都合法）——补一条「两支归档的版本号必须相等」的判据，并在变异验证里单挪一支确认它真会红。
@@ -284,18 +284,18 @@
 - **Signal「定义了 + connect 了」不等于通路通了——测试直调内部消费函数会长期掩盖生产侧断路**（2026-10-18，S-01 全仓唯一严重项）：Qt GUI 录制输出链的 `linesReceived` 从未 `emit`、唯一消费口 `drain()` 生产调用方为零，而 UI 侧那句 `connect` 看着完整、`tests/test_gui_qt_units.py` 又直调 `drain()` 把断言全部跑绿，于是「日志页永不更新 / 自然下播永不感知 / 无法连续录制」三个可感知故障在仓库里静默存在。判据三条：① 核实跨线程通路一律 `grep` 该 Signal 的 `.emit(` 与消费方的**生产调用点**是否同时存在，只查定义和 connect 不作数；② 用例直调私有/内部消费函数时，同文件必须另有一条经真实通路驱动的用例；③ 修复选型要保住既有节流落点（本例保留队列 + 空载 `outputReady` 唤醒，而不是读线程直接 emit 带数据）。
   | src/gui_qt/recorder.py::outputReady / src/gui_qt/main_window.py::_pump_recorder_queue / tests/test_regression_2026_10_18_gui_output_chain.py / AGENTS.md GUI 窗口层条目 ⑧
 - **stdlib 替身挂进被测模块命名空间仍然不够：破坏面必须按「对象/路径」收窄，否则别的用例的后台线程会在窗口内走进同一支替身**（2026-10-18 全量实测）：L-18 的 `dm.os.replace` 故障替身把「失败」无差别施加给所有路径，`tests/test_danmaku_monitor.py` 的边车写线程在窗口内调用它、把自己 `tmp_path` 的文件名喂进本用例的 `attempts`，断言由 1 变 5——**单文件跑恒绿、整包跑红**（M-27 同族的新变体：`monkeypatch` 只保证事后还原，不保证窗口内只有本用例受影响），且反向把别人的轮转一并打坏。形态：`if src != path: real_replace(src, dst); return`，记账同样只记本对象。
-  | tests/test_regression_2026_09_22_infra.py::TestSidecarRotateBackoff / src/danmaku_monitor.py::_append_sidecar_line / AGENTS.md 测试编写强制约定
+  | tests/test_regression_2026_09_22_infra.py::TestSidecarRotateBackoff / src/danmaku/monitor.py::_append_sidecar_line / AGENTS.md 测试编写强制约定
 - **改 `.po/.json/.yaml` 目录文件的两个静默翻车点：`read_text()` 会吞掉 CRLF，注释级改动也会翻 JS 哈希钉定**（2026-10-18 本轮自查抓出）：① `Path.read_text()` 默认 universal newlines 把 `
 ` 译成 `
 `，配 `write_text(newline="")` 写回就整文件转 LF——本仓 i18n 三目录与多数根文件是纯 CRLF，判据仍是「改前后各数一次 CRLF 与裸 LF，原本为 0 的那项必须仍为 0」，追加条目优先走 `read_bytes()`/`write_bytes()`；② `src/javascript/*.js` 只要动到**注释**，`utils._JS_SHA256_EXPECTED` 就失配（表钉的是原始字节），派发 JS 侧工作包时必须要求「回报新 SHA256 由主代理单点回填」，否则运行期 `DLR_JS_STRICT_HASH=1` 直接拒绝执行。
-  | i18n/en_US.json / src/utils.py::_JS_SHA256_EXPECTED / AGENTS.md 关键约定 #10
+  | i18n/en_US.json / src/support/utils.py::_JS_SHA256_EXPECTED / AGENTS.md 关键约定 #10
 - **「零调用方」不足以判定可删：同一形态下至少三种成因，删法各不相同**（2026-10-20，全仓依赖与死代码清点）：AST + 原始文本计数扫出的「零生产调用方」符号，逐条读上下文后分成三类：① **被测试按「整组常量取值」钉住**——`src/web_tray.py::SW_SHOW` 当前无调用点（显示走 `SW_RESTORE`），但 `tests/test_web_tray.py::test_module_constants_match_win32_api` 按「魔数抄错的症状是无异常抛出的视觉 bug」整组断言，删它当场 1 failed；② **函数体内已有明写的「不选删除」理由**——`spider.get_huajiao_sn` 带 MID-2223 的处置决定注释并登记在 `OVERSEAS_MIGRATED_FUNCTIONS` 双向锁里；③ **常量是「接错了线」而不是「没人要」**——`ui_motion.ROW_HIGHLIGHT_FRAMES=5` 与 `ui_kit.TAG_NORMAL="normal"` 都零引用，但各自调用点写的是字面量（`gui.py` 的 `frames=5`、`tag="normal"`），删常量等于把魔数钉死并与模块自己的注释矛盾，正解是接线（本轮对 `ROW_HIGHLIGHT_FRAMES` 即如此，取值同为 5、行为零变化）。推广口径：把「零引用」清单交用户确认之前先按这三类分流，只有「既无测试钉、又无在源理由、也不是被字面量顶替」的才进删除档。
-  | src/web_tray.py::SW_SHOW / src/ui_motion.py::ROW_HIGHLIGHT_FRAMES / src/ui_kit.py::TAG_NORMAL / src/spider.py::get_huajiao_sn
-- **删一个模块有三处「登记尾巴」，其中一处会让另一条用例静默改变语义**（2026-10-20，删除 `src/ab_sign.py`）：① `scripts/check_coverage.py` 的 `MODULE_THRESHOLDS` 条目必须同批删——该检查把「登记表里的模块在覆盖率数据中查不到」判 rc=1；② CI 注释里的模块枚举（`ci.yml` 逐模块检查那条）；③ **最隐蔽的一处**：`tests/test_check_coverage.py::test_exempt_claiming_generated_code_is_machine_checked` 拿 `src/ab_sign.py` 当「确定手写的模块」构造虚报豁免，模块删掉后 `read_text` 抛 `OSError`，`_validate_debt_and_exempt` 走的是「无法读取以核对生成物标记」分支而**不是**「虚报豁免」分支，断言因此转红——夹具语义随被测文件消失而漂移。改法是把样本换成另一个确定手写、且不含 `GENERATED_MARKERS` 任一标记的模块（本轮用 `src/proxy.py`），判据形态不变。推广口径：删文件后 `grep -rn <文件名>` 要连 `tests/` 与 `scripts/` 的**字符串字面量**一起扫，不能只扫 import。
+  | src/web_tray.py::SW_SHOW / src/ui_motion.py::ROW_HIGHLIGHT_FRAMES / src/ui_kit.py::TAG_NORMAL / src/streams/spider.py::get_huajiao_sn
+- **删一个模块有三处「登记尾巴」，其中一处会让另一条用例静默改变语义**（2026-10-20，删除 `src/streams/ab_sign.py`）：① `scripts/check_coverage.py` 的 `MODULE_THRESHOLDS` 条目必须同批删——该检查把「登记表里的模块在覆盖率数据中查不到」判 rc=1；② CI 注释里的模块枚举（`ci.yml` 逐模块检查那条）；③ **最隐蔽的一处**：`tests/test_check_coverage.py::test_exempt_claiming_generated_code_is_machine_checked` 拿 `src/streams/ab_sign.py` 当「确定手写的模块」构造虚报豁免，模块删掉后 `read_text` 抛 `OSError`，`_validate_debt_and_exempt` 走的是「无法读取以核对生成物标记」分支而**不是**「虚报豁免」分支，断言因此转红——夹具语义随被测文件消失而漂移。改法是把样本换成另一个确定手写、且不含 `GENERATED_MARKERS` 任一标记的模块（本轮用 `src/network/proxy.py`），判据形态不变。推广口径：删文件后 `grep -rn <文件名>` 要连 `tests/` 与 `scripts/` 的**字符串字面量**一起扫，不能只扫 import。
   | scripts/check_coverage.py::MODULE_THRESHOLDS / tests/test_check_coverage.py::test_exempt_claiming_generated_code_is_machine_checked
 
 ## 2026-10-22 本机迁移
 
-旧 ihmily main.py 补丁不能直接覆盖新版：Bark 位于 src/notify.py，抖音分派位于 _resolve_douyin_com，转换位于 src/video_postprocess.py。关注 feed 须保留内部房间 ID；转换进程也须登记进优雅停止协调器。
+旧 ihmily main.py 补丁不能直接覆盖新版：Bark 位于 src/notifications/notify.py，抖音分派位于 _resolve_douyin_com，转换位于 src/recording/postprocess.py。关注 feed 须保留内部房间 ID；转换进程也须登记进优雅停止协调器。
 - **新增 `logger.<level>("... {x}")` 常量模板会直接打红 `test_i18n_migration` 的目录覆盖用例**（2026-10-22，抖音离线日志降噪）：提取器把 logger 首参常量也纳入运行时模板集（`scripts/extract_i18n_strings.py::scan_file`），带 `{}` 的串必须同批登记 `zh_CN.po` / `en_US.json` / `en_GB.json` / `zh_TW.yaml` 并跑 `python scripts/compile_po.py` 重编译 `.mo`；纯英文调试串同样要登记（`HTML scraping fallback succeeded` 即先例）。想省掉登记就只能不写占位符——但「纯常量」也在提取集里，唯一免登记形态是 `is_valuable()` 判否的纯符号/纯占位符串。
-  | i18n/zh_CN/LC_MESSAGES/zh_CN.po / scripts/compile_po.py / src/spider.py::get_douyin_web_stream_data
+  | i18n/zh_CN/LC_MESSAGES/zh_CN.po / scripts/compile_po.py / src/streams/spider.py::get_douyin_web_stream_data

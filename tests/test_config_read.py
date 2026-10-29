@@ -1,4 +1,4 @@
-# src/config_read.py 回归锁：重复键容错读取与「点名一次」告警（2026-10-17 现场：config.ini
+# src/config/reader.py 回归锁：重复键容错读取与「点名一次」告警（2026-10-17 现场：config.ini
 # 的 [录制设置] 内落出两行同名键）。
 #
 # 锁什么：
@@ -13,7 +13,6 @@
 #     容错解析器（那条裸读是「录制核心 import 即崩」的第一现场）。
 #
 # 全部写入 tmp_path，绝不碰仓库里已跟踪的脱敏基线模板 config/config.ini。
-
 import os
 import time
 from pathlib import Path
@@ -22,11 +21,9 @@ import pytest
 from loguru import logger
 from pytest import MonkeyPatch
 
-from src import (
-    config_read,
-    main,  # noqa: E402  (config_read 不依赖 main，但本文件要核对 main 的模块级解析器接线)
-)
-from src.config_read import find_duplicate_options, tolerant_config_parser, warn_duplicate_options
+from src.config import reader as config_read
+from src.config.reader import find_duplicate_options, tolerant_config_parser, warn_duplicate_options
+from src.recording import engine as recorder
 
 # 一份「同节内重复 + 注释里出现同名键 + 跨节同名键」三态并存的样本：
 # 第 4 行与第 7 行是 [录制设置] 内的真重复；第 6 行是注释（不得误报）；
@@ -205,4 +202,4 @@ def test_main_module_level_parser_is_duplicate_tolerant() -> None:
     # 接线锁：main.py 的模块级 config 必须是容错解析器。configparser 只把 strict 存成私有字段
     # _strict（默认解析器为 True、strict=False 构造的为 False），没有公开读回入口；该字段若随
     # CPython 改名，本条以 AttributeError 当场失败而不会静默放行（三参 getattr 绕过 mypy）。
-    assert getattr(main.config, "_strict", None) is False, "src/main.py 的模块级 config 必须是容错解析器"
+    assert getattr(recorder.config, "_strict", None) is False, "src/main.py 的模块级 config 必须是容错解析器"

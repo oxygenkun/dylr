@@ -7,7 +7,7 @@
 
 from types import SimpleNamespace
 
-from src import i18n
+from src.support import i18n
 
 
 def test_tr_passes_through_when_no_translation() -> None:

@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from src import i18n
+from src.support import i18n
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -24,7 +24,7 @@ class TestInitialization:
         for key in [k for k in os.environ if k.startswith(("LANG", "LC_"))]:
             monkeypatch.delenv(key, raising=False)
         before = {k: v for k, v in os.environ.items() if k.startswith(("LANG", "LC_"))}
-        spec = importlib.util.spec_from_file_location("i18n_body_probe", ROOT / "src/i18n.py")
+        spec = importlib.util.spec_from_file_location("i18n_body_probe", ROOT / "src/support/i18n.py")
         assert spec is not None and spec.loader is not None
         probe = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(probe)
@@ -57,7 +57,7 @@ class TestTranslatedPrint:
         sibling = f"{i18n._project_root}-evil{os.sep}evil.py"
         assert i18n._should_translate(sibling) is False
         # 反向护栏：真实子路径仍必须判 True（不得把边界补成「只认相等」而整体失明）
-        child = os.path.join(i18n._project_root, "src", "spider.py")
+        child = os.path.join(i18n._project_root, "src", "streams/spider.py")
         assert i18n._should_translate(child) is True
 
 

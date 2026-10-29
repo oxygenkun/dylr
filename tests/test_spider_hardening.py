@@ -1,4 +1,4 @@
-# src/spider.py「MID-48 国内平台批次」（2026-09-21）的离线回归锁。
+# src/streams/spider.py「MID-48 国内平台批次」（2026-09-21）的离线回归锁。
 #
 # 2026-09-21 追加：文件末尾的 SEV-N04（淘宝 Set-Cookie 覆盖用户 Cookie）小节，
 # 属 CODE_REVIEW_2026-09-21.md 第 6.3 表指定的回归锁位置，与本批 MID-48 判据共用桩具。
@@ -23,7 +23,7 @@
 #   - 未开播是每 120 秒一轮的高频常态，**不能**为它刷告警（噪声日志等于没有日志），
 #     故每个平台还各有一条「文档化离线形态必须保持静默」的用例，防止加固写成无脑告警。
 #
-# 原则（AGENTS「测试不得自实现被测逻辑」）：只打桩传输层（spider.async_req /
+# 原则（AGENTS「测试不得自实现被测逻辑」）：只打桩传输层（spider.http.request /
 # get_acfun_sign_params / utils.run_node_script_async），_loads_dict、_dig 系列、
 # _warn_api_abnormal 与各平台解析逻辑一律走真实代码。
 #
@@ -48,7 +48,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from src import spider as sp
+from src.streams import spider as sp
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -111,7 +111,7 @@ def _fake_logger() -> types.SimpleNamespace:
 
 
 def _fake_req(payloads: dict[str, Any], default: str = WAF_HTML) -> AsyncMock:
-    # 按 URL 子串路由的 async_req 替身。值可为字符串（固定响应）或列表（同 URL 多次请求
+    # 按 URL 子串路由的 request 替身。值可为字符串（固定响应）或列表（同 URL 多次请求
     # 依次取用）；未命中的 URL 一律回 `default`——让「漏桩」显形成解析失败而非静默通过。
     queue: dict[str, list[Any]] = {
         key: (value if isinstance(value, list) else [value]) for key, value in payloads.items()
@@ -172,7 +172,7 @@ class _GuardCase:
             with contextlib.ExitStack() as stack:
                 for cm in self.extras():
                     stack.enter_context(cm)
-                stack.enter_context(patch.object(sp, "async_req", new=_fake_req(self.payloads(body), default=body)))
+                stack.enter_context(patch.object(sp.http, "request", new=_fake_req(self.payloads(body), default=body)))
                 stack.enter_context(patch.object(sp, "logger", logger))
                 result = await self.call()
             self.check_offline(result, body[:40])
@@ -186,7 +186,7 @@ class _GuardCase:
         with contextlib.ExitStack() as stack:
             for cm in self.extras():
                 stack.enter_context(cm)
-            stack.enter_context(patch.object(sp, "async_req", new=_fake_req(self.payloads(None))))
+            stack.enter_context(patch.object(sp.http, "request", new=_fake_req(self.payloads(None))))
             stack.enter_context(patch.object(sp, "logger", logger))
             result = await self.call()
         assert result == self.expected, "成功路径的返回结构被改动（本批只允许「不崩 / 不撒谎」）"
@@ -200,7 +200,7 @@ class _GuardCase:
         with contextlib.ExitStack() as stack:
             for cm in self.extras():
                 stack.enter_context(cm)
-            stack.enter_context(patch.object(sp, "async_req", new=_fake_req(self.payloads(self.silent_body))))
+            stack.enter_context(patch.object(sp.http, "request", new=_fake_req(self.payloads(self.silent_body))))
             stack.enter_context(patch.object(sp, "logger", logger))
             result = await self.call()
         self.check_offline(result, "silent")
@@ -318,7 +318,7 @@ class TestNeteaseCCHardening(_GuardCase):
         # 整页被换成 WAF 页时走的是既有的「正则未命中 → ValueError」路径，
         # 装饰器必须兜成离线契约（本批不动该分支，只锁「不逃逸到主循环」）。
         logger = _fake_logger()
-        with patch.object(sp, "async_req", new=_fake_req({}, default=WAF_HTML)), patch.object(sp, "logger", logger):
+        with patch.object(sp.http, "request", new=_fake_req({}, default=WAF_HTML)), patch.object(sp, "logger", logger):
             result = await sp.get_netease_stream_data(self.URL)
         _assert_offline(result, "no __NEXT_DATA__")
 
@@ -381,7 +381,7 @@ class TestWeiboHardening(_GuardCase):
             ensure_ascii=False,
         )
         logger = _fake_logger()
-        with patch.object(sp, "async_req", new=_fake_req({"anchor/live": body})), patch.object(sp, "logger", logger):
+        with patch.object(sp.http, "request", new=_fake_req({"anchor/live": body})), patch.object(sp, "logger", logger):
             result = await sp.get_weibo_stream_data(self.URL)
         body_d = cast("dict[str, object]", result)
         assert body_d.get("is_live") is True, f"纯 FLV 房间被误判未开播: {result}"
@@ -404,7 +404,7 @@ class TestWeiboHardening(_GuardCase):
             ensure_ascii=False,
         )
         logger = _fake_logger()
-        with patch.object(sp, "async_req", new=_fake_req({"anchor/live": body})), patch.object(sp, "logger", logger):
+        with patch.object(sp.http, "request", new=_fake_req({"anchor/live": body})), patch.object(sp, "logger", logger):
             result = await sp.get_weibo_stream_data(self.URL)
         body_d = cast("dict[str, object]", result)
         assert body_d.get("is_live") is True, f"纯 HLS 房间被误判未开播: {result}"
@@ -424,7 +424,7 @@ class TestWeiboHardening(_GuardCase):
         # 「该用户没有直播帖」是正常离线形态：list 里无 object_type==live 不得刷告警
         logger = _fake_logger()
         body = '{"data":{"list":[{"page_info":{"object_type":"video","object_id":"1"}}]}}'
-        with patch.object(sp, "async_req", new=_fake_req({"mymblog": body})), patch.object(sp, "logger", logger):
+        with patch.object(sp.http, "request", new=_fake_req({"mymblog": body})), patch.object(sp, "logger", logger):
             result = await sp.get_weibo_stream_data("https://weibo.com/u/5885340893")
         _assert_offline(result, "no live post")
         assert logger.msgs == []
@@ -536,7 +536,7 @@ class TestAcfunHardening(_GuardCase):
     async def test_success_path_unchanged(self) -> None:
         logger = _fake_logger()
         with (
-            patch.object(sp, "async_req", new=_fake_req({"userInfo": self._PROFILE, "startPlay": self._PLAY})),
+            patch.object(sp.http, "request", new=_fake_req({"userInfo": self._PROFILE, "startPlay": self._PLAY})),
             patch.object(sp, "get_acfun_sign_params", new=AsyncMock(return_value=("1", "d", "s"))),
             patch.object(sp, "logger", logger),
         ):
@@ -552,7 +552,7 @@ class TestAcfunHardening(_GuardCase):
     async def test_offline_room_keeps_anchor_name(self) -> None:
         logger = _fake_logger()
         with (
-            patch.object(sp, "async_req", new=_fake_req({"userInfo": self.silent_body})),
+            patch.object(sp.http, "request", new=_fake_req({"userInfo": self.silent_body})),
             patch.object(sp, "logger", logger),
         ):
             result = await sp.get_acfun_stream_data(self.URL)
@@ -633,7 +633,7 @@ class TestMiguHardening(_GuardCase):
 
     def extras(self) -> tuple[contextlib.AbstractContextManager[Any], ...]:
         # migu.js 签名是子进程边界（非 JSON 解析），打桩后 flv 分支仍走真实判定
-        return (patch.object(sp.utils, "run_node_script_async", new=AsyncMock(return_value=self._SIGNED)),)
+        return (patch.object(sp.javascript, "run_node_script_async", new=AsyncMock(return_value=self._SIGNED)),)
 
     async def call(self) -> Any:
         return await sp.get_migu_stream_url(self.URL)
@@ -695,7 +695,7 @@ class TestXhsHardening(_GuardCase):
         # 截断时不得整轮作废：仍要走完 profile 兜底把昵称补回来（迁移前是直接抛错）
         logger = _fake_logger()
         with (
-            patch.object(sp, "async_req", new=_fake_req(self.payloads(self._TRUNCATED), default=self._TRUNCATED)),
+            patch.object(sp.http, "request", new=_fake_req(self.payloads(self._TRUNCATED), default=self._TRUNCATED)),
             patch.object(sp, "logger", logger),
         ):
             result = await sp.get_xhs_stream_url(self.URL)
@@ -705,7 +705,7 @@ class TestXhsHardening(_GuardCase):
 
 
 class TestYyHardening(_GuardCase):
-    # YY 的开播判定在 src/stream.py::get_yy_stream_url 里做（avp_info_res 缺失即离线），
+    # YY 的开播判定在 src/streams/stream.py::get_yy_stream_url 里做（avp_info_res 缺失即离线），
     # 所以 spider 侧唯一需要归因的是「stream-manager 响应整体解析不出对象」。
     URL = "https://www.yy.com/12345"
     _PAGE = 'nick: "YY主播",\n  logo: "x"\n  sid : "900001",\n   ssid: "2"\n'
@@ -718,7 +718,7 @@ class TestYyHardening(_GuardCase):
     silent_body = '{"head":{"result":0}}'
 
     # YY 的返回值是 stream-manager 原始响应 + anchor_name/title 拼装，不含 is_live 键，
-    # 故离线判据只看「没有 avp_info_res」——开播判定在 src/stream.py 侧做。
+    # 故离线判据只看「没有 avp_info_res」——开播判定在 src/streams/stream.py 侧做。
     expected = {
         "head": {"result": 0},
         "avp_info_res": {"stream_line_addr": {"a": {"cdn_info": {"url": "http://x/a.flv"}}}},
@@ -765,7 +765,7 @@ def _json_loads_calls(tree: ast.AST) -> list[ast.Call]:
 def test_migrated_functions_have_no_bare_json_loads() -> None:
     # 逐函数棘轮：本批 21 个平台解析函数体内必须零裸 json.loads（改回一处即红）。
     # 只按「函数名 + AST 区间」判定，避免全文计数被其它未迁移批次稀释成假绿。
-    src = (ROOT / "src" / "spider.py").read_text(encoding="utf-8-sig")
+    src = (ROOT / "src" / "streams/spider.py").read_text(encoding="utf-8-sig")
     tree = ast.parse(src)
     offenders: list[str] = []
     found: set[str] = set()
@@ -783,7 +783,7 @@ def test_migrated_functions_have_no_bare_json_loads() -> None:
 def test_bare_json_loads_ratchet_does_not_grow() -> None:
     # 全文件棘轮：唯一豁免是 _safe_loads 自身（它必须真的用 json.loads，否则 _loads_dict 恒回
     # {}、全员假离线）。剩余批次的迁移只允许压低计数，任何回升即红。
-    src = (ROOT / "src" / "spider.py").read_text(encoding="utf-8-sig")
+    src = (ROOT / "src" / "streams/spider.py").read_text(encoding="utf-8-sig")
     tree = ast.parse(src)
     guard = next(
         (
@@ -925,7 +925,7 @@ def test_overseas_migrated_functions_have_no_bare_json_loads() -> None:
     # 与第一批共用扫描器但名单独立——两批各自回退各自变红。
     # get_twitchtv_room_info 刻意不在名单内：GQL 批量响应是 list，_loads_dict 不适用
     # （见文件头 BARE_JSON_LOADS_CEILING 注释里的唯一豁免说明）。
-    src = (ROOT / "src" / "spider.py").read_text(encoding="utf-8-sig")
+    src = (ROOT / "src" / "streams/spider.py").read_text(encoding="utf-8-sig")
     tree = ast.parse(src)
     offenders: list[str] = []
     found: set[str] = set()
@@ -998,7 +998,7 @@ class TestSoopliveCdnHardening(_GuardCase):
         # 归因只允许出现接口自身的 code/msg。
         logger = _fake_logger()
         with (
-            patch.object(sp, "async_req", new=_fake_req({}, default=WAF_HTML)),
+            patch.object(sp.http, "request", new=_fake_req({}, default=WAF_HTML)),
             patch.object(sp, "logger", logger),
         ):
             await sp.get_sooplive_cdn_url("249469582", cookies="AuthTicket=secret-cookie-value")
@@ -1031,7 +1031,7 @@ class TestSoopliveTkHardening(_GuardCase):
         # 昵称复合串与 BNO（线路号）拼法不得变。
         logger = _fake_logger()
         with (
-            patch.object(sp, "async_req", new=_fake_req({"player_live_api": self._OK_INFO})),
+            patch.object(sp.http, "request", new=_fake_req({"player_live_api": self._OK_INFO})),
             patch.object(sp, "logger", logger),
         ):
             result = await sp.get_sooplive_tk(self.URL, rtype="info")
@@ -1044,7 +1044,7 @@ class TestSoopliveTkHardening(_GuardCase):
         logger = _fake_logger()
         body = '{"result":"01","CHANNEL":{"BJNICK":"SOOP主播","BJID":"oul282","BNO":249469582}}'
         with (
-            patch.object(sp, "async_req", new=_fake_req({"player_live_api": body})),
+            patch.object(sp.http, "request", new=_fake_req({"player_live_api": body})),
             patch.object(sp, "logger", logger),
         ):
             result = await sp.get_sooplive_tk(self.URL, rtype="info")
@@ -1054,7 +1054,7 @@ class TestSoopliveTkHardening(_GuardCase):
     async def test_token_never_logged(self) -> None:
         logger = _fake_logger()
         with (
-            patch.object(sp, "async_req", new=_fake_req({"player_live_api": '{"result":"02"}'}, default=WAF_HTML)),
+            patch.object(sp.http, "request", new=_fake_req({"player_live_api": '{"result":"02"}'}, default=WAF_HTML)),
             patch.object(sp, "logger", logger),
         ):
             await sp.get_sooplive_tk(self.URL, rtype="aid")
@@ -1084,7 +1084,7 @@ class TestSoopStreamInfoGlobalHardening(_GuardCase):
         # 覆盖基类口径，仍保持「正常离线形态零告警」这一硬判据。
         logger = _fake_logger()
         with (
-            patch.object(sp, "async_req", new=_fake_req(self.payloads(self.silent_body))),
+            patch.object(sp.http, "request", new=_fake_req(self.payloads(self.silent_body))),
             patch.object(sp, "logger", logger),
         ):
             result = await self.call()
@@ -1145,7 +1145,7 @@ class TestPandatvHardening(_GuardCase):
 
     def payloads(self, body: str | None) -> dict[str, Any]:
         # 首个失败点打在 member/bj 上；live/play 与 m3u8 保持正常桩。
-        # m3u8 也走 async_req（get_play_url_list 是真实实现、未打桩）——若有人把选档
+        # m3u8 也走 request（get_play_url_list 是真实实现、未打桩）——若有人把选档
         # 排序改坏，expected 里的带宽降序断言会立刻变红。
         return {
             "member/bj": body if body is not None else self._BJ,
@@ -1161,8 +1161,8 @@ class TestPandatvHardening(_GuardCase):
         logger = _fake_logger()
         with (
             patch.object(
-                sp,
-                "async_req",
+                sp.http,
+                "request",
                 new=_fake_req({"member/bj": self._BJ, "live/play": '{"PlayList":{"hls":[]}}'}, default="{}"),
             ),
             patch.object(sp, "logger", logger),
@@ -1194,7 +1194,7 @@ class TestWinktvBjInfoHardening(_GuardCase):
         # 故覆盖基类的 _assert_offline 口径；硬判据不变：正常离线形态零告警。
         logger = _fake_logger()
         with (
-            patch.object(sp, "async_req", new=_fake_req(self.payloads(self.silent_body))),
+            patch.object(sp.http, "request", new=_fake_req(self.payloads(self.silent_body))),
             patch.object(sp, "logger", logger),
         ):
             result = await self.call()
@@ -1253,7 +1253,7 @@ class TestLookliveHardening(_GuardCase):
             '"roomInfo":{"liveType":2,"title":"深夜电台","liveUrl":{"httpPullUrl":"http://lookcdn/a.flv"}}}}'
         )
         logger = _fake_logger()
-        with patch.object(sp, "async_req", new=_fake_req({"room/get/v3": body})), patch.object(sp, "logger", logger):
+        with patch.object(sp.http, "request", new=_fake_req({"room/get/v3": body})), patch.object(sp, "logger", logger):
             result = await sp.get_looklive_stream_url(self.URL)
         body_d = cast("dict[str, object]", result)
         assert body_d.get("is_live") is True, f"纯 FLV 房间被误判未开播: {result}"
@@ -1267,7 +1267,7 @@ class TestLookliveHardening(_GuardCase):
             '"roomInfo":{"liveType":2,"title":"深夜电台","liveUrl":{"hlsPullUrl":"http://lookcdn/a.m3u8"}}}}'
         )
         logger = _fake_logger()
-        with patch.object(sp, "async_req", new=_fake_req({"room/get/v3": body})), patch.object(sp, "logger", logger):
+        with patch.object(sp.http, "request", new=_fake_req({"room/get/v3": body})), patch.object(sp, "logger", logger):
             result = await sp.get_looklive_stream_url(self.URL)
         body_d = cast("dict[str, object]", result)
         assert body_d.get("is_live") is True, f"纯 HLS 房间被误判未开播: {result}"
@@ -1441,8 +1441,8 @@ class TestFaceitHardening(_GuardCase):
         logger = _fake_logger()
         with (
             patch.object(
-                sp,
-                "async_req",
+                sp.http,
+                "request",
                 new=_fake_req({"api/users/v1/nicknames": self._USER}, default='{"code":500,"msg":"boom"}'),
             ),
             patch.object(sp, "logger", logger),
@@ -1472,7 +1472,7 @@ class TestFlextvStreamUrlHardening(_GuardCase):
         # 离线契约是 None，不是 dict —— 覆盖基类的 _assert_offline 口径
         logger = _fake_logger()
         with (
-            patch.object(sp, "async_req", new=_fake_req(self.payloads(self.silent_body))),
+            patch.object(sp.http, "request", new=_fake_req(self.payloads(self.silent_body))),
             patch.object(sp, "logger", logger),
         ):
             result = await self.call()
@@ -1510,7 +1510,7 @@ class TestAcfunSignParamsHardening(_GuardCase):
         # 迁移刻意用 _dig 保留 userId 的 int 类型，不得变成 "12345"。
         logger = _fake_logger()
         with (
-            patch.object(sp, "async_req", new=_fake_req(self.payloads(None))),
+            patch.object(sp.http, "request", new=_fake_req(self.payloads(None))),
             patch.object(sp, "logger", logger),
         ):
             result = await sp.get_acfun_sign_params()
@@ -1522,7 +1522,7 @@ class TestAcfunSignParamsHardening(_GuardCase):
     async def test_token_never_logged(self) -> None:
         logger = _fake_logger()
         with (
-            patch.object(sp, "async_req", new=_fake_req({"visitor/login": '{"resultCode":1}'})),
+            patch.object(sp.http, "request", new=_fake_req({"visitor/login": '{"resultCode":1}'})),
             patch.object(sp, "logger", logger),
         ):
             result = await sp.get_acfun_sign_params()
@@ -1584,7 +1584,7 @@ class TestPopkontvSearchHardening(_GuardCase):
         )
         logger = _fake_logger()
         with (
-            patch.object(sp, "async_req", new=_fake_req({"search/all": self._SEARCH, "live/view": view})),
+            patch.object(sp.http, "request", new=_fake_req({"search/all": self._SEARCH, "live/view": view})),
             patch.object(sp, "logger", logger),
         ):
             result = await sp.get_popkontv_stream_data(self.URL)
@@ -1598,7 +1598,7 @@ class TestPopkontvSearchHardening(_GuardCase):
         view = '<script id="__NEXT_DATA__" type="application/json">{"props": {"pageProps": {"mcData": </script>'
         logger = _fake_logger()
         with (
-            patch.object(sp, "async_req", new=_fake_req({"search/all": self._SEARCH, "live/view": view})),
+            patch.object(sp.http, "request", new=_fake_req({"search/all": self._SEARCH, "live/view": view})),
             patch.object(sp, "logger", logger),
         ):
             result = await sp.get_popkontv_stream_data(self.URL)
@@ -1611,11 +1611,11 @@ class TestPopkontvSearchHardening(_GuardCase):
 
 class TestSevN04TaobaoCookieMerge:
     # 归因判据（本工作区不做「改坏生产实现再跑用例」的变异验证，改用只有新逻辑能过的输入）：
-    #   桩里的 new_cookie **只**含两张票据——这正是 src/async_http.py return_cookies 的真实形态
+    #   桩里的 new_cookie **只**含两张票据——这正是 src/network/http.py return_cookies 的真实形态
     #   （返回 response.cookies，不含请求侧 cookie）。
     #   - 未改成「合并」→ 第二轮请求头与写回值都不再含 unb=1，第 ① 组断言变红；
     #   - 回写比较的仍是「响应票据串」而不是合并后的完整串 → 第 ② 条用例（票据未轮换须零重写）变红。
-    # 只打桩传输层与配置读写边界（async_req / utils.read_ini_value / utils.update_config），
+    # 只打桩传输层与配置读写边界（request / utils.read_ini_value / utils.update_config），
     # Cookie 解析、票据合并、签名与轮次控制一律走真实代码。
     TICKETS = {"_m_h5_tk": "f7e0d3a4b5c6d7e8f9a0b1c2d3e4f5a6_1777000000000", "_m_h5_tk_enc": "enc-1"}
     USER_COOKIE = "unb=1; _tb_token_=tok3n-value; cookie2=c00kie2"
@@ -1657,7 +1657,7 @@ class TestSevN04TaobaoCookieMerge:
             header = kwargs.get("headers")
             if isinstance(header, dict):
                 sent_cookies.append(str(cast("dict[str, str]", header).get("Cookie", "")))
-            assert queue, "async_req 桩响应已用尽（说明解析链路多发了请求）"
+            assert queue, "request 桩响应已用尽（说明解析链路多发了请求）"
             return queue.pop(0)
 
         def fake_update_config(*args: object, **kwargs: object) -> None:
@@ -1667,10 +1667,10 @@ class TestSevN04TaobaoCookieMerge:
 
         logger = _fake_logger()
         with (
-            patch.object(sp, "async_req", new=fake_req),
+            patch.object(sp.http, "request", new=fake_req),
             patch.object(sp, "logger", logger),
-            patch.object(sp.utils, "read_ini_value", new=lambda *a, **k: config_state["taobao_cookie"]),
-            patch.object(sp.utils, "update_config", new=fake_update_config),
+            patch.object(sp.config_files, "read_ini_value", new=lambda *a, **k: config_state["taobao_cookie"]),
+            patch.object(sp.config_files, "update_config", new=fake_update_config),
         ):
             await sp.get_taobao_stream_url(TestSevN04TaobaoCookieMerge.URL, cookies=user_cookie)
         return sent_cookies, written, logger
@@ -1693,7 +1693,7 @@ class TestSevN04TaobaoCookieMerge:
         # 轮 1 写回一次；轮 2 的票据与配置现值一致 → 合并串全等 → 不再重写，故总数恰 1
         # （旧实现比较的是响应票据串，每轮都判定为「有变化」→ 轮 2 照样重写整份 config.ini）。
         assert len(written) == 1, f"写回次数不符: {written}"
-        assert written[0] != sp.utils.dict_to_cookie_str(self.TICKETS), "写回了响应票据串（旧失效形态）"
+        assert written[0] != sp.network_urls.format_cookies(self.TICKETS), "写回了响应票据串（旧失效形态）"
         assert "unb=1" in written[0] and "cookie2=c00kie2" in written[0], written[0]
         assert f"_m_h5_tk_enc={self.TICKETS['_m_h5_tk_enc']}" in written[0]
 
@@ -1716,7 +1716,7 @@ class TestSevN04TaobaoCookieMerge:
 
     def test_cookie_str_to_dict_keeps_equals_in_values(self) -> None:
         # 票据 / base64 值常含「=」，只能按**首个**「=」切分；空段与无「=」残段丢弃，
-        # 保证与 dict_to_cookie_str 往返时不会把解析不出来的内容写回配置文件。
+        # 保证与 format_cookies 往返时不会把解析不出来的内容写回配置文件。
         parsed = sp._cookie_str_to_dict("a=1; b=x==;  ; junk; c=")
         assert parsed == {"a": "1", "b": "x==", "c": ""}
-        assert sp.utils.dict_to_cookie_str(parsed) == "a=1; b=x==; c="
+        assert sp.network_urls.format_cookies(parsed) == "a=1; b=x==; c="

@@ -6,7 +6,7 @@
 #     —— web/ 仅为 FastAPI 的静态资源（index.html / app.js / style.css），
 #        仓库内不存在 package.json / lock 文件，故 **不需要 npm ci / node build**。
 #   · Node.js 仅作为「JS 签名脚本运行时」：src/javascript/*.js 由 exejs / PyExecJS
-#     调起，src/node_install.py 负责探测与自动下载 —— 因此 CI 只需保证 node 可执行，
+#     调起，src/runtime/node.py 负责探测与自动下载 —— 因此 CI 只需保证 node 可执行，
 #     而非构建前端。
 #   · 依赖管理为单源双写：requirements.txt（运行时）与 pyproject.toml
 #     [project.optional-dependencies]（dev / build）。**没有 lock 文件**
@@ -339,7 +339,7 @@ jobs:
         with:
           label: 直接下载 FFmpeg
           command: >-
-            python -c 'from pathlib import Path; from src.runtime_install import install_runtime; install_runtime("ffmpeg", Path.cwd())'
+            python -c 'from pathlib import Path; from src.runtime.installer import install_runtime; install_runtime("ffmpeg", Path.cwd())'
 
       - name: Add FFmpeg to PATH
         run: echo "$GITHUB_WORKSPACE/ffmpeg" >> "$GITHUB_PATH"
@@ -521,11 +521,11 @@ jobs:
           python -m pytest \
             tests/test_concurrency_rate_limit.py \
             tests/test_concurrency.py \
-            tests/test_async_http_lock.py \
+            tests/test_http_pool.py \
             --cov=src --cov-report=term-missing:skip-covered
 
   # ── 5. 运行时依赖探测验证（ffmpeg / node）────────────────────────────────
-  # 验证 src/ffmpeg_install.py 与 src/node_install.py 的探测逻辑在真实环境成立。
+  # 验证 src/runtime/ffmpeg.py 与 src/runtime/node.py 的探测逻辑在真实环境成立。
   # 注意：此处的 node 是「JS 签名脚本运行时」，不是前端构建工具链。
   integration-verify:
     name: Integration Verify (ffmpeg & node detection)
@@ -561,7 +561,7 @@ jobs:
         with:
           label: 直接下载 FFmpeg
           command: >-
-            python -c 'from pathlib import Path; from src.runtime_install import install_runtime; install_runtime("ffmpeg", Path.cwd())'
+            python -c 'from pathlib import Path; from src.runtime.installer import install_runtime; install_runtime("ffmpeg", Path.cwd())'
 
       - name: Add FFmpeg to PATH
         run: echo "$GITHUB_WORKSPACE/ffmpeg" >> "$GITHUB_PATH"
@@ -578,13 +578,13 @@ jobs:
           command: >-
             uv sync --locked --no-dev
 
-      - name: Verify src/ffmpeg_install.py detection
+      - name: Verify src/runtime/ffmpeg.py detection
         run: |
-          python -c "from src.ffmpeg_install import check_ffmpeg; assert check_ffmpeg(), 'ffmpeg not detected'; print('check_ffmpeg() passed')"
+          python -c "from src.runtime.ffmpeg import check_ffmpeg; assert check_ffmpeg(), 'ffmpeg not detected'; print('check_ffmpeg() passed')"
 
-      - name: Verify src/node_install.py detection
+      - name: Verify src/runtime/node.py detection
         run: |
-          python -c "from src.node_install import check_node; assert check_node(), 'node not detected'; print('check_node() passed')"
+          python -c "from src.runtime.node import check_node; assert check_node(), 'node not detected'; print('check_node() passed')"
 
   # ── 6. 构建验证（PyInstaller 打包 + 三入口冒烟）──────────────────────────
   # 与 build-release.yml 共用同一 tool/build_exe.py，但用 --no-runtime --no-zip 跳过

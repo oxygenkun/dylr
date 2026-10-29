@@ -4,7 +4,7 @@
 
 ## stdlib 隔离与只读故障
 
-`src.utils.update_config` 和 config_io 写回均为原子替换；chmod 不能稳定制造只读错误。只替换被测模块的 os 引用，并把故障限制在本用例目标：
+`src.config.files.update_config` 和 config_io 写回均为原子替换；chmod 不能稳定制造只读错误。只替换被测模块的 os 引用，并把故障限制在本用例目标：
 
 ```python
 import os

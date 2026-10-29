@@ -18,7 +18,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.platforms._tars import TarsInputStream  # noqa: E402
+from src.danmaku.platforms._tars import TarsInputStream
 
 # 官方编码的一条弹幕推送（WSCmd iCmdType=7 -> HYPushMessage uri=1400 -> HYMessage）。
 # 由 tars_dart 语义手工构造：Bytearray 长度均按「头+变宽值」布局，非固定 4 字节。
@@ -133,8 +133,8 @@ def test_decode_official_chat_push() -> None:
     # 官方编码的弹幕推送走生产 HuyaDanmaku.decode_message 能解出 nick/content/uri。
     # HYMessage 是平铺字段（tag0=userInfo, tag3=内容），此处喂完整外层帧——生产解码曾因
     # _decode_chat 多包一层 read_struct(0,...) 而全部读空。
-    from src.base import DanmakuMessageType
-    from src.platforms.huya import HuyaDanmaku
+    from src.danmaku.base import DanmakuMessageType
+    from src.danmaku.platforms.huya import HuyaDanmaku
 
     got: list = []
     inst = HuyaDanmaku(on_message=got.append, on_close=lambda m: None, on_ready=lambda: None)
@@ -153,8 +153,8 @@ def test_decode_official_chat_push_with_list() -> None:
     # bulletFormat 内含 LIST（size=自描述整数域）的弹幕推送也能正确解码。
     # 防回归：_skip 曾把 LIST/MAP 的 size 读成固定 int32，真实数据错位后解析出 type 15
     # 抛异常被吞；修复为 read_int(0) 后此帧应解出 nick/content/color。
-    from src.base import DanmakuMessageType
-    from src.platforms.huya import HuyaDanmaku
+    from src.danmaku.base import DanmakuMessageType
+    from src.danmaku.platforms.huya import HuyaDanmaku
 
     got: list = []
     inst = HuyaDanmaku(on_message=got.append, on_close=lambda m: None, on_ready=lambda: None)
@@ -171,7 +171,7 @@ def test_decode_official_chat_push_with_list() -> None:
 
 def test_encode_join_official_layout() -> None:
     # join 输出符合官方布局（长度域含头字节），且被独立官方语义解析器判读为合法注册。
-    from src.platforms.huya import HuyaDanmaku
+    from src.danmaku.platforms.huya import HuyaDanmaku
 
     inst = HuyaDanmaku()
     inst._args = {"ayyuid": 1486578378, "topSid": 1346609715, "subSid": 1346609715}

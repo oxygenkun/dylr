@@ -4,7 +4,7 @@
 # MT-02（2026-10-19，CODE_REVIEW_2026-10-18）：本文件原是「只有 main()、没有任何 test_ 函数」的
 # 真机脚本——pytest 收集到 0 用例，token / server_host / WS 存活三条断言永不自动执行、可静默腐烂，
 # 而文件名仍在向读者 advertise「B站弹幕已验证」。照 tests/test_bili_e2e.py（MIN-2266 ②）的形态改造：
-# 主体拆成**离线收集型**用例，只打桩网络层（spider.async_req 的四端点 + bilibili.WsClient），
+# 主体拆成**离线收集型**用例，只打桩网络层（spider.http.request 的四端点 + bilibili.WebSocketClient），
 # 「info 解析链 → start 建连 → 进房包 → AUTH_REPLY → 弹幕分发」整条串联走真实代码；真机通道留在
 # `if __name__ == "__main__"` 之后（`python tests/test_bilibili_danmaku.py [房间URL] [存活秒数]`），
 # 按 AGENTS「live collector 双模模板」补齐守卫（执行体全在守卫之下、模块级零副作用、argv 两步式）。
@@ -26,12 +26,12 @@ from loguru import logger
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src import spider
-from src.base import DanmakuMessage
-from src.platforms import bilibili
-from src.platforms.bilibili import BilibiliDanmaku
+from src.danmaku.base import DanmakuMessage
+from src.danmaku.platforms import bilibili
+from src.danmaku.platforms.bilibili import BilibiliDanmaku
+from src.streams import spider
 
-# 这里刻意不导入 main：本模块只需 src.spider / src.platforms.bilibili（离线用例把网络层整段桩住），
+# 这里刻意不导入 main：本模块只需 src.streams.spider / src.danmaku.platforms.bilibili（离线用例把网络层整段桩住），
 # 而 import main 会把「进程退出时清理 ffmpeg」的 atexit 钩子带进 pytest 会话，收尾时对已关闭的
 # stderr 刷一长串 loguru "Logging error"。[历史注 2026-10-19] 原文件在此还 `import main`。
 
@@ -92,7 +92,7 @@ def _stub_danmaku_req(hits: list[str]) -> Any:
 
 
 class _ChainFakeWs:
-    # WsClient 的最小替身：连接参数照单收下、发出的帧留档，绝不触网。
+    # WebSocketClient 的最小替身：连接参数照单收下、发出的帧留档，绝不触网。
     def __init__(self, **kwargs: Any) -> None:
         self.kwargs = kwargs
         self.sent: list[bytes | str] = []
@@ -113,13 +113,13 @@ class _ChainFakeWs:
         self.closed += 1
 
     async def fail(self, reason: str = "") -> None:
-        # 与 src/ws_client.py::WsClient.fail 同形（MID-2245 要求被拒侧走这条带上报的出口）。
+        # 与 src/network/websocket.py::WebSocketClient.fail 同形（MID-2245 要求被拒侧走这条带上报的出口）。
         self.closed += 1
         self.fail_reasons.append(reason)
 
 
 class _WsFactory:
-    # 替身工厂：bilibili.WsClient 每次被构造都留一个实例供断言（轮换几个 host 就有几个实例）。
+    # 替身工厂：bilibili.WebSocketClient 每次被构造都留一个实例供断言（轮换几个 host 就有几个实例）。
     def __init__(self) -> None:
         self.instances: list[_ChainFakeWs] = []
 
@@ -151,7 +151,7 @@ async def test_danmaku_info_to_ws_chain_delivers_message(monkeypatch: pytest.Mon
     # 本文件的立身之本（MT-02）：一条用例跑完「拿参数 → 建连 → 进房 → 认证 → 出弹幕」，
     # 任何一环断掉（info 字段改名、进房包不再带 token、AUTH_REPLY 分支被删、分发链换了回调）都会红。
     hits: list[str] = []
-    monkeypatch.setattr(spider, "async_req", _stub_danmaku_req(hits))
+    monkeypatch.setattr(spider.http, "request", _stub_danmaku_req(hits))
 
     info = await spider.get_bilibili_danmaku_info(url=f"https://live.bilibili.com/{_STUB_SHORT_ROOM}")
     assert isinstance(info, dict), f"弹幕参数获取失败: {info!r}"
@@ -159,7 +159,7 @@ async def test_danmaku_info_to_ws_chain_delivers_message(monkeypatch: pytest.Mon
     assert info.get("server_host") == _STUB_HOST
     assert info.get("room_id") == _STUB_REAL_ROOM, "短号未经 room_init 还原成真实房间号"
     assert info.get("buvid") == _STUB_BUVID
-    assert hits, "async_req 替身未被调用：网络层没被桩住，本用例的观察点失效（假绿）"
+    assert hits, "request 替身未被调用：网络层没被桩住，本用例的观察点失效（假绿）"
 
     # 看门狗/进房两条后台协程经 spawn_danmaku_task 投递；这里包一层「委托真实实现 + 记账」，
     # 既保留真实异常落盘语义，又能在用例末尾断言「没有留下 pending 任务」。
@@ -174,7 +174,7 @@ async def test_danmaku_info_to_ws_chain_delivers_message(monkeypatch: pytest.Mon
     monkeypatch.setattr(bilibili, "spawn_danmaku_task", _record_spawn)
 
     factory = _WsFactory()
-    monkeypatch.setattr(bilibili, "WsClient", factory)
+    monkeypatch.setattr(bilibili, "WebSocketClient", factory)
     # 真实 8s 看门狗单测不可等：压到 0.01s，让它在用例内自己跑完收尾（不压的话它会一直 pending）。
     monkeypatch.setattr(BilibiliDanmaku, "_AUTH_TIMEOUT", 0.01)
 
@@ -235,14 +235,14 @@ async def test_reject_auth_dispatches_through_spawned_task(monkeypatch: pytest.M
 
     assert client._stopped is True
     assert len(recorded) == 1, f"关停协程未经 spawn_danmaku_task 投递（退回裸 ensure_future？）: {recorded!r}"
-    assert recorded[0].cr_code.co_name == "fail", "投递的不是 WsClient.fail()，MID-2245 的上报链被换掉了"
+    assert recorded[0].cr_code.co_name == "fail", "投递的不是 WebSocketClient.fail()，MID-2245 的上报链被换掉了"
     # 缓存失效与投递相互独立：投出去的是协程，失效钩子必须在同步路径上就已完成
     assert invalidated == [1]
 
 
 async def test_reject_auth_close_failure_is_reclaimed_and_logged(monkeypatch: pytest.MonkeyPatch) -> None:
     # L-26 回归锁②：关闭协程自己抛错时必须「被回收并留痕」，而不是成为无人认领的孤儿 future。
-    # 这里刻意**不**打桩 spawn_danmaku_task，走 src/base.py 的真实托管：其完成回调按既有的
+    # 这里刻意**不**打桩 spawn_danmaku_task，走 src/danmaku/base.py 的真实托管：其完成回调按既有的
     # 「[弹幕]后台协程异常: {type_name}: {exc}」模板落一条 warning（既有键，四语目录已登记，不新造
     # msgid）。退回裸 ensure_future 时这条 warning 不会出现，本用例即红。
     class _BoomWs:

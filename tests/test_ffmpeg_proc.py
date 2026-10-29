@@ -8,7 +8,7 @@
 #   ② 三段终止等待按剩余预算分摊且永不为 0（timeout//3 == 0 等于跳过优雅退出，MP4 丢 moov）；
 #   ③ Windows 下 stdin 写完即关闭（写失败也要关）。
 #
-# ③ 是 Windows 专属形态（POSIX 侧发 SIGINT、根本不碰 stdin，原因见 src/ffmpeg_proc.py
+# ③ 是 Windows 专属形态（POSIX 侧发 SIGINT、根本不碰 stdin，原因见 src/recording/process.py
 # 的 _QUIT_VIA_STDIN 注释），但 CI 跑在 ubuntu——若按平台 skip，这两条锁会在 CI 上静默
 # 消失（与 MID-2264「skipped 与 passed 不可区分」同一风险）。故统一用 monkeypatch 把
 # fp._QUIT_VIA_STDIN 置 True，让 Windows 路径在 Linux CI 上也被真实执行。
@@ -20,7 +20,7 @@ from typing import Any, cast
 
 import pytest
 
-import src.ffmpeg_proc as fp
+import src.recording.process as fp
 
 
 class _FakeStdin:

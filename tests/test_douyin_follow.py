@@ -25,7 +25,7 @@ from typing import Any
 from unittest.mock import Mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from src.douyin_follow import DouyinFollowMonitor, parse_follow_feed, room_id
+from src.monitors.douyin_follow import DouyinFollowMonitor, parse_follow_feed, room_id
 
 
 def entry(rid: Any = "681134154663", name: Any = "test", recommend: Any = 0, followed: Any = 1, status: Any = 0) -> Any:

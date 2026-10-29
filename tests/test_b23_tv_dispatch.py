@@ -12,29 +12,23 @@
 # spider / stream 调用替换为记录型桩（不发真实网络请求），跳转解析函数替换为异步桩并统计调用
 # 次数（锁定缓存契约）。变异验证：归一化断言（spider 收到 live.bilibili.com 链接而非原始
 # b23.tv 地址）与落地页数字判定（_bilibili_room_id_from_landing 放行字母段）已做改坏-还原验证。
-
-import sys
 import threading
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from src.recording import state
+from src.streams import dispatch as platform_dispatch
+
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 @pytest.fixture(scope="module")
 def main_mod() -> Any:
-    # 与 test_platform_dispatch 一致：导入前把 sys.argv[0] 钉到 main.py，
-    # 否则 _app_root() 解析出的配置/日志目录会落到别处。
-    old_argv = sys.argv[:]
-    sys.argv = [str(_REPO_ROOT / "src/main.py")]
-    try:
-        from src import main
+    from src.recording import engine as main
 
-        return main
-    finally:
-        sys.argv = old_argv
+    return main
 
 
 class _RecordingShim:
@@ -54,16 +48,16 @@ class _RecordingShim:
 @pytest.fixture
 def dispatch_env(main_mod: Any, monkeypatch: pytest.MonkeyPatch) -> tuple[Any, list]:
     calls: list[tuple[str, str]] = []
-    monkeypatch.setattr(main_mod, "spider", _RecordingShim(calls), raising=False)
-    monkeypatch.setattr(main_mod, "stream", _RecordingShim(calls), raising=False)
+    monkeypatch.setattr(platform_dispatch, "spider", _RecordingShim(calls), raising=False)
+    monkeypatch.setattr(platform_dispatch, "stream", _RecordingShim(calls), raising=False)
     # main() 运行期才赋值的全局量：import 期不存在，需补齐否则 NameError（同 test_platform_dispatch）
-    if not hasattr(main_mod, "bili_cookie"):
-        monkeypatch.setattr(main_mod, "bili_cookie", "", raising=False)
-    if not hasattr(main_mod, "semaphore"):
-        monkeypatch.setattr(main_mod, "semaphore", threading.Semaphore(8), raising=False)
+    if not hasattr(state, "bili_cookie"):
+        monkeypatch.setattr(state, "bili_cookie", "", raising=False)
+    if not hasattr(state, "semaphore"):
+        monkeypatch.setattr(state, "semaphore", threading.Semaphore(8), raising=False)
     # 短码解析缓存按用例隔离：模块级 dict 会跨用例残留，换空 dict 等价于「每例新进程」，
     # 使「缓存命中后解析桩不再被调」的断言不依赖执行顺序。
-    monkeypatch.setattr(main_mod, "_B23_TV_ROOM_CACHE", {}, raising=False)
+    monkeypatch.setattr(platform_dispatch, "_B23_TV_ROOM_CACHE", {}, raising=False)
     return main_mod, calls
 
 
@@ -79,7 +73,7 @@ _B23_TV_FORMS = [
 @pytest.mark.parametrize("url", _B23_TV_FORMS)
 def test_numeric_forms_normalize_and_reuse_bilibili_flow(dispatch_env: tuple, url: str) -> None:
     main_mod, calls = dispatch_env
-    result = main_mod._resolve_platform_stream(url, None, "原画")
+    result = platform_dispatch._resolve_platform_stream(url, None, "原画")
     assert result is not None, f"{url} 应被识别，实际返回 None"
     platform, _port_info, _danmaku, _new_url = result
     assert platform == "B站直播"
@@ -95,9 +89,9 @@ def test_short_code_resolves_then_hits_cache(dispatch_env: tuple, monkeypatch: p
         resolve_calls.append(url)
         return "22747736"
 
-    monkeypatch.setattr(main_mod, "_resolve_b23_tv_room_segment", _fake_resolve)
+    monkeypatch.setattr(platform_dispatch, "_resolve_b23_tv_room_segment", _fake_resolve)
     for _round in range(2):
-        result = main_mod._resolve_platform_stream("https://b23.tv/ZyQrgYf", None, "原画")
+        result = platform_dispatch._resolve_platform_stream("https://b23.tv/ZyQrgYf", None, "原画")
         assert result is not None
         assert result[0] == "B站直播"
         assert ("get_bilibili_room_info", "https://live.bilibili.com/22747736") in calls
@@ -111,9 +105,9 @@ def test_short_code_resolution_failure_is_unrecognized(dispatch_env: tuple, monk
     async def _fake_resolve(url: str, proxy_addr: str | None) -> str:
         raise ValueError("未获取到跳转地址")
 
-    monkeypatch.setattr(main_mod, "_resolve_b23_tv_room_segment", _fake_resolve)
+    monkeypatch.setattr(platform_dispatch, "_resolve_b23_tv_room_segment", _fake_resolve)
     # 返回 None = 本轮按未识别处理（房间线程延迟重试）；spider 零调用 = 未归一地址不进B站链路
-    assert main_mod._resolve_platform_stream("https://b23.tv/ZyQrgYf", None, "原画") is None
+    assert platform_dispatch._resolve_platform_stream("https://b23.tv/ZyQrgYf", None, "原画") is None
     assert calls == []
 
 
@@ -123,17 +117,17 @@ def test_unexpected_resolution_error_is_unrecognized(dispatch_env: tuple, monkey
     async def _fake_resolve(url: str, proxy_addr: str | None) -> str:
         raise RuntimeError("event loop is closed")
 
-    monkeypatch.setattr(main_mod, "_resolve_b23_tv_room_segment", _fake_resolve)
+    monkeypatch.setattr(platform_dispatch, "_resolve_b23_tv_room_segment", _fake_resolve)
     # 非 ValueError 的意外异常同样按未识别处理：不能向上炸穿 _resolve_platform_stream 的兜底
-    assert main_mod._resolve_platform_stream("https://b23.tv/ZyQrgYf", None, "原画") is None
+    assert platform_dispatch._resolve_platform_stream("https://b23.tv/ZyQrgYf", None, "原画") is None
     assert calls == []
 
 
 def test_path_segment_parses_all_supported_forms(main_mod: Any) -> None:
     for url in _B23_TV_FORMS:
-        assert main_mod._b23_tv_path_segment(url) == "22747736"
+        assert platform_dispatch._short_link_path_segment(url) == "22747736"
     # 短码（base62）形态同样合法，交由跳转解析出房间号
-    assert main_mod._b23_tv_path_segment("https://b23.tv/ZyQrgYf") == "ZyQrgYf"
+    assert platform_dispatch._short_link_path_segment("https://b23.tv/ZyQrgYf") == "ZyQrgYf"
 
 
 @pytest.mark.parametrize(
@@ -149,7 +143,7 @@ def test_path_segment_parses_all_supported_forms(main_mod: Any) -> None:
 )
 def test_path_segment_rejects_invalid_forms(main_mod: Any, url: str, reason: str) -> None:
     with pytest.raises(ValueError, match=reason):
-        main_mod._b23_tv_path_segment(url)
+        platform_dispatch._short_link_path_segment(url)
 
 
 @pytest.mark.parametrize(
@@ -172,4 +166,4 @@ def test_path_segment_rejects_invalid_forms(main_mod: Any, url: str, reason: str
     ],
 )
 def test_landing_requires_live_bilibili_host_and_digits(main_mod: Any, final_url: str, expected: str) -> None:
-    assert main_mod._bilibili_room_id_from_landing(final_url) == expected
+    assert platform_dispatch._bilibili_room_id_from_landing(final_url) == expected

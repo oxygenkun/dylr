@@ -6,7 +6,7 @@
 #      多份 = 长期落盘）与监控边车 JSONL（→ Web/GUI 面板）。InvalidProxy 文本自带代理原串（含
 #      user:pass@host），故断言「凭据值在两处都消失」而非「调用了掩码函数」。on_reconnect 侧只记
 #      一条 debug、自己不过码，只能由 ws_client 侧脱敏保住，故本用例走真实接线。
-#   ② MID-2245：B站 _reject_auth 原先复用 WsClient.close()，而 close 置 _stopped 后 connect() 的两条
+#   ② MID-2245：B站 _reject_auth 原先复用 WebSocketClient.close()，而 close 置 _stopped 后 connect() 的两条
 #      `if self._stopped: break` 出口都不回调 on_close → hub.room_closed() 永不发出，Web 弹幕页把
 #      房间永久停在「已连接 / 0 条」。本用例从**真实解码路径**驱动它，不 stub _reject_auth。
 #   ③ MID-2247：i18n 检查（tests/test_i18n_migration.py）判据是 `node.func.value.id == "logger"`，
@@ -22,12 +22,12 @@ from typing import Any, cast
 
 import pytest
 
-import src.ws_client as ws_client_module
-from src.collector import DanmakuCollector
-from src.danmaku_monitor import DanmakuMonitorHub
-from src.logger import logger
-from src.platforms.bilibili import BilibiliDanmaku
-from src.ws_client import WsClient
+import src.network.websocket as ws_client_module
+from src.danmaku.collector import DanmakuCollector
+from src.danmaku.monitor import DanmakuMonitorHub
+from src.danmaku.platforms.bilibili import BilibiliDanmaku
+from src.network.websocket import WebSocketClient
+from src.support.logger import logger
 
 # 凭据样例：口令与账号都是**只在测试里出现的唯一 token**，断言它们在各类产物中消失即可
 # 证明脱敏真的发生了（而不是断言「调用过 mask_credentials」）。
@@ -37,7 +37,7 @@ _PROXY_ERROR_TEXT = f"http://{_PROXY_ACCOUNT}:{_PROXY_PASSWORD}@10.0.0.1:8080 is
 
 
 class _FlappingUnderlying:
-    # 底层连接的极小替身：只提供 WsClient 需要的 close()/迭代（迭代即抛）。
+    # 底层连接的极小替身：只提供 WebSocketClient 需要的 close()/迭代（迭代即抛）。
     def __init__(self, exc: BaseException) -> None:
         self.closed = 0
         self._exc = exc
@@ -103,7 +103,7 @@ async def test_proxy_credentials_absent_from_logs_and_monitor_sidecar(
         write_srt=False,
         monitor=hub,
     )
-    # 生产接线：bilibili.py 把 WsClient 的 on_close/on_reconnect 分别指向
+    # 生产接线：bilibili.py 把 WebSocketClient 的 on_close/on_reconnect 分别指向
     # DanmakuBase._on_close（collector 的回调）与 DanmakuBase._on_reconnect（只记 debug）。
     danmaku = BilibiliDanmaku(on_message=collector._on_message, on_close=collector._on_close)
     # 前置：hub.room_started 在真实链路里由 collector.start() 发出（本用例只关心关闭侧，
@@ -114,7 +114,7 @@ async def test_proxy_credentials_absent_from_logs_and_monitor_sidecar(
     hub.room_connected("房间A")
     assert _room_connected(hub, "房间A") is True
     _install_always_failing_connect(monkeypatch, ConnectionResetError(_PROXY_ERROR_TEXT))
-    client = WsClient(
+    client = WebSocketClient(
         url="ws://example.invalid/sub",
         on_message=lambda _d: None,
         on_close=danmaku._on_close,
@@ -147,7 +147,7 @@ async def test_proxy_credentials_absent_from_logs_and_monitor_sidecar(
 
 
 def test_collector_on_close_masks_unmasked_reason(tmp_path: Path) -> None:
-    # collector 侧那道「兜底」的独立锁：上游若是**其它**平台实现（不经 WsClient），
+    # collector 侧那道「兜底」的独立锁：上游若是**其它**平台实现（不经 WebSocketClient），
     # 传进来的裸凭据文案也必须被拦在日志与边车之前。
     sidecar = tmp_path / "monitor.jsonl"
     hub = DanmakuMonitorHub(log_path=str(sidecar))
@@ -182,14 +182,14 @@ def test_collector_on_close_masks_unmasked_reason(tmp_path: Path) -> None:
 
 
 async def test_reject_auth_reports_close_once(monkeypatch: pytest.MonkeyPatch) -> None:
-    import src.spider as spider
+    import src.streams.spider as spider
 
     closes: list[str] = []
     invalidated: list[int] = []
     monkeypatch.setattr(spider, "invalidate_bili_buvid_cache", lambda: invalidated.append(1))
 
     underlying = _FlappingUnderlying(ConnectionResetError("unused"))
-    client = WsClient(url="ws://example.invalid/sub", on_message=lambda _d: None, on_close=closes.append)
+    client = WebSocketClient(url="ws://example.invalid/sub", on_message=lambda _d: None, on_close=closes.append)
     cast(Any, client)._ws = underlying
     danmaku = BilibiliDanmaku(on_message=lambda _m: None, on_close=closes.append, on_ready=lambda: None)
     danmaku._ws = client
@@ -211,7 +211,7 @@ async def test_reject_auth_reports_close_once(monkeypatch: pytest.MonkeyPatch) -
 async def test_ws_client_fail_is_idempotent_and_masks_reason() -> None:
     closes: list[str] = []
     underlying = _FlappingUnderlying(ConnectionResetError("unused"))
-    client = WsClient(url="ws://example.invalid/sub", on_message=lambda _d: None, on_close=closes.append)
+    client = WebSocketClient(url="ws://example.invalid/sub", on_message=lambda _d: None, on_close=closes.append)
     cast(Any, client)._ws = underlying
 
     await client.fail(f"进房认证被拒: 经 http://{_PROXY_ACCOUNT}:{_PROXY_PASSWORD}@10.0.0.1:8080")
@@ -256,7 +256,7 @@ _SCAN_EXCLUDED_DIRS = frozenset(
     }
 )
 # 只查「首参是消息」的 loguru 级别方法；add() 的首参是 sink 路径、log() 的首参是级别，
-# 两者出现 f-string 都是正常写法（src/logger.py 即如此），纳入判定只会造出假违规。
+# 两者出现 f-string 都是正常写法（src/support/logger.py 即如此），纳入判定只会造出假违规。
 _LOG_MESSAGE_METHODS = frozenset({"debug", "info", "warning", "error", "exception", "critical", "success", "trace"})
 
 
@@ -271,15 +271,15 @@ def _scanned_python_files() -> list[Path]:
 
 
 def _is_logger_module(module: str) -> bool:
-    # 三种写法都要认：`from loguru import logger`、`from src.logger import logger`，以及相对导入
-    # `from .logger import logger`——AST 里后两者的 node.module 分别是 "src.logger" 与 **"logger"**
-    # （level=1 不并进 module）。漏掉最后一种就对 src/ws_client.py 等九个模块的 logger 完全失明。
+    # 三种写法都要认：`from loguru import logger`、`from src.support.logger import logger`，以及相对导入
+    # `from .logger import logger`——AST 里后两者的 node.module 分别是 "src.support.logger" 与 **"logger"**
+    # （level=1 不并进 module）。漏掉最后一种就对 src/network/websocket.py 等九个模块的 logger 完全失明。
     return module in {"loguru", "logger"} or module.endswith(".logger")
 
 
 def _loguru_bindings(tree: ast.Module) -> set[str]:
     # 收集「绑定到 loguru logger 的名字」——含 `from loguru import logger as _log`、
-    # `from .logger import logger as X`、`from src.logger import logger` 等全部形态。
+    # `from .logger import logger as X`、`from src.support.logger import logger` 等全部形态。
     names: set[str] = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.ImportFrom) and node.module and _is_logger_module(node.module):
@@ -345,7 +345,7 @@ def test_repo_python_file_scan_is_not_silently_empty() -> None:
     # 自检之一：排除表若写错（例如误把 src 整目录排除），下面两条锁会在「零文件」上假绿。
     files = _scanned_python_files()
     assert len(files) > 50, f"扫描到的 Python 文件过少（{len(files)}），排除表可能把源码整目录漏掉了"
-    assert any(p.name == "ws_client.py" for p in files), "src/ws_client.py 不在扫描面上"
+    assert _REPO_ROOT / "src" / "network" / "websocket.py" in files, "src/network/websocket.py 不在扫描面上"
 
 
 def test_no_aliased_loguru_logger_binding_anywhere() -> None:
@@ -373,13 +373,13 @@ def test_no_interpolated_fstring_passed_to_any_logger_binding() -> None:
 
 
 def test_ws_client_does_not_import_loguru_directly() -> None:
-    # 本文件的整改落点单独钉一次：统一走 src/logger.py 的项目 logger。
-    source = (_REPO_ROOT / "src" / "ws_client.py").read_text(encoding="utf-8")
+    # 本文件的整改落点单独钉一次：统一走 src/support/logger.py 的项目 logger。
+    source = (_REPO_ROOT / "src" / "network/websocket.py").read_text(encoding="utf-8")
     tree = ast.parse(source)
     modules = {node.module for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) and node.module}
     assert "loguru" not in modules, f"ws_client 又直接 import 了 loguru: {sorted(modules)}"
     # 相对导入 `from .logger import logger` 在 AST 里是 module="logger" + level=1
-    assert modules & {"logger", "src.logger"}, f"ws_client 未使用项目 logger: {sorted(modules)}"
+    assert modules & {"logger", "src.support.logger"}, f"ws_client 未使用项目 logger: {sorted(modules)}"
 
 
 def test_alias_and_fstring_detectors_actually_see_the_bad_forms() -> None:
@@ -388,7 +388,7 @@ def test_alias_and_fstring_detectors_actually_see_the_bad_forms() -> None:
     bad = "from loguru import logger as _log\n_log.warning(f'心跳超时 {v:.0f}s')\n"
     concat = "from loguru import logger as _log\n_log.warning(f'心跳超时' + (f'{v}s' if v else ''))\n"
     # 相对导入形态：AST 里 node.module 是 "logger"（level 另计），检测器若只认
-    # "xxx.logger" 就会对 src/ws_client.py 这类项目 logger 完全失明
+    # "xxx.logger" 就会对 src/network/websocket.py 这类项目 logger 完全失明
     relative = "from .logger import logger\nlogger.warning(f'心跳超时 {v:.0f}s')\n"
     good = (
         "import i18n\nfrom .logger import logger\n"

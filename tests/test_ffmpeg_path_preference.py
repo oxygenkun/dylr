@@ -16,7 +16,6 @@
 #   setattr 到 **ffmpeg_install 的模块全局名**，绝不改 stdlib 模块本体（会波及同进程的 harness
 #   守护线程）；判据逻辑走真实代码，不在测试里重算一遍。环境变量不使用 patch.dict(os.environ)
 #   （harness 注入的超长变量会让其整体写回抛 ValueError）。
-
 import ast
 import importlib.util
 import os
@@ -29,9 +28,10 @@ from pathlib import Path
 import pytest
 from loguru import logger
 
-import src.ffmpeg_install as ffmpeg_install
+import src.runtime.ffmpeg as ffmpeg_install
+from src.runtime import ffmpeg as ffmpeg_install
 
-MAIN_SOURCE = Path(__file__).resolve().parent.parent / "src/main.py"
+MAIN_SOURCE = Path(__file__).resolve().parent.parent / "src/recording/engine.py"
 
 
 def _patch_probes(
@@ -321,7 +321,7 @@ class TestMainWiring:
     @staticmethod
     def _module_level_path_if_nodes() -> list[ast.If]:
         tree = ast.parse(MAIN_SOURCE.read_text(encoding="utf-8"), filename=str(MAIN_SOURCE))
-        return [node for node in tree.body if isinstance(node, ast.If) and _assigns_path_env(node)]
+        return [node for node in ast.walk(tree) if isinstance(node, ast.If) and _assigns_path_env(node)]
 
     def test_path_prepend_is_guarded_by_the_single_judgement(self) -> None:
         nodes = self._module_level_path_if_nodes()
@@ -342,7 +342,7 @@ class TestMainWiring:
         imported = [
             alias.name
             for node in tree.body
-            if isinstance(node, ast.ImportFrom) and node.module == "src.ffmpeg_install"
+            if isinstance(node, ast.ImportFrom) and node.module == "src.runtime.ffmpeg"
             for alias in node.names
         ]
         assert "should_prepend_bundled_ffmpeg_dir" in imported
@@ -350,14 +350,14 @@ class TestMainWiring:
     def test_existing_duplicate_insert_guard_kept(self) -> None:
         # 「已在 PATH 里就不重复插入」是改动前就有的守卫，不得被新判据顶掉。
         source = MAIN_SOURCE.read_text(encoding="utf-8")
-        assert "not in _current_path.split(os.pathsep)" in source
+        assert "not in current_path.split(os.pathsep)" in source
 
 
 # ---------------------------------------------------------------------------
 # 孪生副本等价锁（R-5，2026-09-22）
 #
 # tool/douyin_live_recorder_standalone.py 按设计不 import src/（可独立单文件分发），
-# 因此同一判据在那里有一份**同名同语义副本**（先例：src/scheduler.py 与它的并发副本）。
+# 因此同一判据在那里有一份**同名同语义副本**（先例：src/recording/scheduler.py 与它的并发副本）。
 # 复制件的通病是「单边修改 → 语义漂移」，而漂移的后果正好是 R-5 登记的那件事：
 # 主程序让位给原生 arm64、单文件版继续吃 Rosetta。所以这里刻意**不重复写一遍期望值**，
 # 而是把两个实现放进同一组桩里逐一比对结果 —— 谁改了判据而另一边没跟上，本用例就红。
@@ -462,7 +462,7 @@ def test_twin_agrees_on_every_criterion_combination(
         monkeypatch, [main_mod, standalone], sys_platform=sys_platform, machine=machine, which_result=which_result
     )
 
-    from_main = main_mod.should_prepend_bundled_ffmpeg_dir(bundled_dir, "some/path")
+    from_main = ffmpeg_install.should_prepend_bundled_ffmpeg_dir(bundled_dir, "some/path")
     from_standalone = standalone.should_prepend_bundled_ffmpeg_dir(bundled_dir, "some/path")
     assert from_main == from_standalone, f"两份实现漂移：main={from_main} standalone={from_standalone}"
     assert from_main is expected, (
@@ -480,7 +480,7 @@ def test_twin_agrees_when_all_five_criteria_hold(monkeypatch: pytest.MonkeyPatch
         monkeypatch, [main_mod, standalone], sys_platform="darwin", machine="arm64", which_result=str(native_exe)
     )
 
-    assert main_mod.should_prepend_bundled_ffmpeg_dir(str(bundle), "some/path") is False
+    assert ffmpeg_install.should_prepend_bundled_ffmpeg_dir(str(bundle), "some/path") is False
     assert standalone.should_prepend_bundled_ffmpeg_dir(str(bundle), "some/path") is False
     assert native_dir.is_dir()
 
@@ -493,7 +493,7 @@ def test_twin_agrees_on_the_self_shadow_form(monkeypatch: pytest.MonkeyPatch, tm
         monkeypatch, [main_mod, standalone], sys_platform="darwin", machine="arm64", which_result=str(bundle / "ffmpeg")
     )
 
-    from_main = main_mod.should_prepend_bundled_ffmpeg_dir(str(bundle), "some/path")
+    from_main = ffmpeg_install.should_prepend_bundled_ffmpeg_dir(str(bundle), "some/path")
     from_standalone = standalone.should_prepend_bundled_ffmpeg_dir(str(bundle), "some/path")
     assert from_main is True and from_standalone is True, (
         f"自我遮蔽分支不一致：main={from_main} standalone={from_standalone}"

@@ -1,7 +1,7 @@
 # 小红书链接统一解析契约的专项测试（PROPOSAL_2026-10-04 Task 1）。
 #
 # 覆盖的是**纯解析**这一层：`spider.parse_xhs_live_url` 不发网络请求、不读配置，
-# 因此本文件不需要 mock async_req / 凭据；短链解重定向与取流链融合留给后续任务。
+# 因此本文件不需要 mock request / 凭据；短链解重定向与取流链融合留给后续任务。
 #
 # 断言方式一律是「字面量期望值 ↔ 解析输出」对照：期望的规范化 URL 全部手写常量，
 # 测试自身不实现任何路径切分/取参逻辑（AGENTS.md「测试不得自实现解析逻辑」），
@@ -12,15 +12,17 @@
 #   2) 动态段直播 https://www.xiaohongshu.com/livestream/<动态段>/<数字房间ID>
 #   3) 分享短链  https://xhslink.com/o/<短码>（本任务只做结构识别，不解重定向）
 #   4) 作者主页  https://www.xiaohongshu.com/user/profile/<用户ID>（既有监控兼容）
-
 import json
 from typing import Any
 from unittest.mock import patch
 
 import pytest
 
-from src import spider as sp
-from src.spider import XhsUrlError, parse_xhs_live_url
+from src.recording import session as recording
+from src.recording import state
+from src.streams import dispatch as platform_dispatch
+from src.streams import spider as sp
+from src.streams.spider import XhsUrlError, parse_xhs_live_url
 
 # 用户给出的真实房间号形态：18 位纯数字，用来锁「room_id 必须按原样整段取出」。
 LIVE_ROOM_ID = "570480456678837366"
@@ -366,7 +368,7 @@ def _page_with_deeplink() -> str:
 
 
 class _RecordingAsyncReq:
-    # 记录型 async_req 替身：按 URL 子串分发响应；redirect_url=True 走落地页分支。
+    # 记录型 request 替身：按 URL 子串分发响应；redirect_url=True 走落地页分支。
     # 用类而非「函数挂属性」：mypy 对函数对象属性赋值报 attr-defined，类属性是干净写法。
     def __init__(self, payloads: dict[str, str]) -> None:
         self.payloads = payloads
@@ -391,7 +393,7 @@ async def test_standard_live_link_yields_room_id_and_anchor(monkeypatch: pytest.
     # 标准直播链接：主播名取 hostInfo.nickName，room_id 取自统一解析器，
     # 即便 liveStatus 不是 success 也要能建立可监控作业（否则首轮判「网址内容获取失败」）
     fake = _fake_async_req({_LIVE_ROOM_URL: _page("end")})
-    with patch.object(sp, "async_req", new=fake):
+    with patch.object(sp.http, "request", new=fake):
         result = await sp.get_xhs_stream_url(_LIVE_ROOM_URL)
     assert result["anchor_name"] == "测试主播"
     assert result["is_live"] is False
@@ -402,7 +404,7 @@ async def test_standard_live_link_yields_room_id_and_anchor(monkeypatch: pytest.
 @pytest.mark.asyncio
 async def test_dynamic_path_link_is_preserved_and_resolves(monkeypatch: pytest.MonkeyPatch) -> None:
     fake = _fake_async_req({LIVE_DYNAMIC_SEGMENT: _page("end")})
-    with patch.object(sp, "async_req", new=fake):
+    with patch.object(sp.http, "request", new=fake):
         result = await sp.get_xhs_stream_url(_DYNAMIC_ROOM_URL)
     assert result["room_id"] == LIVE_ROOM_ID
     # 动态段必须原样保留：删掉后页面未必可访问
@@ -413,7 +415,7 @@ async def test_dynamic_path_link_is_preserved_and_resolves(monkeypatch: pytest.M
 async def test_share_params_are_stripped_before_page_request(monkeypatch: pytest.MonkeyPatch) -> None:
     url = f"{_LIVE_ROOM_URL}?timestamp=1700000000&share_source=copy_link&xsec_token=XYZ&xsec_source=pc_feed"
     fake = _fake_async_req({LIVE_ROOM_ID: _page("end")})
-    with patch.object(sp, "async_req", new=fake):
+    with patch.object(sp.http, "request", new=fake):
         result = await sp.get_xhs_stream_url(url)
     page_urls = [item["url"] for item in fake.sent if not item["redirect"]]
     assert page_urls, "未发起房间页请求"
@@ -424,7 +426,7 @@ async def test_share_params_are_stripped_before_page_request(monkeypatch: pytest
 @pytest.mark.asyncio
 async def test_live_success_still_builds_stream_urls(monkeypatch: pytest.MonkeyPatch) -> None:
     fake = _fake_async_req({LIVE_ROOM_ID: _page_with_deeplink()})
-    with patch.object(sp, "async_req", new=fake):
+    with patch.object(sp.http, "request", new=fake):
         result = await sp.get_xhs_stream_url(_LIVE_ROOM_URL)
     assert result["is_live"] is True
     assert result["record_url"] == "http://live-source-play.xhscdn.com/live/abc123.flv"
@@ -436,7 +438,7 @@ async def test_live_success_still_builds_stream_urls(monkeypatch: pytest.MonkeyP
 @pytest.mark.asyncio
 async def test_short_link_resolves_landing_room_id(monkeypatch: pytest.MonkeyPatch) -> None:
     fake = _fake_async_req({_SHORT_URL: _DYNAMIC_ROOM_URL, LIVE_DYNAMIC_SEGMENT: _page("end")})
-    with patch.object(sp, "async_req", new=fake):
+    with patch.object(sp.http, "request", new=fake):
         result = await sp.get_xhs_stream_url(_SHORT_URL)
     assert result["room_id"] == LIVE_ROOM_ID
     assert result["normalized_url"] == _DYNAMIC_ROOM_URL
@@ -446,7 +448,7 @@ async def test_short_link_resolves_landing_room_id(monkeypatch: pytest.MonkeyPat
 async def test_short_link_redirect_to_note_page_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:
     note = "https://www.xiaohongshu.com/explore/6748c2d0000000001a01b3d9"
     fake = _fake_async_req({_SHORT_URL: note})
-    with patch.object(sp, "async_req", new=fake):
+    with patch.object(sp.http, "request", new=fake):
         result = await sp.get_xhs_stream_url(_SHORT_URL)
     assert result["is_live"] is False
     assert result["error"] == "non_live_path"
@@ -459,7 +461,7 @@ async def test_short_link_redirect_failure_is_reported(monkeypatch: pytest.Monke
     async def _req(url: str, *args: Any, **kwargs: Any) -> str:
         return ""
 
-    with patch.object(sp, "async_req", new=_req):
+    with patch.object(sp.http, "request", new=_req):
         result = await sp.get_xhs_stream_url(_SHORT_URL)
     assert result["is_live"] is False
     assert result["error"] == "short_redirect"
@@ -469,7 +471,7 @@ async def test_short_link_redirect_failure_is_reported(monkeypatch: pytest.Monke
 async def test_external_landing_still_keeps_credentials_contained(monkeypatch: pytest.MonkeyPatch) -> None:
     # SEV-2214 的安全不变量在新解析器下必须仍成立：跳到外站时不得请求该外站
     fake = _fake_async_req({_SHORT_URL: "https://evil.example.com/steal"})
-    with patch.object(sp, "async_req", new=fake):
+    with patch.object(sp.http, "request", new=fake):
         await sp.get_xhs_stream_url(_SHORT_URL, cookies="SESSDATA=SECRET")
     assert not any("evil.example.com" in item["url"] for item in fake.sent), fake.sent
 
@@ -477,7 +479,7 @@ async def test_external_landing_still_keeps_credentials_contained(monkeypatch: p
 @pytest.mark.asyncio
 async def test_non_live_link_returns_error_without_request(monkeypatch: pytest.MonkeyPatch) -> None:
     fake = _fake_async_req({})
-    with patch.object(sp, "async_req", new=fake):
+    with patch.object(sp.http, "request", new=fake):
         result = await sp.get_xhs_stream_url("https://www.xiaohongshu.com/explore/6748c2d0000000001a01b3d9")
     assert result["error"] == "non_live_path"
     assert result["is_live"] is False
@@ -489,7 +491,7 @@ async def test_room_id_fallback_name_when_nickname_absent(monkeypatch: pytest.Mo
     # 页面既没给 nickName、链接也没有 host_id 时，用房间 ID 兜底成稳定监控名，
     # 避免 start_record 因空 anchor_name 判「网址内容获取失败」并把该房间打回重试
     fake = _fake_async_req({LIVE_ROOM_ID: _page("end", nickname="")})
-    with patch.object(sp, "async_req", new=fake):
+    with patch.object(sp.http, "request", new=fake):
         result = await sp.get_xhs_stream_url(_LIVE_ROOM_URL)
     assert result["anchor_name"] == f"小红书_{LIVE_ROOM_ID}"
 
@@ -499,7 +501,7 @@ async def test_profile_link_keeps_profile_fallback(monkeypatch: pytest.MonkeyPat
     # 保留作者主页监控兼容：直播页离线后仍回抓 profile 标题取昵称
     profile_html = "<title>@老主播 的个人主页</title>"
     fake = _fake_async_req({"livestream": _page("end", nickname=""), "user/profile": profile_html})
-    with patch.object(sp, "async_req", new=fake):
+    with patch.object(sp.http, "request", new=fake):
         result = await sp.get_xhs_stream_url("https://www.xiaohongshu.com/user/profile/5f3e2a1b")
     assert result["anchor_name"] == "老主播"
     assert result["is_live"] is False
@@ -521,9 +523,9 @@ def main_mod() -> Any:
 
     root = Path(__file__).resolve().parent.parent
     old_argv = sys.argv[:]
-    sys.argv = [str(root / "src/main.py")]
+    sys.argv = [str(root / "src/recording/engine.py")]
     try:
-        from src import main as _main
+        from src.recording import engine as _main
 
         return _main
     finally:
@@ -533,13 +535,13 @@ def main_mod() -> Any:
 def _prime_resolver(main: Any, monkeypatch: pytest.MonkeyPatch, port_info: dict[str, Any]) -> None:
     import threading
 
-    monkeypatch.setattr(main, "semaphore", threading.Semaphore(8), raising=False)
-    monkeypatch.setattr(main, "xhs_cookie", "", raising=False)
+    monkeypatch.setattr(state, "semaphore", threading.Semaphore(8), raising=False)
+    monkeypatch.setattr(state, "xhs_cookie", "", raising=False)
 
     async def _fake_stream_url(*args: object, **kwargs: object) -> dict[str, object]:
         return dict(port_info)
 
-    monkeypatch.setattr(main.spider, "get_xhs_stream_url", _fake_stream_url)
+    monkeypatch.setattr(platform_dispatch.spider, "get_xhs_stream_url", _fake_stream_url)
 
 
 def test_resolver_reports_parse_error_and_marks_unrecognized(main_mod: Any, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -549,9 +551,9 @@ def test_resolver_reports_parse_error_and_marks_unrecognized(main_mod: Any, monk
         {"anchor_name": "", "is_live": False, "error": "non_live_path"},
     )
     msgs: list[str] = []
-    monkeypatch.setattr(main_mod.logger, "warning", lambda msg, *a, **k: msgs.append(str(msg)))
-    ctx = main_mod._PlatformResolveContext("https://www.xiaohongshu.com/explore/1", None, "原画")
-    main_mod._resolve_xhslink_com(ctx)
+    monkeypatch.setattr(platform_dispatch.logger, "warning", lambda msg, *a, **k: msgs.append(str(msg)))
+    ctx = platform_dispatch._PlatformResolveContext("https://www.xiaohongshu.com/explore/1", None, "原画")
+    platform_dispatch._resolve_xhslink_com(ctx)
     assert ctx.unrecognized is True, "解析失败必须落未识别，否则调用方会按未开播空转"
     assert any("non_live_path" in m for m in msgs), msgs
 
@@ -563,8 +565,8 @@ def test_resolver_writes_normalized_url_back(main_mod: Any, monkeypatch: pytest.
         monkeypatch,
         {"anchor_name": "主播", "is_live": False, "room_id": "570480456678837366", "normalized_url": normalized},
     )
-    ctx = main_mod._PlatformResolveContext("https://xhslink.com/o/4NnyJghfl4P", None, "原画")
-    main_mod._resolve_xhslink_com(ctx)
+    ctx = platform_dispatch._PlatformResolveContext("https://xhslink.com/o/4NnyJghfl4P", None, "原画")
+    platform_dispatch._resolve_xhslink_com(ctx)
     assert ctx.new_record_url == normalized, "短链解析出的规范地址必须回写，避免每轮重复解跳转"
     assert ctx.unrecognized is False
 
@@ -574,8 +576,8 @@ def test_resolver_keeps_empty_new_record_url_without_normalized_field(
 ) -> None:
     # 解析器未给出规范地址（老数据/异常形态）时不得凭空造值：回写空串即维持原链接
     _prime_resolver(main_mod, monkeypatch, {"anchor_name": "主播", "is_live": False})
-    ctx = main_mod._PlatformResolveContext("https://www.xiaohongshu.com/user/profile/abc", None, "原画")
-    main_mod._resolve_xhslink_com(ctx)
+    ctx = platform_dispatch._PlatformResolveContext("https://www.xiaohongshu.com/user/profile/abc", None, "原画")
+    platform_dispatch._resolve_xhslink_com(ctx)
     assert ctx.new_record_url == ""
 
 
@@ -584,7 +586,7 @@ def test_xhs_dispatch_warnings_use_translated_templates() -> None:
     import ast
     from pathlib import Path
 
-    tree = ast.parse((Path(__file__).resolve().parent.parent / "src/main.py").read_text(encoding="utf-8"))
+    tree = ast.parse((Path(__file__).resolve().parent.parent / "src/streams/dispatch.py").read_text(encoding="utf-8"))
     found: set[str] = set()
     for node in ast.walk(tree):
         if not (isinstance(node, ast.Call) and getattr(node.func, "attr", "") == "warning" and node.args):
@@ -618,10 +620,10 @@ def test_xhs_link_creates_and_starts_recording_job(
     room_url = f"https://www.xiaohongshu.com/livestream/{LIVE_ROOM_ID}"
     page = _page("end", nickname="测试主播")
     fake = _fake_async_req({LIVE_ROOM_ID: page})
-    monkeypatch.setattr(sp, "async_req", fake)
-    monkeypatch.setattr(main_mod, "xhs_cookie", "", raising=False)
-    monkeypatch.setattr(main_mod.spider, "async_req", fake)
-    monkeypatch.setattr(main_mod, "semaphore", threading.Semaphore(8), raising=False)
+    monkeypatch.setattr(sp.http, "request", fake)
+    monkeypatch.setattr(state, "xhs_cookie", "", raising=False)
+    monkeypatch.setattr(platform_dispatch.spider.http, "request", fake)
+    monkeypatch.setattr(state, "semaphore", threading.Semaphore(8), raising=False)
 
     commands: list[list[str]] = []
     updates: list[str] = []
@@ -641,16 +643,16 @@ def test_xhs_link_creates_and_starts_recording_job(
 
     # start_record 靠 exit_recording 收敛：_check 返回 True 即「注释退出」，本例用 main 命名空间里的
     # time 替身把轮末等待的第一次 sleep 变成「置退出标志」（见下方 time_shim），未开播轮也能确定跑完一轮。
-    monkeypatch.setattr(main_mod, "check_subprocess", _check)
-    monkeypatch.setattr(main_mod, "record_success", lambda *a, **k: None)
-    monkeypatch.setattr(main_mod, "record_error", lambda *a, **k: None)
+    monkeypatch.setattr(recording, "check_subprocess", _check)
+    monkeypatch.setattr(recording, "record_success", lambda *a, **k: None)
+    monkeypatch.setattr(recording, "record_error", lambda *a, **k: None)
     monkeypatch.setattr(
-        main_mod, "select_source_url", lambda *a, **k: "http://live-source-play.xhscdn.com/live/abc.flv"
+        recording, "select_source_url", lambda *a, **k: "http://live-source-play.xhscdn.com/live/abc.flv"
     )
-    monkeypatch.setattr(main_mod, "get_record_headers", lambda *a, **k: None)
-    monkeypatch.setattr(main_mod, "get_record_user_agent", lambda *a, **k: None)
-    monkeypatch.setattr(main_mod, "converts_mp4", lambda *a, **k: None)
-    monkeypatch.setattr(main_mod, "generate_subtitles", lambda *a, **k: None)
+    monkeypatch.setattr(recording, "get_record_headers", lambda *a, **k: None)
+    monkeypatch.setattr(recording, "get_record_user_agent", lambda *a, **k: None)
+    monkeypatch.setattr(recording, "converts_mp4", lambda *a, **k: None)
+    monkeypatch.setattr(recording, "generate_subtitles", lambda *a, **k: None)
 
     # plain 是 start_record 单轮运行所需的全部模块全局（与 test_record_watchdog 的
     # _prime_start_record / test_start_record_command_golden 的 _setup_case 同一组键）。
@@ -702,7 +704,7 @@ def test_xhs_link_creates_and_starts_recording_job(
         "color_obj": __import__("unittest.mock", fromlist=["MagicMock"]).MagicMock(),
     }
     for name, value in plain.items():
-        monkeypatch.setattr(main_mod, name, value, raising=False)
+        monkeypatch.setattr(recording if name == "OVERSEAS_PLATFORM_HOST" else state, name, value)
     for cookie in (
         "dy_cookie",
         "tiktok_cookie",
@@ -712,7 +714,7 @@ def test_xhs_link_creates_and_starts_recording_job(
         "shopee_cookie",
         "huajiao_cookie",
     ):
-        monkeypatch.setattr(main_mod, cookie, "", raising=False)
+        monkeypatch.setattr(state, cookie, "", raising=False)
 
     # start_record 的内层 while True 靠「轮末 delay_default 等待」再回首部判 exit_recording 收敛；
     # delay_default=0 时它会零耗时空转、测试挂死。用 main 命名空间里的 time 替身把第一次 sleep
@@ -722,13 +724,13 @@ def test_xhs_link_creates_and_starts_recording_job(
     import types
 
     def _sleep_and_stop(_seconds: float) -> None:
-        setattr(main_mod, "exit_recording", True)
+        setattr(state, "exit_recording", True)
 
     time_shim = types.SimpleNamespace(**{k: getattr(_time_mod, k) for k in dir(_time_mod) if not k.startswith("_")})
     time_shim.sleep = _sleep_and_stop
-    monkeypatch.setattr(main_mod, "time", time_shim)
+    monkeypatch.setattr(recording, "time", time_shim)
 
-    main_mod.start_record(("原画", room_url, ""))
+    recording.start_record(("原画", room_url, ""))
 
     # 未开播轮次不该起 ffmpeg，但仍必须完成解析：主播名来自 hostInfo.nickName，
     # 空 anchor_name 会被 start_record 判成「网址内容获取失败」并每轮重试
@@ -736,16 +738,16 @@ def test_xhs_link_creates_and_starts_recording_job(
     assert updates == [], "未开播不得进入录制调用"
     # 监控作业确实建起来了：need_update_line_list 里是「原链接|规范链接,主播: 测试主播」，
     # 空主播名会让这一行退化成无意义的配置回写
-    assert main_mod.need_update_line_list, "未开播也必须登记监控作业"
-    assert "测试主播" in main_mod.need_update_line_list[0], main_mod.need_update_line_list
+    assert state.need_update_line_list, "未开播也必须登记监控作业"
+    assert "测试主播" in state.need_update_line_list[0], state.need_update_line_list
 
     # 同一链接在开播态下必须真正起录制：把 liveStatus 换成 success 再跑一轮
-    monkeypatch.setattr(main_mod, "exit_recording", False)
+    monkeypatch.setattr(state, "exit_recording", False)
     live_page = _page_with_deeplink()
     live_fake = _fake_async_req({LIVE_ROOM_ID: live_page})
-    monkeypatch.setattr(sp, "async_req", live_fake)
-    monkeypatch.setattr(main_mod.spider, "async_req", live_fake)
-    main_mod.start_record(("原画", room_url, ""))
+    monkeypatch.setattr(sp.http, "request", live_fake)
+    monkeypatch.setattr(platform_dispatch.spider.http, "request", live_fake)
+    recording.start_record(("原画", room_url, ""))
 
     assert commands, "开播后必须拉起录制子进程"
     assert any("live-source-play.xhscdn.com" in arg for arg in commands[0]), commands[0]

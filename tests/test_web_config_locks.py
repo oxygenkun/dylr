@@ -1,4 +1,4 @@
-# src/web_config.py / src/web_api.py「敏感配置不得被空值覆盖」的回归锁（MID-69 补，2026-09-21）。
+# src/api/config.py / src/api/routes.py「敏感配置不得被空值覆盖」的回归锁（MID-69 补，2026-09-21）。
 #
 # 范围刻意收窄：MID-69 点名的三个符号里，_looks_like_secret_value 与 _validate_room_url_target
 # 已由 tests/test_web_config_secret_mask.py 用**真实函数**的表驱动用例逐条钉死（CR-08/09/10 批次），
@@ -16,11 +16,10 @@
 # 测试内不重新实现任何脱敏/判定逻辑。
 #
 # 掩码侧的对称防线（此前记为「已知残留」，已于同日 MID-37 残留修复关闭）：提交 value='***'
-# 现在也被后端拒成 400（src/web_api.py 的 `elif value.strip() == SENSITIVE_MASK`），由
+# 现在也被后端拒成 400（src/api/routes.py 的 `elif value.strip() == SENSITIVE_MASK`），由
 # tests/test_web_api.py::TestSensitiveValueBlankRejected::test_mask_sensitive_value_rejected 锁定；
 # 本文件只负责「空值覆盖」那半边，掩码那半边不在此重述以免形成第二份事实源。
 
-import sys
 import threading
 import types
 from collections.abc import Generator
@@ -30,44 +29,34 @@ import pytest
 from starlette.testclient import TestClient
 
 _BASE_URL = "http://127.0.0.1:8000"
-# 与 src/web_api.py 里 raise HTTPException(400, ...) 的原文逐字一致：文案是契约的一部分，
+# 与 src/api/routes.py 里 raise HTTPException(400, ...) 的原文逐字一致：文案是契约的一部分，
 # 面板把它当 detail 直接 toast 给用户（前端用例同样按子串断言），改一个字两处都会红。
 _BLANK_SENSITIVE_DETAIL = "敏感配置项不得清空：如需移除请显式填写占位值并手工编辑 config.ini"
 
 
-@pytest.fixture()
+@pytest.fixture
 def fake_main(monkeypatch: pytest.MonkeyPatch) -> Generator[types.ModuleType, None, None]:
-    # web_api 的处理函数内部 `import main as _main` 取 file_update_lock，注入轻量假模块
-    # 避免导入真实 main.py 触发 FFmpeg/Node 检查等重副作用（与 tests/test_web_api.py 同源口径）。
-    fake = types.ModuleType("main")
-    # types.ModuleType 不接受任意属性赋值，一律经 setattr 注入替身符号
-    setattr(fake, "file_update_lock", threading.RLock())
-    setattr(fake, "running_list", [])
-    setattr(fake, "record_state_lock", threading.Lock())
-    setattr(fake, "max_request_lock", threading.Lock())
-    setattr(fake, "recording", set())
-    setattr(fake, "recording_enabled", False)
-    setattr(fake, "text_encoding", "utf-8-sig")
-    setattr(fake, "url_config_file", "")
-    setattr(fake, "ini_URL_content", "")
-    previous = sys.modules.get("src.main")
-    sys.modules["src.main"] = fake
-    import src
+    from src.recording import state
 
-    monkeypatch.setattr(src, "main", fake, raising=False)
-    try:
-        yield fake
-    finally:
-        if previous is not None:
-            sys.modules["src.main"] = previous
-        else:
-            sys.modules.pop("src.main", None)
+    for key, value in {
+        "file_update_lock": threading.RLock(),
+        "record_state_lock": threading.Lock(),
+        "max_request_lock": threading.Lock(),
+        "running_list": [],
+        "recording": set(),
+        "recording_enabled": False,
+        "text_encoding": "utf-8-sig",
+        "url_config_file": "",
+        "ini_URL_content": "",
+    }.items():
+        monkeypatch.setattr(state, key, value)
+    yield state
 
 
 @pytest.fixture()
 def client(tmp_path: Path, fake_main: types.ModuleType) -> Generator[TestClient, None, None]:
     # 每个用例一份独立 config.ini：断言「未被覆盖」时必须看到写入前的原文。
-    from src import web_api as wa
+    from src.api import routes as wa
 
     cfg = tmp_path / "config.ini"
     cfg.write_text(
@@ -121,7 +110,7 @@ def client(tmp_path: Path, fake_main: types.ModuleType) -> Generator[TestClient,
 )
 def test_guarded_keys_are_sensitive_in_production(section: str, key: str) -> None:
     # 若某键不再被判成敏感，下面的 400 用例会因「前提失效」而失去意义，故先钉判定本身
-    from src.web_config import is_sensitive_item
+    from src.api.config import is_sensitive_item
 
     assert is_sensitive_item(section, key) is True
 

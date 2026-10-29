@@ -9,8 +9,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.platforms import douyin as douyin_mod
-from src.platforms._xbogus import XBOGUS_ALPHABET, danmaku_signature
+from src.danmaku.platforms import douyin as douyin_mod
+from src.danmaku.platforms._xbogus import XBOGUS_ALPHABET, danmaku_signature
 
 
 def test_signature_uses_xbogus_alphabet_only() -> None:
@@ -29,7 +29,7 @@ def test_signature_charset_can_contain_url_sensitive_chars() -> None:
 
 
 def test_ws_url_appends_signature_verbatim(monkeypatch: pytest.MonkeyPatch) -> None:
-    # 端到端（至 WsClient 构造处）：url 以 `&signature=<原文>` 结尾，不得出现 %2B / %2F 形态。
+    # 端到端（至 WebSocketClient 构造处）：url 以 `&signature=<原文>` 结尾，不得出现 %2B / %2F 形态。
     captured: dict[str, object] = {}
 
     class _FakeWsClient:
@@ -40,7 +40,7 @@ def test_ws_url_appends_signature_verbatim(monkeypatch: pytest.MonkeyPatch) -> N
         async def connect(self) -> None:
             return None
 
-    monkeypatch.setattr(douyin_mod, "WsClient", _FakeWsClient)
+    monkeypatch.setattr(douyin_mod, "WebSocketClient", _FakeWsClient)
 
     client = douyin_mod.DouyinDanmaku(on_message=None, on_close=None, on_ready=None)
     asyncio.run(client.start({"room_id": "123456789", "user_id": "987654321", "cookie": "ttwid=1"}))

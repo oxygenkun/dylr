@@ -1,4 +1,4 @@
-# 布尔配置解析统一口径的回归测试（src/config_bool.py + src/config_io.read_config_bool）。
+# 布尔配置解析统一口径的回归测试（src/config/booleans.py + src/config_io.read_config_bool）。
 #
 # 背景（2026-09-17）：旧实现把「取值」与「解析」混在 main.py 的 `options = {"是": True, "否": False}`
 # 字典查表里，非「是/否」写法会**静默**回落到 options.get 的兜底实参；logger.py / web_config.py /
@@ -8,18 +8,18 @@
 #
 # 本文件锁定三件事：① 两种编码等价；② 缺键补写仍是规范写法「是」/「否」；
 # ③ main.py 不得再出现字典查表写法（源码级防回归，避免口径重新分叉）。
-
 import ast
 from pathlib import Path
 
 import pytest
 from pytest import MonkeyPatch
 
-import src.main as main
-from src import config_io
-from src.config_bool import FALSE_TOKENS, TRUE_TOKENS, format_config_bool, parse_config_bool  # noqa: E402
+from src.config import io as config_io
+from src.config.booleans import FALSE_TOKENS, TRUE_TOKENS, format_config_bool, parse_config_bool
+from src.recording import engine as recorder
+from src.recording import state
 
-_MAIN_PY = Path(__file__).resolve().parents[1] / "src/main.py"
+_MAIN_PY = Path(__file__).resolve().parents[1] / "src/recording/engine.py"
 _KEY = "是否录制弹幕(是/否)"
 
 
@@ -95,7 +95,7 @@ def test_read_config_bool_accepts_both_encodings(
     # 同一份配置文件里两种编码必须解析出相同结果（这是本次事故的核心保证）
     cfg = tmp_path / "config.ini"
     cfg.write_text(f"[录制设置]\n{_KEY}={raw}\n", encoding="utf-8")
-    monkeypatch.setattr(main, "config_file", str(cfg))
+    monkeypatch.setattr(state, "config_file", str(cfg))
     parser = _make_parser(f"[录制设置]\n{_KEY}={raw}\n")
     assert config_io.read_config_bool(parser, "录制设置", _KEY, False) is expected
 
@@ -104,7 +104,7 @@ def test_read_config_bool_missing_key_writes_canonical_default(tmp_path: Path, m
     # 缺键 → 按 default 补写规范写法并返回该值（与 read_config_value 的自愈语义一致）
     cfg = tmp_path / "config.ini"
     cfg.write_text("[录制设置]\nlanguage=zh_cn\n", encoding="utf-8")
-    monkeypatch.setattr(main, "config_file", str(cfg))
+    monkeypatch.setattr(state, "config_file", str(cfg))
     parser = _make_parser("[录制设置]\nlanguage=zh_cn\n")
 
     assert config_io.read_config_bool(parser, "录制设置", _KEY, True) is True
@@ -124,7 +124,7 @@ def test_read_config_bool_unrecognized_value_returns_default_and_keeps_original(
     # 未识别值返回 default，但**不得**覆写用户原文（避免把用户手改的内容静默改掉）
     cfg = tmp_path / "config.ini"
     cfg.write_text(f"[录制设置]\n{_KEY}=maybe\n", encoding="utf-8")
-    monkeypatch.setattr(main, "config_file", str(cfg))
+    monkeypatch.setattr(state, "config_file", str(cfg))
     parser = _make_parser(f"[录制设置]\n{_KEY}=maybe\n")
 
     assert config_io.read_config_bool(parser, "录制设置", _KEY, False) is False
@@ -146,18 +146,18 @@ def test_https_config_accepts_true_false_encoding(
     # 本次事故的直接命中项：true 曾被判为「否」→ 流地址被降级为 http
     cfg = tmp_path / "config.ini"
     cfg.write_text(f"[录制设置]\n是否启用https录制={raw}\n", encoding="utf-8")
-    monkeypatch.setattr(main, "config_file", str(cfg))
+    monkeypatch.setattr(state, "config_file", str(cfg))
     parser = _make_parser(f"[录制设置]\n是否启用https录制={raw}\n")
-    assert main._read_https_recording_config(parser) is expected
+    assert recorder._read_https_recording_config(parser) is expected
 
 
 def test_https_config_legacy_key_true_encoding_migrates(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
     # 旧键用 true 写法时同样应继承为 True，并迁移写回规范写法「是」
     cfg = tmp_path / "config.ini"
     cfg.write_text("[录制设置]\n是否强制启用https录制=true\n", encoding="utf-8")
-    monkeypatch.setattr(main, "config_file", str(cfg))
+    monkeypatch.setattr(state, "config_file", str(cfg))
     parser = _make_parser("[录制设置]\n是否强制启用https录制=true\n")
-    assert main._read_https_recording_config(parser) is True
+    assert recorder._read_https_recording_config(parser) is True
     migrated = config_io.configparser.RawConfigParser()
     migrated.read_string(cfg.read_text(encoding="utf-8-sig"))
     assert migrated.get("录制设置", "是否启用https录制") == "是"
@@ -169,7 +169,7 @@ def test_https_config_legacy_key_true_encoding_migrates(tmp_path: Path, monkeypa
 def test_main_has_no_legacy_options_dict_lookup() -> None:
     # 字典查表 + 静默兜底是本次事故的根因：main.py 不得再出现该写法。
     # 用 AST 而非原文子串判定——源码注释里会引用被删除的实现，子串匹配会把注释也算作命中。
-    tree = ast.parse(_MAIN_PY.read_text(encoding="utf-8"), filename="src/main.py")
+    tree = ast.parse(_MAIN_PY.read_text(encoding="utf-8"), filename="src/recording/engine.py")
 
     # ① 不得存在 options.<attr>() 形式的调用
     for node in ast.walk(tree):

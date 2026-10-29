@@ -37,11 +37,6 @@ classifiers = [
 ]
 
 dependencies = [
-    "requests>=2.34.2",
-    # urllib3：同步 HTTP 客户端使用 requests，其传递依赖的安全下限在此显式声明（补-05：CVE-2026-44431 受影响 1.23 – < 2.7.0）。
-    # 下限 2.8.0（2026-10-01 deps-audit「下限复核」）：CVE-2026-97687/97688/97689 均影响 2.7.0、
-    #   修复于 2.8.0，旧下限自身落在受影响段；现装即 2.8.0，抬下限不改解析集合。
-    "urllib3>=2.8.0",
     "loguru>=0.7.3",
     "pycryptodome>=3.23.0",
     "httpx[http2]>=0.28.1",
@@ -71,7 +66,7 @@ dependencies = [
     # 弹幕 WS 客户端：additional_headers/proxy 为 websockets 14.0+ API，下界须钉 14.0
     # （12/13.x 时 connect() 直接 TypeError 且被重连循环吞掉，弹幕永远连不上）
     "websockets>=14.0",
-    # 弹幕链（src/collector.py 工厂 + src/platforms/ 各平台采集器 + src/proto/ 协议解码）运行时依赖：
+    # 弹幕链（src/danmaku/collector.py 工厂 + src/danmaku/platforms/ 各平台采集器 + src/proto/ 协议解码）运行时依赖：
     # protobuf 解析抖音弹幕协议（下限 6.33.5：PYSEC-2026-1805 影响 6.31.1，修复于 5.29.6 / 6.33.5；
     # 现装 7.36.2），brotli 解压 B站弹幕。上限 <8（F-14）：douyin_pb2.py 由 protoc 25.x 生成
     # （gencode 4.25.3），跨大版本升级 runtime 有 gencode 兼容窗口外失效风险，升级前须同代 protoc 重新生成。

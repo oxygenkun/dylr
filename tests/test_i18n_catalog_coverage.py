@@ -20,12 +20,12 @@ ROOT = Path(__file__).resolve().parent.parent
 
 # 按名调用点里「按设计无法静态解析」的白名单（集合相等判定，多一处少一处都红）：
 # 新增不可解析点必须先进本白名单并写明「由哪条锁覆盖」，否则该 msgid 无人核对。
-# msg_push.py:103 是 render_push_content() 里的 `i18n.tr(template)`：template 是**形参**，
-# 而透传它的调用点 main.py 是跨文件调用（本文件的作用域索引按设计不跨文件）。候选由
+# render_push_content() 里的 `i18n.tr(template)`：template 是**形参**，
+# 而调用方 notifications/notify.py 位于另一文件，本文件不跨文件索引函数形参。候选由
 # tests/test_regression_2026_09_22_main.py::TestI18nStringsExtractable 逐字面量核对
 # （提取器已按 PUSH_RENDER_CALLER_IDS 把 render_push_content 的首参当 tr 首参扫）；另由
 # tests/test_msg_push.py::TestPushTemplateRendering 逐语言断言渲染结果。
-ALLOWED_UNRESOLVED_BY_NAME_CALLS = {"src/msg_push.py:103"}
+ALLOWED_UNRESOLVED_BY_NAME_CALLS = {"src/notifications/msg_push.py:render_push_content:i18n.tr(template)"}
 
 # 参数位实参链式解析的收敛轮数：`模块常量 → 调用方实参 → 形参 → 再传入下一层 → tr(形参)`
 # 为间接模板保留多层解析，
@@ -218,6 +218,7 @@ def collect_by_name_calls() -> tuple[dict[str, set[str]], list[str]]:
     for path, (tree, src) in parsed.items():
         local = locals_by_path[path]
         rel = path.relative_to(ROOT).as_posix()
+        parents = {child: parent for parent in ast.walk(tree) for child in ast.iter_child_nodes(parent)}
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call) or not node.args:
                 continue
@@ -233,7 +234,11 @@ def collect_by_name_calls() -> tuple[dict[str, set[str]], list[str]]:
             if cands:
                 found.setdefault(label, set()).update(cands)
             else:
-                unresolved.append(label)
+                ancestor = parents.get(node)
+                while ancestor is not None and not isinstance(ancestor, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                    ancestor = parents.get(ancestor)
+                scope = ancestor.name if ancestor is not None else "<module>"
+                unresolved.append(f"{rel}:{scope}:{ast.unparse(node)}")
     return found, unresolved
 
 
@@ -285,4 +290,4 @@ def test_unresolved_by_name_calls_match_allowlist() -> None:
         "新增按名 tr() 调用点无法静态解析出 msgid 候选：" + ", ".join(extra) + " —— 改成可解析形态，"
         "或确证「另有锁覆盖」后把它写进 ALLOWED_UNRESOLVED_BY_NAME_CALLS 并注明那条锁"
     )
-    assert not stale, "白名单里有已不存在的调用点（多为行号漂移）：" + ", ".join(stale) + " —— 收回本项，勿留空壳"
+    assert not stale, "白名单里有已不存在的调用点：" + ", ".join(stale) + " —— 收回本项，勿留空壳"

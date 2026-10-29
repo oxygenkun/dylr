@@ -16,25 +16,31 @@ from typing import Iterator
 from tests.test_i18n_catalog_coverage import _cached_catalog_key_sets
 
 ROOT = pathlib.Path(__file__).resolve().parent.parent
-SCAN_FILES = ("src/main.py", "src/spider.py", "src/web_models.py")
+SCAN_FILES = (
+    "src/recording/engine.py",
+    "src/recording/session.py",
+    "src/streams/dispatch.py",
+    "src/streams/spider.py",
+    "src/api/models.py",
+)
 _HAS_CN = re.compile(r"[一-鿿]")
 
 # 刻意不接 tr() 的站点，键为「相对路径|消息里第一个中文常量」；每条须写明「为什么不接、谁在管」。
 ALLOWED_UNTRANSLATED_RAISES = {
     # XhsUrlError 携带稳定 code（format/scheme/userinfo/port/host/short_path/room_id/non_live_path），
-    # 消费点（src/spider.py 的 except XhsUrlError 两处与 main._resolve_xhslink_com）一律只读 e.code，
+    # 消费点（src/streams/spider.py 的 except XhsUrlError 两处与 main._resolve_xhslink_com）一律只读 e.code，
     # message 从不显示——登记它等于往四目录塞死条目。
-    "src/spider.py|小红书链接为空",
-    "src/spider.py|小红书链接格式非法",
-    "src/spider.py|小红书链接协议不受支持（只接受 http/https）",
-    "src/spider.py|小红书链接不允许携带用户信息（userinfo）",
-    "src/spider.py|小红书链接不允许指定非默认端口",
-    "src/spider.py|小红书链接域名不受支持: ",
-    "src/spider.py|小红书短链路径必须是 /o/<短码>",
-    "src/spider.py|小红书直播链接的房间 ID 缺失或非数字",
-    "src/spider.py|小红书链接不是直播间或作者主页地址",
+    "src/streams/spider.py|小红书链接为空",
+    "src/streams/spider.py|小红书链接格式非法",
+    "src/streams/spider.py|小红书链接协议不受支持（只接受 http/https）",
+    "src/streams/spider.py|小红书链接不允许携带用户信息（userinfo）",
+    "src/streams/spider.py|小红书链接不允许指定非默认端口",
+    "src/streams/spider.py|小红书链接域名不受支持: ",
+    "src/streams/spider.py|小红书短链路径必须是 /o/<短码>",
+    "src/streams/spider.py|小红书直播链接的房间 ID 缺失或非数字",
+    "src/streams/spider.py|小红书链接不是直播间或作者主页地址",
     # 整条以英文撰写，只有括号里的「原」是汉字；把它「译」一遍等于把英文再写成英文。
-    "src/spider.py|TTingLive(原Flextv) login failed",
+    "src/streams/spider.py|TTingLive(原Flextv) login failed",
 }
 
 # 反向见证锚点：解析整体失效（返回空）时「0 缺失」就是假绿。

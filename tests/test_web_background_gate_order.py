@@ -9,9 +9,9 @@
 # 顺序属纯接线问题：静态类型检查看不见，功能用例（起不起来服务）也看不见，只有把
 # 「背景化」做成可观测的桩，才能在它被挪回检查之前时变红。
 #
-# 用例不打真服务、不联网：`import main` / `import uvicorn` / `from src.web_api import
+# 用例不打真服务、不联网：`import main` / `import uvicorn` / `from src.api.routes import
 # create_app` 三处都在拒绝路径**之后**才被真正使用，统一换成 sys.modules 替身；
-# 而 read_web_config（取配置）与 is_loopback_bind_host（判据本体）走 src/web_config.py
+# 而 read_web_config（取配置）与 is_loopback_bind_host（判据本体）走 src/api/config.py
 # 的真实实现——在测试里重写这两段就等于假绿。
 
 import ast
@@ -23,6 +23,7 @@ from typing import Any
 
 import pytest
 
+import src.recording
 from src import web
 
 _REJECT_MARKER = "拒绝启动"
@@ -39,7 +40,7 @@ class _BackgroundCalled(RuntimeError):
 
 class _RecordingLogger:
     # web.py 经 `logger.warning(...)` 落安全告警。替身的两个用途：① 不把测试文本真写进
-    # 仓库 logs/（loguru 的文件 sink 在 src.logger 导入期就已注册）；② 把告警文本暴露给
+    # 仓库 logs/（loguru 的文件 sink 在 src.support.logger 导入期就已注册）；② 把告警文本暴露给
     # 断言——M-18 要求拒绝文案除控制台外还有一条日志留痕（pythonw / 冻结 console=False
     # 的窗口化入口 sys.stderr 为 None，print 全部落空）。
     def __init__(self, sink: list[str]) -> None:
@@ -61,6 +62,9 @@ class _FakeEngineModule:
         self.recording_enabled = True
 
     def main(self, **kwargs: Any) -> None:
+        return None
+
+    def initialize_process(self) -> None:
         return None
 
     def cleanup_all_ffmpeg_processes(self) -> None:
@@ -108,12 +112,13 @@ def _drive_web_main(
     cfg = _write_web_config(tmp_path, host)
     engine = _FakeEngineModule(tmp_path, cfg)
 
-    monkeypatch.setitem(sys.modules, "src.main", engine)
+    monkeypatch.setitem(sys.modules, "src.recording.engine", engine)
     import src
 
-    monkeypatch.setattr(src, "main", engine, raising=False)
+    monkeypatch.setattr(src.recording, "engine", engine, raising=False)
+    monkeypatch.setattr(src.recording, "state", engine)
     monkeypatch.setitem(sys.modules, "uvicorn", types.SimpleNamespace(Server=object, Config=object))
-    monkeypatch.setitem(sys.modules, "src.web_api", types.SimpleNamespace(create_app=lambda **kwargs: None))
+    monkeypatch.setitem(sys.modules, "src.api.routes", types.SimpleNamespace(create_app=lambda **kwargs: None))
     monkeypatch.setattr(web, "logger", _RecordingLogger(res.warnings))
     monkeypatch.setattr(web, "_enter_background_mode", fake_enter_background_mode)
     monkeypatch.setattr(sys, "stdout", res.console)

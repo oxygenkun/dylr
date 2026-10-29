@@ -1,8 +1,8 @@
-# CR-03 畸形 Tars 帧边界回归锁（src/platforms/_tars.py，2026-09-21 补）。
+# CR-03 畸形 Tars 帧边界回归锁（src/danmaku/platforms/_tars.py，2026-09-21 补）。
 #
 # 被守的失败形态：解码器把协议里的长度字段当游标增量直接用，且只判「未越上界」不判负数。
-# 负长度 → 切片得空串且游标**回退**到刚消费的头字节之前，而 _goto / finish_struct /
-# _skip_to_struct_end 都是 `while True` 且隐含「每轮至少前进 1 字节」，于是同一字段被反复
+# 负长度 → 切片得空串且游标**回退**到刚消费的头字节之前，而 _goto / finish_struct
+# 都是 `while True` 且隐含「每轮至少前进 1 字节」，于是同一字段被反复
 # 读到、游标来回跳 → 弹幕线程 100% CPU 挂死（不是异常，任何 try/except 都拦不住）。
 # _peek_field 又只判 `_pos >= len(data)`，负下标走 Python 负索引还能合法读到尾部字节，
 # 所以既不抛 IndexError 也不自曝。
@@ -28,8 +28,8 @@ from typing import Any
 
 import pytest
 
-from src.platforms._tars import SIMPLE_LIST, TarsInputStream, TarsOutputStream
-from src.platforms.huya import HuyaDanmaku
+from src.danmaku.platforms._tars import SIMPLE_LIST, TarsInputStream, TarsOutputStream
+from src.danmaku.platforms.huya import HuyaDanmaku
 
 
 def _int_field(value: int) -> bytes:
@@ -215,7 +215,7 @@ def test_no_progress_guard_raises_instead_of_hanging(entry: str, monkeypatch: py
     ],
 )
 def test_huya_decoder_swallows_malformed_frames(frame: bytes, monkeypatch: pytest.MonkeyPatch) -> None:
-    # 真实 HuyaDanmaku.decode_message：任何畸形帧都不得抛到调用方（WsClient 收包循环）
+    # 真实 HuyaDanmaku.decode_message：任何畸形帧都不得抛到调用方（WebSocketClient 收包循环）
     emitted: list[object] = []
     monkeypatch.setattr(HuyaDanmaku, "_emit", lambda self, *a, **k: emitted.append(a))
     client = HuyaDanmaku(on_message=lambda m: None, on_close=lambda r: None, on_ready=lambda: None)

@@ -56,7 +56,7 @@ nohup python -m src.web >"$PANEL_LOG" 2>&1 &
 panel_pid=$!
 echo "$panel_pid" >"$PID_FILE"
 
-# 就绪等待：轮询 /health（恒公开、不依赖认证开关，见 src/web_api.py）。连接被拒
+# 就绪等待：轮询 /health（恒公开、不依赖认证开关，见 src/api/routes.py）。连接被拒
 # （进程仍在导入 fastapi/uvicorn）期间静默重试；进程中途退出则立即判失败并转储日志。
 ready=""
 for ((i = 0; i < READY_LIMIT; i++)); do

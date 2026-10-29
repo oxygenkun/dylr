@@ -1,17 +1,17 @@
 # -*- coding: utf-8 -*-
-# src/platforms/douyin.py 测试：抖音弹幕链路「凭据被平台拒绝 → 作废进程级缓存」的接线
+# src/danmaku/platforms/douyin.py 测试：抖音弹幕链路「凭据被平台拒绝 → 作废进程级缓存」的接线
 # （MID-33 的弹幕侧半边）。
 #
 # 契约（三条，缺一不可）：
 #   ① WS 握手被服务端以 HTTP 200 拒绝（抖音对失效 ttwid 的实测形态：不返回 4xx，而是 200 +
-#      不升级协议）时必须触发 src.ttwid.invalidate_ttwid()，使下一轮重新获取，而不是等
+#      不升级协议）时必须触发 src.streams.ttwid.invalidate_ttwid()，使下一轮重新获取，而不是等
 #      cookie_cache 的 30 分钟 TTL 自然过期；
 #   ② 网络类失败（超时 / 连接被拒 / DNS）与 4xx/5xx 不得触发作废——重复拉 ttwid 本身就是风控
-#      触发源（见 src/room.py 的并发去重锁注释），误判会把断网放大成打主页接口；
+#      触发源（见 src/streams/room.py 的并发去重锁注释），误判会把断网放大成打主页接口；
 #   ③ 只有「本轮 cookie 来自 get_ttwid() 动态获取」才判定；用户自填的录制 cookie 不走该缓存，
 #      作废它既无效又多余。
 #
-# 打桩边界：只替换网络层（WsClient）与凭据取用（get_ttwid），判定正则、标志位、回调链全部走
+# 打桩边界：只替换网络层（WebSocketClient）与凭据取用（get_ttwid），判定正则、标志位、回调链全部走
 # 真实代码——删掉 _note_ttwid_refusal 或其调用点即红（test_refusal_clears_real_ttwid_cache
 # 更是不打桩 invalidate，直接断言真实缓存被清）。
 
@@ -19,18 +19,18 @@ from typing import Any, Callable
 
 import pytest
 
-from src import ttwid as ttwid_module
-from src.platforms import douyin as douyin_module
+from src.danmaku.platforms import douyin as douyin_module
+from src.streams import ttwid as ttwid_module
 
 # websockets 17.1 对非 101 应答的异常文案（读库 exceptions.py 核对，legacy 同文案），
-# 而 WsClient 只把 str(e) 透传给回调 —— 这正是判定只能按状态码文本做的原因。
+# 而 WebSocketClient 只把 str(e) 透传给回调 —— 这正是判定只能按状态码文本做的原因。
 _HTTP200_REFUSAL = "server rejected WebSocket connection: HTTP 200"
 _TIMEOUT_TEXT = "timed out during opening handshake"
 _HTTP403_TEXT = "server rejected WebSocket connection: HTTP 403"
 
 
 class _StubWsClient:
-    # WsClient 替身：只替换「建立连接并回调」这一步，构造参数原样收下供断言；
+    # WebSocketClient 替身：只替换「建立连接并回调」这一步，构造参数原样收下供断言；
     # connect() 按 script 依次触发对应回调，模拟真实的重连/耗尽上报节奏。
 
     instances: list["_StubWsClient"] = []
@@ -49,9 +49,9 @@ class _StubWsClient:
             return ttwid_value
 
         monkeypatch.setattr(douyin_module, "get_ttwid", _fake_get_ttwid)
-        monkeypatch.setattr(douyin_module, "WsClient", _StubWsClient)
+        monkeypatch.setattr(douyin_module, "WebSocketClient", _StubWsClient)
 
-    # 本替身收到的回调：on_reconnect / on_close（键名与 WsClient 构造参数一致）。
+    # 本替身收到的回调：on_reconnect / on_close（键名与 WebSocketClient 构造参数一致）。
     def _callback(self, kind: str) -> "Callable[..., object] | None":
         value: Any = self.kwargs.get(kind)
         return value if callable(value) else None
@@ -160,7 +160,7 @@ class TestTtwidRefusalWiring:
 
 
 class TestHandshakeRefusalPredicate:
-    # 判定函数的边界：只认「状态码恰为 200」，且须容忍 WsClient 的前缀文案。
+    # 判定函数的边界：只认「状态码恰为 200」，且须容忍 WebSocketClient 的前缀文案。
 
     @pytest.mark.parametrize(
         "text,expected",

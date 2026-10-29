@@ -1,9 +1,7 @@
 # main.py 并发 / 配置 / 录制路径回归。
 # 注意：import main 放到 fixture 中延迟执行——收集阶段会因 src/__init__ 的 node 检查 spawn 子进程
 # 而偶发 WinError 6/50，用例执行阶段则稳定。
-
 import subprocess
-import sys
 import threading
 import types
 from collections.abc import Mapping
@@ -13,7 +11,14 @@ from unittest.mock import patch
 
 import pytest
 
-from src import web_config
+from src.api import config as web_config
+from src.config import io as config_io
+from src.network import targets
+from src.notifications import notify
+from src.recording import postprocess as video_postprocess
+from src.recording import session as recording
+from src.recording import state
+from src.streams import selection as stream_select
 
 # 与 tests/test_stream_select.py / tests/test_sync_probe_internal_guard.py 同一个公网解析结果
 # （示例 IP，只作 DNS seam 的返回值，不参与任何判定规则）。
@@ -22,18 +27,9 @@ _PUBLIC_DNS_IP = "93.184.216.34"
 
 @pytest.fixture(scope="module")
 def main_mod() -> Any:
-    # main.py 的 _app_root() 基于 sys.argv[0] 定位 config/，pytest 下 argv[0] 指向 pytest 自身，
-    # 需在导入前修正为项目 main.py，否则 config 路径解析到 site-packages 下。
-    from pathlib import Path
+    from src.recording import engine as main
 
-    old_argv = sys.argv[:]
-    sys.argv = [str(Path(__file__).resolve().parent.parent / "src/main.py")]
-    try:
-        from src import main
-
-        return main
-    finally:
-        sys.argv = old_argv
+    return main
 
 
 class TestSafeNumberParsers:
@@ -41,18 +37,18 @@ class TestSafeNumberParsers:
 
     def test_safe_int_valid(self, main_mod: Any) -> None:
         # 合法整数字符串原样解析，不被默认值覆盖
-        assert main_mod._safe_int("7", 3) == 7
+        assert config_io._safe_int("7", 3) == 7
 
     def test_safe_int_invalid_falls_back(self, main_mod: Any) -> None:
         # 非数字/None/空串等脏配置值一律回落默认 3，防止主循环用 None 做算术而崩
-        assert main_mod._safe_int("abc", 3) == 3
-        assert main_mod._safe_int(None, 3) == 3
-        assert main_mod._safe_int("", 3) == 3
+        assert config_io._safe_int("abc", 3) == 3
+        assert config_io._safe_int(None, 3) == 3
+        assert config_io._safe_int("", 3) == 3
 
     def test_safe_float_invalid_falls_back(self, main_mod: Any) -> None:
         # 同上：float 解析失败回落默认；解析成功路径与 int 对称
-        assert main_mod._safe_float("x", 1.5) == 1.5
-        assert main_mod._safe_float("2.5", 1.0) == 2.5
+        assert config_io._safe_float("x", 1.5) == 1.5
+        assert config_io._safe_float("2.5", 1.0) == 2.5
 
 
 class TestErrorWindow:
@@ -60,37 +56,36 @@ class TestErrorWindow:
 
     def setup_method(self) -> None:
         # 每个用例前清空模块级 error_window（防止 record_error/record_success 跨用例累积污染）。
-        from src import main
 
-        main.error_window.clear()
+        state.error_window.clear()
 
     def test_window_mixes_success_and_error(self, main_mod: Any) -> None:
         # 混合 0/1 采样：旧实现只记 1 导致错误率只能降不能升；[1,0,0] 验证升降皆可。
-        main_mod.record_error()
-        main_mod.record_success()
-        main_mod.record_success()
-        assert list(main_mod.error_window) == [1, 0, 0]
-        assert sum(main_mod.error_window) / len(main_mod.error_window) == pytest.approx(1 / 3)
+        notify.record_error()
+        notify.record_success()
+        notify.record_success()
+        assert list(state.error_window) == [1, 0, 0]
+        assert sum(state.error_window) / len(state.error_window) == pytest.approx(1 / 3)
 
     def test_window_bounded(self, main_mod: Any) -> None:
         # 写入 20 条（远超窗口容量）：旧样本被丢弃，长度恒等于 error_window_size
         # （否则无限增长会拖慢错误率计算并污染长期统计）
         for _ in range(20):
-            main_mod.record_error()
-        assert len(main_mod.error_window) == main_mod.error_window_size
+            notify.record_error()
+        assert len(state.error_window) == state.error_window_size
 
     def test_error_count_increments(self, main_mod: Any) -> None:
         # 全局错误计数器随 record_error 单调 +1，供错误率背压与熔断统计使用。
-        before = main_mod.error_count
-        main_mod.record_error()
-        assert main_mod.error_count == before + 1
+        before = state.error_count
+        notify.record_error()
+        assert state.error_count == before + 1
 
 
 class TestFileUpdateLock:
     def test_file_update_lock_is_reentrant(self, main_mod: Any) -> None:
         # RLock：主循环持锁读配置期间可重入 read_config_value 的写入路径；
         # 同一线程连续两次非阻塞 acquire 都成功（普通 Lock 第二次会死锁）。
-        lock = main_mod.file_update_lock
+        lock = state.file_update_lock
         assert lock.acquire(blocking=False)
         try:
             assert lock.acquire(blocking=False)
@@ -105,60 +100,60 @@ class TestSelectSourceUrl:
     @pytest.fixture(autouse=True)
     def _stub_dns_public(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # WP-J（方案 1-A）后，select_source_url 把地址交给 ffmpeg -i 之前要过一次「内网/保留目标」
-        # 落地复核（src/stream_select.py 的 _accept_source），非字面量主机名走 DNS seam
-        # web_config._resolve_host_ips。本类用例 mock 了 _validate_stream_url、地址又是合成域名
+        # 落地复核（src/streams/selection.py 的 _accept_source），非字面量主机名走 DNS seam
+        # targets.resolve_host_ips。本类用例 mock 了 _validate_stream_url、地址又是合成域名
         # cdn.example.com，真解析在无外网环境会 NXDOMAIN → 复核定罪「主机名无法解析」→ 选源返回
         # None（用例假失败，且把「本机有没有 DNS」当成被测行为）。打桩口径沿用
-        # src/async_http.py 的 _internal_stream_target_reason 注释里写明的唯一 seam；落地复核自身
+        # src/network/http.py 的 _internal_stream_target_reason 注释里写明的唯一 seam；落地复核自身
         # 的行为锁在 tests/test_sync_probe_internal_guard.py::TestSourceUrlHandoff。
-        monkeypatch.setattr(web_config, "_resolve_host_ips", lambda host: [_PUBLIC_DNS_IP])
+        monkeypatch.setattr(targets, "resolve_host_ips", lambda host: [_PUBLIC_DNS_IP])
 
     def test_h265_flv_uses_hls_when_enabled_and_valid(self, main_mod: Any) -> None:
         # 端到端：h265 FLV 校验通过 + HLS 采集开 → 选源命中 m3u8。
         # [历史注 2026-10-01] 原注释「规避 h265 copy 限制」已证伪——h265 在 TS/MKV/MP4 下
         # 已放行进常规序列（_h265_copy_format_supported），此处 m3u8 胜出靠的是默认
         # HLS-first 排序而非 h265 过滤。
-        with patch("src.stream_select._validate_stream_url", return_value=True):
+        with patch("src.streams.selection._validate_stream_url", return_value=True):
             info: Mapping[str, object] = {
                 "flv_url": "https://cdn.example.com/live.flv?codec=h265",
                 "m3u8_url": "https://cdn.example.com/live.m3u8",
             }
-            with patch.object(main_mod, "hls_collection_enabled", True):
-                result = main_mod.select_source_url(info)
+            with patch.object(state, "hls_collection_enabled", True):
+                result = stream_select.select_source_url(info)
         assert result == "https://cdn.example.com/live.m3u8"
 
     def test_h265_flv_skipped_when_hls_disabled(self, main_mod: Any) -> None:
         # 用户关闭 HLS 采集时不再强制切回 HLS；保存格式钉为 FLV（不支持 HEVC 直拷），
         # h265 FLV 被剔除且无 HLS/record_url 可回退 → 本轮 None
         # （TS/MKV/MP4 下 h265 已放行，行为见 tests/test_stream_select.py 放宽矩阵）
-        with patch("src.stream_select._validate_stream_url", return_value=True):
+        with patch("src.streams.selection._validate_stream_url", return_value=True):
             info: Mapping[str, object] = {
                 "flv_url": "https://cdn.example.com/live.flv?codec=h265",
                 "m3u8_url": "https://cdn.example.com/live.m3u8",
             }
             with (
-                patch.object(main_mod, "hls_collection_enabled", False),
-                patch.object(main_mod, "video_save_type", "FLV"),
+                patch.object(state, "hls_collection_enabled", False),
+                patch.object(state, "video_save_type", "FLV"),
             ):
-                result = main_mod.select_source_url(info)
+                result = stream_select.select_source_url(info)
         assert result is None
 
     def test_h265_flv_hls_unreachable_returns_none(self, main_mod: Any) -> None:
-        with patch("src.stream_select._validate_stream_url", return_value=False):
+        with patch("src.streams.selection._validate_stream_url", return_value=False):
             info: Mapping[str, object] = {
                 "flv_url": "https://cdn.example.com/live.flv?codec=h265",
                 "m3u8_url": "https://cdn.example.com/live.m3u8",
             }
-            with patch.object(main_mod, "hls_collection_enabled", True):
-                result = main_mod.select_source_url(info)
+            with patch.object(state, "hls_collection_enabled", True):
+                result = stream_select.select_source_url(info)
         assert result is None
 
     def test_plain_flv_returned(self, main_mod: Any) -> None:
         # 对照：h264 FLV 不受 h265 限制，HLS 采集开启时仍尊重配置返回 FLV 原文。
-        with patch("src.stream_select._validate_stream_url", return_value=True):
+        with patch("src.streams.selection._validate_stream_url", return_value=True):
             info: Mapping[str, object] = {"flv_url": "https://cdn.example.com/live.flv?codec=h264"}
-            with patch.object(main_mod, "hls_collection_enabled", True):
-                result = main_mod.select_source_url(info)
+            with patch.object(state, "hls_collection_enabled", True):
+                result = stream_select.select_source_url(info)
         assert result == "https://cdn.example.com/live.flv?codec=h264"
 
 
@@ -232,13 +227,13 @@ def _install_subprocess_shim(module_globals: dict[str, Any], monkeypatch: pytest
 
 @pytest.fixture
 def ffmpeg_checked_globals(main_mod: Any) -> dict[str, Any]:
-    # 替身必须装进 src.video_postprocess 的模块字典，**不是** main 的：`_run_ffmpeg_checked` 定义在
-    # src/video_postprocess.py，main.py 只是 re-export，函数的 __globals__ 指向前者。照搬成
+    # 替身必须装进 src.recording.postprocess 的模块字典，**不是** main 的：`_run_ffmpeg_checked` 定义在
+    # src/recording/postprocess.py，main.py 只是 re-export，函数的 __globals__ 指向前者。照搬成
     # monkeypatch.setattr(main, "subprocess", shim) 就是**静默 no-op**（假绿）：三条用例会去起真
     # ffmpeg 进程——有 ffmpeg 时靠退出码蒙断言、没有时 FileNotFoundError。故按 __globals__ 取容器
     # 并核对归属，归属一旦变化当场变红而不是悄悄失效。
-    module_globals: dict[str, Any] = main_mod._run_ffmpeg_checked.__globals__
-    assert module_globals.get("__name__") == "src.video_postprocess"
+    module_globals: dict[str, Any] = video_postprocess._run_ffmpeg_checked.__globals__
+    assert module_globals.get("__name__") == "src.recording.postprocess"
     return module_globals
 
 
@@ -252,7 +247,7 @@ class TestRunFfmpegChecked:
         proc = FakeProcess(returncode=0, out=b"ok output")
         popen = _popen_class_returning(proc)
         _install_subprocess_shim(ffmpeg_checked_globals, monkeypatch, popen)
-        out = main_mod._run_ffmpeg_checked(["ffmpeg", "-version"])
+        out = video_postprocess._run_ffmpeg_checked(["ffmpeg", "-version"])
         assert "ok output" in out
         assert len(popen.popen_calls) == 1
 
@@ -262,7 +257,7 @@ class TestRunFfmpegChecked:
         popen = _popen_class_returning(FakeProcess(returncode=1, out=b"bad"))
         _install_subprocess_shim(ffmpeg_checked_globals, monkeypatch, popen)
         with pytest.raises(subprocess.CalledProcessError):
-            main_mod._run_ffmpeg_checked(["ffmpeg", "-this-flag-does-not-exist"])
+            video_postprocess._run_ffmpeg_checked(["ffmpeg", "-this-flag-does-not-exist"])
         # 必须断言替身真被走到：本机真实 ffmpeg 对不存在的参数同样回非零码，于是「shim 装错命名
         # 空间 → 起了真进程」也会让上面那条 raise 通过（变异验证：故意把 shim 装到 main 命名空间时，
         # 另两条变红而本条仍绿；补上这条计数断言后三条全红）。
@@ -274,7 +269,7 @@ class TestRunFfmpegChecked:
         fake = FakeProcess(returncode=0, out=b"", timeout_on_communicate=True)
         _install_subprocess_shim(ffmpeg_checked_globals, monkeypatch, _popen_class_returning(fake))
         with pytest.raises(subprocess.TimeoutExpired):
-            main_mod._run_ffmpeg_checked(["ffmpeg", "-i", "x"], timeout=1)
+            video_postprocess._run_ffmpeg_checked(["ffmpeg", "-i", "x"], timeout=1)
         assert fake.stopped
         assert not fake.killed
 
@@ -349,12 +344,12 @@ class TestHuyaReferer:
     # ffmpeg 同样拿不到流。
 
     def test_get_record_headers_returns_no_huya_referer(self, main_mod: Any) -> None:
-        headers = main_mod.get_record_headers("虎牙直播", "https://www.huya.com/660002")
+        headers = stream_select.get_record_headers("虎牙直播", "https://www.huya.com/660002")
         assert headers is None or "referer" not in headers
 
     def test_validate_with_huya_platform_sends_no_referer(self, main_mod: Any) -> None:
-        with patch("src.stream_select.httpx.Client", _RecordingClient):
-            ok = main_mod._validate_stream_url(
+        with patch("src.streams.selection.httpx.Client", _RecordingClient):
+            ok = stream_select._validate_stream_url(
                 "http://hs-game.flv.huya.com/src/x.flv?wsSecret=1&wsTime=2",
                 platform="虎牙直播",
             )
@@ -363,8 +358,8 @@ class TestHuyaReferer:
         assert "referer" not in headers
 
     def test_validate_without_platform_sends_no_referer(self, main_mod: Any) -> None:
-        with patch("src.stream_select.httpx.Client", _RecordingClient):
-            ok = main_mod._validate_stream_url("http://example.com/x.flv")
+        with patch("src.streams.selection.httpx.Client", _RecordingClient):
+            ok = stream_select._validate_stream_url("http://example.com/x.flv")
         assert ok is True
         headers = _RecordingClient.last_kwargs.get("headers")
         assert headers is None or "referer" not in headers
@@ -378,15 +373,18 @@ class TestFlvGetConfirm:
         # 回归：HEAD=200 但 GET 复核 403（校验假绿）必须推翻结论返回 False。
         client = _RecordingClient()
         client.stream_status = 403
-        with patch("src.stream_select.httpx.Client", return_value=client), patch("src.stream_select.time.sleep"):
-            ok = main_mod._validate_stream_url("http://al.flv.huya.com/src/x.flv")
+        with (
+            patch("src.streams.selection.httpx.Client", return_value=client),
+            patch("src.streams.selection.time.sleep"),
+        ):
+            ok = stream_select._validate_stream_url("http://al.flv.huya.com/src/x.flv")
         assert ok is False
 
     def test_head_ok_get_206_returns_true(self, main_mod: Any) -> None:
         client = _RecordingClient()
         client.stream_status = 206
-        with patch("src.stream_select.httpx.Client", return_value=client):
-            ok = main_mod._validate_stream_url("http://al.flv.huya.com/src/x.flv")
+        with patch("src.streams.selection.httpx.Client", return_value=client):
+            ok = stream_select._validate_stream_url("http://al.flv.huya.com/src/x.flv")
         assert ok is True
 
     def test_get_confirm_error_keeps_head_verdict(self, main_mod: Any) -> None:
@@ -397,16 +395,16 @@ class TestFlvGetConfirm:
             raise OSError("timeout")
 
         client.stream = _raise_stream  # type: ignore[method-assign,assignment]
-        with patch("src.stream_select.httpx.Client", return_value=client):
-            ok = main_mod._validate_stream_url("http://al.flv.huya.com/src/x.flv")
+        with patch("src.streams.selection.httpx.Client", return_value=client):
+            ok = stream_select._validate_stream_url("http://al.flv.huya.com/src/x.flv")
         assert ok is True
 
     def test_get_confirm_sends_no_range_header(self, main_mod: Any) -> None:
         # 回归：斗鱼 hwa CDN 对 Range-GET 偶发 403 而无 Range GET 正常（实测）。
         # ffmpeg 拉流是「无 Range 的全量 GET」，复核请求禁止携带 Range 头。
         client = _RecordingClient()
-        with patch("src.stream_select.httpx.Client", return_value=client):
-            ok = main_mod._validate_stream_url("http://al.flv.huya.com/src/x.flv")
+        with patch("src.streams.selection.httpx.Client", return_value=client):
+            ok = stream_select._validate_stream_url("http://al.flv.huya.com/src/x.flv")
         assert ok is True
         headers = client.last_stream_kwargs.get("headers")
         assert not headers or "Range" not in headers
@@ -421,16 +419,22 @@ class TestGetConfirmRetry:
         # 偶发拒绝：首探 403、重试 200 → 判可达，且必须真的发了第二次复核
         # （stream_calls==2 证明重试确实发生，而非首探即定罪）。
         client = _SequenceStreamClient([403, 200])
-        with patch("src.stream_select.httpx.Client", return_value=client), patch("src.stream_select.time.sleep"):
-            ok = main_mod._validate_stream_url("https://hw1a.douyucdn2.cn/live/100rPCLP.flv?wsAuth=1")
+        with (
+            patch("src.streams.selection.httpx.Client", return_value=client),
+            patch("src.streams.selection.time.sleep"),
+        ):
+            ok = stream_select._validate_stream_url("https://hw1a.douyucdn2.cn/live/100rPCLP.flv?wsAuth=1")
         assert ok is True
         assert client.stream_calls == 2
 
     def test_stable_403_retries_once_then_rejects(self, main_mod: Any) -> None:
         # 稳定拒绝：两次 403 → 判不可达（非末位候选时否决，继续回退备选源）
         client = _SequenceStreamClient([403, 403])
-        with patch("src.stream_select.httpx.Client", return_value=client), patch("src.stream_select.time.sleep"):
-            ok = main_mod._validate_stream_url("https://al.flv.huya.com/src/x.flv")
+        with (
+            patch("src.streams.selection.httpx.Client", return_value=client),
+            patch("src.streams.selection.time.sleep"),
+        ):
+            ok = stream_select._validate_stream_url("https://al.flv.huya.com/src/x.flv")
         assert ok is False
         assert client.stream_calls == 2
 
@@ -439,11 +443,11 @@ class TestGetConfirmRetry:
         # 告警文案须含「仍交由 ffmpeg 尝试」，便于运维识别末位兜底放行。
         client = _SequenceStreamClient([403, 403])
         with (
-            patch("src.stream_select.httpx.Client", return_value=client),
-            patch("src.stream_select.time.sleep"),
-            patch("src.stream_select.logger.warning") as warn,
+            patch("src.streams.selection.httpx.Client", return_value=client),
+            patch("src.streams.selection.time.sleep"),
+            patch("src.streams.selection.logger.warning") as warn,
         ):
-            ok = main_mod._validate_stream_url("https://hw1a.douyucdn2.cn/live/100rPCLP.flv", last_resort=True)
+            ok = stream_select._validate_stream_url("https://hw1a.douyucdn2.cn/live/100rPCLP.flv", last_resort=True)
         assert ok is True
         assert any("仍交由 ffmpeg 尝试" in str(c.args[0]) for c in warn.call_args_list)
 
@@ -455,8 +459,11 @@ class TestSelectSourceUrlLastResort:
         # 端到端：仅 FLV 一档候选且复核稳定 403 → 仍选中该 URL 交给 ffmpeg
         client = _SequenceStreamClient([403, 403])
         url = "https://hw1a.douyucdn2.cn/live/100rPCLP.flv?wsAuth=1"
-        with patch("src.stream_select.httpx.Client", return_value=client), patch("src.stream_select.time.sleep"):
-            result = main_mod.select_source_url({"flv_url": url})
+        with (
+            patch("src.streams.selection.httpx.Client", return_value=client),
+            patch("src.streams.selection.time.sleep"),
+        ):
+            result = stream_select.select_source_url({"flv_url": url})
         assert result == url
 
     def test_flv_not_last_resort_when_record_url_exists(self, main_mod: Any) -> None:
@@ -467,8 +474,8 @@ class TestSelectSourceUrlLastResort:
             calls.append((url, kw.get("last_resort", False)))
             return False
 
-        with patch("src.stream_select._validate_stream_url", side_effect=_fake_validate):
-            result = main_mod.select_source_url({"flv_url": "https://x/a.flv", "record_url": "https://x/b.flv"})
+        with patch("src.streams.selection._validate_stream_url", side_effect=_fake_validate):
+            result = stream_select.select_source_url({"flv_url": "https://x/a.flv", "record_url": "https://x/b.flv"})
         assert result is None
         assert calls == [("https://x/a.flv", False), ("https://x/b.flv", True)]
 
@@ -479,8 +486,8 @@ class TestSelectSourceUrlLastResort:
             calls.append((url, kw.get("last_resort", False)))
             return False
 
-        with patch("src.stream_select._validate_stream_url", side_effect=_fake_validate):
-            main_mod.select_source_url({"flv_url": "https://x/a.flv"})
+        with patch("src.streams.selection._validate_stream_url", side_effect=_fake_validate):
+            stream_select.select_source_url({"flv_url": "https://x/a.flv"})
         assert calls == [("https://x/a.flv", True)]
 
 
@@ -491,24 +498,25 @@ class TestSelectSourceUrlEmpty:
     def test_all_urls_empty_returns_none_with_warning(self, main_mod: Any) -> None:
         # 告警文案须能让运维定位（三类 URL 全空 / HLS 采集未启用）
         info: Mapping[str, object] = {"anchor_name": "王者荣耀官方赛事", "is_live": True}
-        with patch.object(main_mod, "hls_collection_enabled", True), patch("src.stream_select.logger.warning") as warn:
-            result = main_mod.select_source_url(info)
+        with patch.object(state, "hls_collection_enabled", True), patch("src.streams.selection.logger.warning") as warn:
+            result = stream_select.select_source_url(info)
         assert result is None
         assert any("均为空" in str(c.args[0]) for c in warn.call_args_list)
 
     def test_hls_present_but_collection_disabled_no_fallback_warns(self, main_mod: Any) -> None:
         # m3u8 存在但 HLS 采集关闭、且无 flv/record_url 回退 → 此前静默 None
         info: Mapping[str, object] = {"anchor_name": "坤记喜事多", "is_live": True, "m3u8_url": "https://x/abc.m3u8"}
-        with patch.object(main_mod, "hls_collection_enabled", False), patch("src.stream_select.logger.warning") as warn:
-            result = main_mod.select_source_url(info)
+        with (
+            patch.object(state, "hls_collection_enabled", False),
+            patch("src.streams.selection.logger.warning") as warn,
+        ):
+            result = stream_select.select_source_url(info)
         assert result is None
         assert any("HLS 采集未启用" in str(c.args[0]) for c in warn.call_args_list)
 
 
 def test_postprocess_shutdown_finishes_queued_work(main_mod: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     from concurrent.futures import ThreadPoolExecutor
-
-    from src import video_postprocess
 
     workers: list[threading.Thread] = []
 
@@ -519,14 +527,13 @@ def test_postprocess_shutdown_finishes_queued_work(main_mod: Any, monkeypatch: p
 
     shim = types.SimpleNamespace(**vars(threading))
     shim.Thread = make_thread
-    monkeypatch.setattr(main_mod, "threading", shim)
-    monkeypatch.delattr(video_postprocess, "shutdown_postprocess_executor", raising=False)
+    monkeypatch.setattr(recording, "threading", shim)
     completed: list[str] = []
     with ThreadPoolExecutor(max_workers=1) as pool:
-        monkeypatch.setattr(main_mod, "_postprocess_executor", pool)
+        monkeypatch.setattr(recording, "_postprocess_executor", pool)
         future = pool.submit(completed.append, "recording finalized")
         try:
-            main_mod._shutdown_postprocess_executor()
+            recording._shutdown_postprocess_executor()
             assert future.done()
             assert future.result() is None
             assert completed == ["recording finalized"]
@@ -536,6 +543,34 @@ def test_postprocess_shutdown_finishes_queued_work(main_mod: Any, monkeypatch: p
             for worker in workers:
                 worker.join(timeout=2)
                 assert not worker.is_alive()
+
+
+@pytest.mark.parametrize("superseded", [False, True])
+@pytest.mark.parametrize("fails", [False, True])
+def test_time_subtitles_unregister_only_the_current_writer(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, superseded: bool, fails: bool
+) -> None:
+    thread_name = "subs_room"
+    replacement = threading.Thread()
+    registered = replacement if superseded else threading.current_thread()
+    monkeypatch.setattr(state, "create_var", {thread_name: registered})
+    calls: list[tuple[str, str]] = []
+    output = str(tmp_path / "room")
+
+    def generate(record_name: str, file_path: str) -> None:
+        calls.append((record_name, file_path))
+        if fails:
+            raise OSError("disk full")
+
+    monkeypatch.setattr(recording, "generate_subtitles", generate)
+    if fails:
+        with pytest.raises(OSError, match="disk full"):
+            recording._generate_time_subtitles("room", output, thread_name)
+    else:
+        recording._generate_time_subtitles("room", output, thread_name)
+
+    assert calls == [("room", output)]
+    assert state.create_var == ({thread_name: replacement} if superseded else {})
 
 
 def test_postprocess_drain_returns_when_budget_expires(main_mod: Any, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -555,10 +590,10 @@ def test_postprocess_drain_returns_when_budget_expires(main_mod: Any, monkeypatc
 
     shim = types.SimpleNamespace(**vars(threading))
     shim.Thread = make_thread
-    monkeypatch.setattr(main_mod, "threading", shim)
-    monkeypatch.setattr(main_mod, "logger", types.SimpleNamespace(warning=messages.append))
+    monkeypatch.setattr(recording, "threading", shim)
+    monkeypatch.setattr(recording, "logger", types.SimpleNamespace(warning=messages.append))
     try:
-        assert main_mod._run_bounded_drain(blocked_drain, budget=0) is False
+        assert recording._run_bounded_drain(blocked_drain, budget=0) is False
         assert entered.wait(timeout=2)
         assert messages
         assert workers[0].daemon
@@ -580,14 +615,14 @@ def test_version_reads_source_config_in_source_and_frozen_layouts(
     layout: str,
     configured_version: str | None,
 ) -> None:
-    from src import web_api
+    from src.api import routes as web_api
 
-    module = main_mod if entry == "cli" else web_api
+    module = state if entry == "cli" else web_api
     app_root = tmp_path / layout
     (app_root / "src").mkdir(parents=True)
     if configured_version is not None:
         (app_root / "pyproject.toml").write_text(f'[project]\nversion = "{configured_version}"\n', encoding="utf-8")
-    monkeypatch.setattr(module, "__file__", str(app_root / "src" / "entry.py"))
+    monkeypatch.setattr(module, "__file__", str(app_root / "src" / "package" / "entry.py"))
     expected = configured_version or "0.0.0"
     if entry == "cli":
         assert module._read_version_from_pyproject() == f"v{expected}"

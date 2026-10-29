@@ -1,10 +1,9 @@
-# src/config_io.py 回归锁：delete_line 的行尾归一与返回值（SEV-05），
+# src/config/io.py 回归锁：delete_line 的行尾归一与返回值（SEV-05），
 # 以及「持锁写入 + 原子写 + URL 配置快照同步」等既有契约不被改坏。
 #
 # 存在理由（SEV-05）：delete_line 按 MI-11 用 newline="" 读原文（行尾带 \r\n），调用方传入的
 # 却是 universal newlines 归一后的 \n 结尾行，整行精确比较在 CRLF 文件上恒不成立 → 面板点
 # 「删除」静默 no-op 却回报成功。CI 跑 Linux（天然 LF）结构上发现不了，故须显式构造 CRLF 用例。
-
 from pathlib import Path
 from types import TracebackType
 from typing import Self
@@ -12,9 +11,9 @@ from typing import Self
 import pytest
 from pytest import MonkeyPatch
 
-import src.main as main
-from src import config_io
-from src.config_read import tolerant_config_parser  # noqa: E402
+from src.config import io as config_io
+from src.config.reader import tolerant_config_parser
+from src.recording import state
 
 
 class _RecordingLock:
@@ -58,7 +57,7 @@ class TestDeleteLineLineEndings:
         kept_url = "https://live.douyin.com/111111111111\n"
         gone_url = "https://live.douyin.com/222222222222\n"
         _write_lines(target, [kept_url.replace("\n", "\r\n"), gone_url.replace("\n", "\r\n")])
-        monkeypatch.setattr(main, "url_config_file", str(tmp_path / "other.ini"))
+        monkeypatch.setattr(state, "url_config_file", str(tmp_path / "other.ini"))
 
         # 调用方传的是 universal newlines 读出的 \n 结尾行（web_api 的 raw_line / main 的 origin_line）
         assert config_io.delete_line(str(target), gone_url) is True
@@ -71,7 +70,7 @@ class TestDeleteLineLineEndings:
     def test_lf_file_still_removes_line(self, tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
         target = tmp_path / "URL_config.ini"
         _write_lines(target, ["https://a.example/1\n", "https://a.example/2\n"])
-        monkeypatch.setattr(main, "url_config_file", str(tmp_path / "other.ini"))
+        monkeypatch.setattr(state, "url_config_file", str(tmp_path / "other.ini"))
 
         assert config_io.delete_line(str(target), "https://a.example/1\n") is True
         assert _read_raw(target) == ["https://a.example/2\n"]
@@ -80,7 +79,7 @@ class TestDeleteLineLineEndings:
         target = tmp_path / "URL_config.ini"
         original = ["https://a.example/1\r\n", "#https://a.example/2\r\n"]
         _write_lines(target, original)
-        monkeypatch.setattr(main, "url_config_file", str(tmp_path / "other.ini"))
+        monkeypatch.setattr(state, "url_config_file", str(tmp_path / "other.ini"))
 
         assert config_io.delete_line(str(target), "https://a.example/999\n") is False
         assert _read_raw(target) == original
@@ -90,7 +89,7 @@ class TestDeleteLineLineEndings:
         target = tmp_path / "URL_config.ini"
         original = ["#https://a.example/1\r\n"]
         _write_lines(target, original)
-        monkeypatch.setattr(main, "url_config_file", str(tmp_path / "other.ini"))
+        monkeypatch.setattr(state, "url_config_file", str(tmp_path / "other.ini"))
 
         assert config_io.delete_line(str(target), "https://a.example/1\n") is False
         assert _read_raw(target) == original
@@ -99,7 +98,7 @@ class TestDeleteLineLineEndings:
         target = tmp_path / "URL_config.ini"
         dup = "https://a.example/1\r\n"
         _write_lines(target, [dup, "https://a.example/2\r\n", dup])
-        monkeypatch.setattr(main, "url_config_file", str(tmp_path / "other.ini"))
+        monkeypatch.setattr(state, "url_config_file", str(tmp_path / "other.ini"))
 
         assert config_io.delete_line(str(target), "https://a.example/1\n", delete_all=True) is True
         assert _read_raw(target) == ["https://a.example/2\r\n"]
@@ -108,14 +107,14 @@ class TestDeleteLineLineEndings:
         target = tmp_path / "URL_config.ini"
         dup = "https://a.example/1\r\n"
         _write_lines(target, [dup, dup])
-        monkeypatch.setattr(main, "url_config_file", str(tmp_path / "other.ini"))
+        monkeypatch.setattr(state, "url_config_file", str(tmp_path / "other.ini"))
 
         assert config_io.delete_line(str(target), "https://a.example/1\n") is True
         assert _read_raw(target) == [dup]
 
     def test_read_failure_returns_false(self, tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
         missing = tmp_path / "not-here.ini"
-        monkeypatch.setattr(main, "url_config_file", str(tmp_path / "other.ini"))
+        monkeypatch.setattr(state, "url_config_file", str(tmp_path / "other.ini"))
         assert config_io.delete_line(str(missing), "https://a.example/1\n") is False
 
 
@@ -126,8 +125,8 @@ class TestDeleteLineWriteContract:
         target = tmp_path / "URL_config.ini"
         _write_lines(target, ["https://a.example/1\r\n", "https://a.example/2\r\n"])
         recorder = _RecordingLock()
-        monkeypatch.setattr(main, "file_update_lock", recorder)
-        monkeypatch.setattr(main, "url_config_file", str(tmp_path / "other.ini"))
+        monkeypatch.setattr(state, "file_update_lock", recorder)
+        monkeypatch.setattr(state, "url_config_file", str(tmp_path / "other.ini"))
 
         assert config_io.delete_line(str(target), "https://a.example/1\n") is True
         assert recorder.entered == 1
@@ -137,7 +136,7 @@ class TestDeleteLineWriteContract:
         target = tmp_path / "URL_config.ini"
         original = ["https://a.example/1\r\n"]
         _write_lines(target, original)
-        monkeypatch.setattr(main, "url_config_file", str(tmp_path / "other.ini"))
+        monkeypatch.setattr(state, "url_config_file", str(tmp_path / "other.ini"))
         monkeypatch.setattr(config_io, "_atomic_write_text", lambda *a, **kw: False)
 
         assert config_io.delete_line(str(target), "https://a.example/1\n") is False
@@ -146,12 +145,12 @@ class TestDeleteLineWriteContract:
     def test_snapshot_updated_for_url_config_file(self, tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
         target = tmp_path / "URL_config.ini"
         _write_lines(target, ["https://a.example/1\r\n", "https://a.example/2\r\n"])
-        monkeypatch.setattr(main, "url_config_file", str(target))
-        monkeypatch.setattr(main, "ini_URL_content", "OLD-SNAPSHOT")
+        monkeypatch.setattr(state, "url_config_file", str(target))
+        monkeypatch.setattr(state, "ini_URL_content", "OLD-SNAPSHOT")
 
         assert config_io.delete_line(str(target), "https://a.example/1\n") is True
         # 快照更新为「已落盘内容」，供 update_file 的异常恢复基线使用
-        assert main.ini_URL_content == "https://a.example/2\r\n"
+        assert state.ini_URL_content == "https://a.example/2\r\n"
 
 
 class TestMissingKeyWritebackIdempotency:
@@ -167,7 +166,7 @@ class TestMissingKeyWritebackIdempotency:
         import configparser
 
         strict = configparser.ConfigParser(interpolation=None)
-        strict.read(str(target), encoding=main.text_encoding)
+        strict.read(str(target), encoding=state.text_encoding)
         assert strict.get("录制设置", self._KEY) in ("是", "否")
 
     def test_two_rounds_of_bool_writeback_leave_exactly_one_line(
@@ -175,9 +174,9 @@ class TestMissingKeyWritebackIdempotency:
     ) -> None:
         target = tmp_path / "config.ini"
         _write_lines(target, ["[录制设置]\n", "循环时间(秒) = 60\n"])
-        monkeypatch.setattr(main, "config_file", str(target))
+        monkeypatch.setattr(state, "config_file", str(target))
         parser = tolerant_config_parser()
-        parser.read(str(target), encoding=main.text_encoding)
+        parser.read(str(target), encoding=state.text_encoding)
 
         for _ in range(2):
             assert config_io.read_config_bool(parser, "录制设置", self._KEY, True) is True
@@ -187,7 +186,7 @@ class TestMissingKeyWritebackIdempotency:
         # 补写后的文件必须能被下一次读取原样解析——那才是当时真正的崩口
         self._assert_strict_readable(target)
         again = tolerant_config_parser()
-        again.read(str(target), encoding=main.text_encoding)
+        again.read(str(target), encoding=state.text_encoding)
         assert again.get("录制设置", self._KEY) == "是"
 
     def test_existing_key_is_never_appended_again(self, tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
@@ -195,9 +194,9 @@ class TestMissingKeyWritebackIdempotency:
         # 用户显式写的「否」也不能被默认值覆盖。
         target = tmp_path / "config.ini"
         _write_lines(target, ["[录制设置]\n", f"{self._KEY} = 否\n"])
-        monkeypatch.setattr(main, "config_file", str(target))
+        monkeypatch.setattr(state, "config_file", str(target))
         parser = tolerant_config_parser()
-        parser.read(str(target), encoding=main.text_encoding)
+        parser.read(str(target), encoding=state.text_encoding)
 
         for _ in range(2):
             assert config_io.read_config_bool(parser, "录制设置", self._KEY, True) is False

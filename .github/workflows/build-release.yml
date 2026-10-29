@@ -13,7 +13,7 @@
 #     包装（线性退避重试），与 ci.yml 共用同一实现——重试策略调整只改 action.yml 一处。
 #
 # 版本号事实源：pyproject.toml [project].version（唯一）。
-#   main.py / src/web_api.py 运行时经 pyproject.toml 读取；
+#   main.py / src/api/routes.py 运行时经 pyproject.toml 读取；
 #   Dockerfile 经 APP_VERSION 构建参数注入；
 #   本工作流的 prepare job 负责「提取 + 校验 tag 与之一致」，不一致直接失败，
 #   从根上避免「打了 v4.0.9 的 tag 却发布出 4.0.8.2 的包」。

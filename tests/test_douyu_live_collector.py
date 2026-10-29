@@ -12,9 +12,9 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src import spider
-from src.collector import DanmakuCollector
-from src.platforms.douyu import DouyuDanmaku
+from src.danmaku.collector import DanmakuCollector
+from src.danmaku.platforms.douyu import DouyuDanmaku
+from src.streams import spider
 
 # 斗鱼弹幕走自有 WebSocket 协议;本脚本用 get_douyu_info_data(免 JS 令牌的简化路径)取
 # room_id,适合自动化,但同样需主播真实在播才能验证。

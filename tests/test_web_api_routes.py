@@ -4,11 +4,8 @@
 # 断言 Starlette 应用注册的 24 条路由（method/path 精确集合）+ /web 静态挂载点不变，
 # 任何增删或改 method 的回归都会让集合断言转红（drift-proof，不依赖运行期快照）。
 #
-# 仅构建 app、遍历路由表，不发起任何 HTTP 请求；故不需要 fake main 的运行时替身
-# （create_app 只在请求处理时才 import main，见 src/web_api.py::_read_engine_status），
-# 但沿用 test_web_api.py 的临时 config 写入范式，保证 read_web_config 能解析出合法配置。
+# 构建 app 并遍历路由表；使用临时配置和隔离的录制状态。
 
-import sys
 import threading
 import types
 from collections.abc import Generator
@@ -19,36 +16,23 @@ from starlette.applications import Starlette
 from starlette.routing import Mount, Route
 
 
-def _install_fake_main() -> types.ModuleType:
-    # 注入轻量 fake main 模块：避免导入真实 main.py 触发 FFmpeg/Node 检查等重副作用。
-    # web_api 路由在请求处理中才 import main，仅使用其 file_update_lock 等符号。
-    fake = types.ModuleType("main")
-    setattr(fake, "file_update_lock", threading.RLock())
-    setattr(fake, "running_list", [])
-    setattr(fake, "record_state_lock", threading.Lock())
-    setattr(fake, "max_request_lock", threading.Lock())
-    setattr(fake, "recording", set())
-    setattr(fake, "recording_enabled", False)
-    setattr(fake, "text_encoding", "utf-8-sig")
-    setattr(fake, "url_config_file", "")
-    setattr(fake, "ini_URL_content", "")
-    sys.modules["src.main"] = fake
-    return fake
-
-
-@pytest.fixture(scope="function")
+@pytest.fixture
 def fake_main(monkeypatch: pytest.MonkeyPatch) -> Generator[types.ModuleType, None, None]:
-    # function 级 fixture：每个用例用独立假 main，避免模块级状态串扰。
-    old = sys.modules.get("src.main")
-    fake = _install_fake_main()
-    import src
+    from src.recording import state
 
-    monkeypatch.setattr(src, "main", fake, raising=False)
-    yield fake
-    if old is not None:
-        sys.modules["src.main"] = old
-    else:
-        sys.modules.pop("src.main", None)
+    for key, value in {
+        "file_update_lock": threading.RLock(),
+        "record_state_lock": threading.Lock(),
+        "max_request_lock": threading.Lock(),
+        "running_list": [],
+        "recording": set(),
+        "recording_enabled": False,
+        "text_encoding": "utf-8-sig",
+        "url_config_file": "",
+        "ini_URL_content": "",
+    }.items():
+        monkeypatch.setattr(state, key, value)
+    yield state
 
 
 def _write_web_section(cfg_path: Path) -> None:
@@ -67,7 +51,7 @@ def _write_web_section(cfg_path: Path) -> None:
 
 @pytest.fixture(scope="function")
 def app(fake_main: types.ModuleType, tmp_path: Path) -> Generator[Starlette, None, None]:
-    from src import web_api as wa
+    from src.api import routes as wa
 
     cfg = tmp_path / "config.ini"
     url_cfg = tmp_path / "URL_config.ini"

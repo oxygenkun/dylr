@@ -1,34 +1,16 @@
-# WP-B（docs/worklog/CODE_REVIEW_2026-09-29_2.md 的 M-1 / M-2）网络出站层回归锁。
-#
-# M-1 src/async_http.py：探针与 async_req 全线 follow_redirects=True，而内网/保留目标判定原先只作用于
-#     **初始 URL**（MIN-2219 只堵了直连形态）。被攻陷/被 MITM 的平台可先回一个过得了校验的公网地址、
-#     再 302 到 http://127.0.0.1:6379/ 或 http://169.254.169.254/，探针照样访问内网并把跳转后响应的
-#     status_code / content-type 写进 debug 日志。现由 _build_client 给每支 AsyncClient 挂 response
-#     事件钩子，逐跳复检 response.url（判定仍走 _internal_stream_target_reason，不复制第二份规则）。
-# M-2 src/sync_http.py：sync_req 原先没有 scheme 白名单（async 侧早就有），而 urllib 默认 opener 注册着
-#     FileHandler，于是 sync_req("file:///etc/passwd") 把本地文件当响应体返回。现入口过
-#     utils.is_safe_http_url、两支 opener 按 http/https 白名单显式构造，abroad 分支补落地地址复核。
-#
-# 打桩边界：只替换网络层与 DNS seam——httpx 用 MockTransport 造重定向链、urllib 的读盘入口只做
-# 观测（原样调用真实实现）。协议判定、内网判定、逐跳钩子、opener 的 handler 集合一律走真实代码。
+"""使用真实请求钩子，验证每次重定向在发送前拒绝不安全目标。"""
 
-import urllib.error
-import urllib.request
 from collections.abc import Callable
-from pathlib import Path
-from typing import Any, cast
-from unittest.mock import MagicMock
-from urllib.response import addinfourl
 
 import httpx
 import pytest
 from loguru import logger
 
-import src.async_http as async_http
-import src.sync_http as sync_http
-from src import web_config
+import src.network.http as async_http
+from src.api import config as web_config
+from src.network import targets
 
-# 与 tests/test_async_http.py / tests/test_regression_2026_09_22_net.py 同一个 DNS seam：MIN-2219
+# 与 tests/test_http.py / tests/test_regression_2026_09_22_net.py 同一个 DNS seam：MIN-2219
 # 起探针会按「本机解析结果」给直连目标定罪，用例必须与该 seam 隔离，否则无 DNS 环境下「公网源可达」
 # 类用例会随机转红。内网目标一律写成 IP 字面量——判定不依赖解析，也就不受本桩影响。
 _PUBLIC_IP = "93.184.216.34"
@@ -42,7 +24,7 @@ def _hermetic_net(monkeypatch: pytest.MonkeyPatch) -> None:
     #    urllib.request.getproxies()，Windows 上 env 为空时会**回落到注册表**读系统代理；代理一旦挂进
     #    client._mounts，_transport_for_url 就不走 _transport，MockTransport 被静默绕过（纯假绿）。
     #    NO_PROXY=* 让 env 结果非空且 httpx 直接返回空代理表；逐个 delenv 同样保留。
-    monkeypatch.setattr(web_config, "_resolve_host_ips", lambda host: [_PUBLIC_IP])
+    monkeypatch.setattr(targets, "resolve_host_ips", lambda host: [_PUBLIC_IP])
     for key in _PROXY_ENV_KEYS:
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setenv("NO_PROXY", "*")
@@ -96,7 +78,7 @@ def _redirect_chain(landing_target: str, *, after_landing: str = "") -> Callable
 
 
 class TestM1RedirectHopGuard:
-    # M-1：逐跳复检（探针与 async_req 共用同一支钩子、同一个判定函数）.
+    # M-1：逐跳复检（探针与 request 共用同一支钩子、同一个判定函数）.
 
     @pytest.mark.parametrize(
         "internal_target",
@@ -115,8 +97,8 @@ class TestM1RedirectHopGuard:
         # 核心回归：初始 URL 是公网（过得了入口判定与 MIN-2219），跳转后落在内网/保留目标
         # → 必须判**不可达**，而不是拿该跳的 200 当结论。
         seen = _install_mock_transport(monkeypatch, _redirect_chain(internal_target))
-        assert await async_http.get_response_status("https://edge.example.com/live.m3u8") is False
-        assert seen == ["https://edge.example.com/live.m3u8", internal_target]
+        assert await async_http.is_reachable("https://edge.example.com/live.m3u8") is False
+        assert seen == ["https://edge.example.com/live.m3u8"]
 
     async def test_rejected_hop_stops_the_redirect_chain(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # 「命中即停止跟随」：被拒的那一跳之后不得再发第三跳，否则探针就成了 3xx 链上的跳板。
@@ -124,7 +106,7 @@ class TestM1RedirectHopGuard:
             monkeypatch,
             _redirect_chain("http://127.0.0.1:6379/", after_landing="https://after.example.com/x.m3u8"),
         )
-        assert await async_http.get_response_status("https://edge.example.com/live.m3u8") is False
+        assert await async_http.is_reachable("https://edge.example.com/live.m3u8") is False
         assert "https://after.example.com/x.m3u8" not in seen, "被拒之后仍继续跟随重定向"
 
     async def test_hop_rejection_logs_warning_with_masked_landing_url(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -134,7 +116,7 @@ class TestM1RedirectHopGuard:
         lines, handler_id = _capture_logs()
         try:
             _install_mock_transport(monkeypatch, _redirect_chain("http://probe:s3cret@127.0.0.1:6379/"))
-            assert await async_http.get_response_status("https://edge.example.com/live.m3u8") is False
+            assert await async_http.is_reachable("https://edge.example.com/live.m3u8") is False
         finally:
             logger.remove(handler_id)
         security_lines = [line for line in lines if "拒绝内网/保留目标" in line]
@@ -154,40 +136,39 @@ class TestM1RedirectHopGuard:
             return httpx.Response(200, headers={"content-type": "application/vnd.apple.mpegurl"})
 
         seen = _install_mock_transport(monkeypatch, _handler)
-        assert await async_http.get_response_status("https://start.example.com/live.m3u8") is True
+        assert await async_http.is_reachable("https://start.example.com/live.m3u8") is True
         assert seen == ["https://start.example.com/live.m3u8", "https://final.example.com/live.m3u8"]
 
     async def test_async_req_redirect_to_internal_returns_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # 同一支钩子也必须覆盖 async_req（M-1 里「各分支同样全线跟随重定向」那半）。
+        # 同一支钩子也必须覆盖 request（M-1 里「各分支同样全线跟随重定向」那半）。
         # 返回契约不变：与网络异常同一条失败出口（空串），调用方按「本轮没拿到数据」处理。
         seen = _install_mock_transport(monkeypatch, _redirect_chain("http://127.0.0.1:6379/"))
-        assert await async_http.async_req("https://edge.example.com/api") == ""
-        assert seen == ["https://edge.example.com/api", "http://127.0.0.1:6379/"]
+        assert await async_http.request("https://edge.example.com/api") == ""
+        assert seen == ["https://edge.example.com/api"]
 
     async def test_async_req_post_branch_is_covered_too(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # POST(json=) 分支同样 follow_redirects=True。判定只有一处定义点、四条分支共用一支
         # 客户端 → 不必在每个分支各挂一次；漏挂的分支会安静地把内网响应当成业务数据返回。
         seen = _install_mock_transport(monkeypatch, _redirect_chain("http://169.254.169.254/"))
-        assert await async_http.async_req("https://edge.example.com/gql", json_data={"a": 1}) == ""
-        assert seen[-1] == "http://169.254.169.254/"
+        assert await async_http.request("https://edge.example.com/gql", json_data={"a": 1}) == ""
+        assert len(seen) == 1
 
     async def test_stateful_client_carries_the_guard_as_well(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # return_cookies=True 走 _acquire_client 的独占分支（每次自建、不进缓存），那条分支同样调
         # _build_client → 钩子必须在。漏掉它等于给登录/取 token 路径留一个无人看守的重定向面。
         seen = _install_mock_transport(monkeypatch, _redirect_chain("http://127.0.0.1:6379/"))
-        assert await async_http.async_req("https://edge.example.com/login", return_cookies=True) == {}
-        assert seen[-1] == "http://127.0.0.1:6379/"
+        assert await async_http.request("https://edge.example.com/login", return_cookies=True) == {}
+        assert len(seen) == 1
 
     async def test_guard_is_installed_on_every_built_client(self) -> None:
-        # 接线点结构锁：钩子出自 _build_client（探针与 async_req 唯一的客户端来源）。这条与既有
+        # 接线点结构锁：钩子出自 _build_client（探针与 request 唯一的客户端来源）。这条与既有
         # 「单次选源复用 / 不做模块级全局 client 缓存 / 不关 keepalive / _get_client_lock 随循环重建」
         # 等约束互不冲突——只钉「每支构造出来的客户端都带着一个 response 钩子」。
         client = async_http._build_client(None, 10, True, False)
         try:
             assert len(client.event_hooks["response"]) == 1
-            # request 钩子刻意不挂：本层逐跳复检口径是 response.url（见 _build_hop_guard 的残余风险
-            # 登记）。多挂一支 request 钩子 = 每跳两次判定/两次 getaddrinfo，未取。
-            assert client.event_hooks["request"] == []
+            # URL 在 request 钩子校验，response 钩子只负责有界读取。
+            assert len(client.event_hooks["request"]) == 1
         finally:
             await client.aclose()
 
@@ -200,162 +181,12 @@ class TestM1RedirectHopGuard:
             dns_calls.append(host)
             return [_PUBLIC_IP]
 
-        monkeypatch.setattr(web_config, "_resolve_host_ips", _record_dns)
+        monkeypatch.setattr(targets, "resolve_host_ips", _record_dns)
         seen = _install_mock_transport(monkeypatch, _redirect_chain("http://127.0.0.1:6379/"))
         assert (
-            await async_http.get_response_status("https://edge.example.com/live.m3u8", proxy="http://127.0.0.1:1")
+            await async_http.is_reachable("https://edge.example.com/live.m3u8", proxy_addr="http://127.0.0.1:1")
             is False
         )
-        assert seen[-1] == "http://127.0.0.1:6379/"
+        assert len(seen) == 1
         # 豁免仍然成立：公网域名那一跳没有按本机解析定罪（初始终址与中间跳都不查 DNS）
         assert dns_calls == []
-
-
-def _file_url_of(tmp_path: Path) -> str:
-    # 写一个真文件并把它的 file:// URI 交出去：断言「没读盘」必须作用在真实路径上，
-    # 拿一个假路径当输入会让 FileHandler 因 OSError 失败、用例假绿。
-    secret = tmp_path / "secret.txt"
-    secret.write_text("TOPSECRET-CONTENT", encoding="utf-8")
-    return secret.as_uri()
-
-
-def _spy_file_handler_reads(monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    # 观测 urllib 的读盘入口（FileHandler.file_open，3.14 里它就是 open_local_file），**原样调用真实
-    # 实现**、只登记被请求的路径：防线被摘掉时这里会记下真实路径、用例立刻变红。
-    opened: list[str] = []
-    real_file_open = urllib.request.FileHandler.file_open
-
-    def _spy(self: urllib.request.FileHandler, req: urllib.request.Request) -> addinfourl:
-        opened.append(req.full_url)
-        return real_file_open(self, req)
-
-    monkeypatch.setattr(urllib.request.FileHandler, "file_open", _spy)
-    return opened
-
-
-class TestM2SchemeWhitelistOnSyncReq:
-    # M-2：sync_req 的 scheme 白名单.
-
-    def test_file_uri_rejected_and_never_opened(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        file_url = _file_url_of(tmp_path)
-        opened = _spy_file_handler_reads(monkeypatch)
-        assert sync_http.sync_req(file_url) == ""
-        assert opened == [], f"file:// 仍被读到磁盘: {opened}"
-
-    def test_abroad_branch_also_rejects_file_uri(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        # abroad=True 用的是 urllib.request.urlopen（进程全局默认 opener，仍带 FileHandler），
-        # 入口白名单必须在它之前生效——否则「海外请求」这条分支就是白名单的绕道口。
-        file_url = _file_url_of(tmp_path)
-        opened = _spy_file_handler_reads(monkeypatch)
-        # 替身只记录、不抛错：sync_req 的外层 except 会把任何异常吞成空串，side_effect 抛错
-        # 反而会让「白名单被摘掉」的形态照样绿（假绿本体）。断言落在「有没有被调用」上。
-        urlopen_spy = MagicMock()
-        monkeypatch.setattr(sync_http.urllib.request, "urlopen", urlopen_spy)
-        assert sync_http.sync_req(file_url, abroad=True) == ""
-        assert opened == []
-        urlopen_spy.assert_not_called()
-
-    def test_entry_guard_runs_before_any_handler(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # 守卫顺序锁：把 opener 整个换成「什么都返回 200 + 文件内容」的替身，模拟「handler 白名单被
-        # 摘掉」的形态。此时唯一还在起作用的防线就是入口 scheme 白名单。
-        fake_resp = MagicMock()
-        fake_resp.headers = {"Content-Encoding": ""}
-        fake_resp.read.return_value = b"TOPSECRET-CONTENT"
-        fake_resp.url = "file:///etc/passwd"
-        opener_spy = MagicMock()
-        opener_spy.open.return_value = fake_resp
-        monkeypatch.setattr(sync_http, "_get_opener", lambda ssl_verify=None: opener_spy)
-        assert sync_http.sync_req("file:///etc/passwd") == ""
-        opener_spy.open.assert_not_called()
-
-    def test_proxied_branch_rejects_before_touching_session(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # 代理分支（requests.Session）同样受入口白名单保护：requests 自己虽然不会读文件，
-        # 但「先建会话再报错」会让 InvalidSchema 被外层吞成空串，归因线索彻底消失。
-        session_spy = MagicMock()
-        monkeypatch.setattr(sync_http, "_session", lambda: session_spy)
-        assert sync_http.sync_req("file:///etc/passwd", proxy_addr="127.0.0.1:7890") == ""
-        session_spy.get.assert_not_called()
-        session_spy.post.assert_not_called()
-
-    def test_rejection_log_masks_credentials(self) -> None:
-        # 拒绝路径的日志口径与 async 侧一致：URL 与异常文本都过 mask_credentials
-        # （sync_req 外层 except 会对 {e} 再过一次，这里是双层脱敏的第一层）。
-        lines, handler_id = _capture_logs()
-        try:
-            assert sync_http.sync_req("file://probe:s3cret@127.0.0.1/etc/passwd") == ""
-        finally:
-            logger.remove(handler_id)
-        joined = "\n".join(lines)
-        assert "s3cret" not in joined
-        assert "file://***@127.0.0.1" in joined
-
-    def test_normal_http_url_still_works(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # 反向锁：白名单不得把正常的 http/https 请求一起挡掉（否则 M-2 就成了新的漏录根因）。
-        fake_resp = MagicMock()
-        fake_resp.headers = {"Content-Encoding": ""}
-        fake_resp.read.return_value = b"body"
-        fake_resp.url = "https://api.example.com/live"
-        opener_spy = MagicMock()
-        opener_spy.open.return_value = fake_resp
-        monkeypatch.setattr(sync_http, "_get_opener", lambda ssl_verify=None: opener_spy)
-        assert sync_http.sync_req("https://api.example.com/live") == "body"
-        opener_spy.open.assert_called_once()
-
-
-class TestM2OpenerHandlerWhitelist:
-    # M-2：两支预构建 opener 的 handler 集合（直接检查构造结果）.
-
-    _ALLOWED_HANDLER_NAMES = {
-        # 白名单外协议的统一拒绝口，必须保留（摘掉它 urllib 改抛别的形态，失败语义会漂移）
-        "UnknownHandler",
-        "HTTPHandler",
-        "HTTPSHandler",
-        "HTTPDefaultErrorHandler",
-        "HTTPRedirectHandler",
-        "HTTPErrorProcessor",
-        # 注意 ProxyHandler({})「不出现在 handlers 里」不是遗漏：CPython 的 OpenerDirector.add_handler
-        # 只登记「贡献了某条协议方法链」的 handler，而空代理表的 ProxyHandler 只有 proxy_open（被当作
-        # coincidental match 跳过）。旧写法 build_opener(no_proxy_handler) 同样是这个形态——正因没有
-        # 任何 proxy handler 被登记，本地请求才不走系统代理。
-    }
-
-    @pytest.mark.parametrize("factory", [lambda: sync_http._opener_secure, sync_http._get_insecure_opener])
-    def test_non_http_handlers_are_absent(self, factory: Callable[[], urllib.request.OpenerDirector]) -> None:
-        # typeshed 没声明 OpenerDirector.handlers（运行时确有）→ 按同目录既有口径用 cast 收窄，
-        # 不用三参 getattr（返回 Any|None，后面的 isinstance 过滤会一起失去检查）。
-        handlers = cast("list[Any]", getattr(factory(), "handlers"))
-        for banned in (urllib.request.FileHandler, urllib.request.FTPHandler, urllib.request.DataHandler):
-            assert not any(isinstance(h, banned) for h in handlers), f"opener 上仍挂着 {banned.__name__}"
-        assert {type(h).__name__ for h in handlers} == self._ALLOWED_HANDLER_NAMES
-
-    def test_file_ftp_data_urls_refused_before_reading(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-        # 行为锁（不只是「集合里没有」）：真实的 _opener_secure 遇到 file/ftp/data 必须抛
-        # URLError('unknown url type')，一步都不读。跨 scheme 跳转走的正是这条同一入口。
-        opened = _spy_file_handler_reads(monkeypatch)
-        file_url = _file_url_of(tmp_path)
-        for url in (file_url, "ftp://example.com/pub/x", "data:text/plain;base64,AAAA"):
-            with pytest.raises(urllib.error.URLError) as excinfo:
-                sync_http._opener_secure.open(url)
-            assert "unknown url type" in str(excinfo.value.reason)
-        assert opened == [], f"file:// 仍被读到磁盘: {opened}"
-
-    def test_abroad_landing_on_file_url_is_discarded(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # abroad 分支的落地复核（该分支唯一可用的防线）：替身 urlopen 模拟「默认 opener 已经把
-        # /etc/passwd 读回来了」的形态，sync_req 必须在把响应体交给调用方之前丢掉它，并关掉句柄。
-        resp = MagicMock()
-        resp.url = "file:///etc/passwd"
-        resp.headers = {"Content-Encoding": ""}
-        resp.read.return_value = b"root:x:0:0"
-        monkeypatch.setattr(sync_http.urllib.request, "urlopen", MagicMock(return_value=resp))
-        assert sync_http.sync_req("http://start.example.com/x", abroad=True) == ""
-        resp.read.assert_not_called()
-        resp.close.assert_called_once()
-
-    def test_abroad_landing_on_http_url_still_returns_body(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # 反向锁：落地复核只针对非白名单协议，公网→公网（含 http→https）照旧返回响应体。
-        resp = MagicMock()
-        resp.url = "https://final.example.com/x"
-        resp.headers = {"Content-Encoding": ""}
-        resp.read.return_value = b"ok"
-        monkeypatch.setattr(sync_http.urllib.request, "urlopen", MagicMock(return_value=resp))
-        assert sync_http.sync_req("http://start.example.com/x", abroad=True) == "ok"

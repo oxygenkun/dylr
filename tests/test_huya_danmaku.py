@@ -17,8 +17,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from typing import Any, cast
 
-from src import spider  # noqa: E402
-from src.platforms._tars import TarsInputStream, TarsOutputStream  # noqa: E402
+from src.danmaku.platforms._tars import TarsInputStream, TarsOutputStream
+from src.streams import spider
 
 # 与线上 profileRoom 返回结构对齐(字段名采集自 2026-08 真实响应)
 PROFILEROOM_SAMPLE = {
@@ -80,7 +80,7 @@ def test_int64_branch() -> None:
 
 def test_join_data_ayyuid_overflow() -> None:
     # 真实超 int32 的 ayyuid 也能用 _make_join_data 编码,不抛 struct.error。
-    from src.platforms.huya import HuyaDanmaku
+    from src.danmaku.platforms.huya import HuyaDanmaku
 
     inst = HuyaDanmaku()
     inst._args = {"ayyuid": 5000000000, "topSid": 1346609715, "subSid": 1346609715}
@@ -102,12 +102,11 @@ def test_profileRoom_fields(monkeypatch: pytest.MonkeyPatch) -> None:
         redirect_url: bool = False,
         return_cookies: bool = False,
         include_cookies: bool = False,
-        abroad: bool = False,
         content_encoding: str = "utf-8",
         verify: bool | None = None,
         http2: bool = True,
     ) -> str:
-        # 形参必须与 src/async_http.py::async_req 逐项对齐：残缺签名会让带
+        # 形参必须与 src/network/http.py::request 逐项对齐：残缺签名会让带
         # data=/json_data=/timeout= 的 spider 调用落到替身时抛 TypeError。
         # 数值型 roomid 不触发 html 抓取, 直接返回 profileRoom JSON
         requested.append(url)
@@ -115,7 +114,7 @@ def test_profileRoom_fields(monkeypatch: pytest.MonkeyPatch) -> None:
 
     # 必须经 monkeypatch.setattr 逐属性登记还原：裸赋值不还原会让同进程后续用例拿到
     # 这只固定 JSON 替身（单独跑绿、整包跑红）。
-    monkeypatch.setattr(spider, "async_req", fake_async_req)
+    monkeypatch.setattr(spider.http, "request", fake_async_req)
     result = asyncio.run(
         spider.get_huya_app_stream_url(
             url="https://www.huya.com/660000",

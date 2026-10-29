@@ -121,10 +121,10 @@ def test_unregistered_module_at_global_floor_passes(tmp_path: Path) -> None:
 def test_registered_module_still_uses_its_own_higher_threshold(tmp_path: Path) -> None:
     # 反向锁：登记了 85% 的模块不得被 50% 的下限放水（否则「登记」这层毫无意义）。
     root = _make_root(tmp_path)
-    ttwid_threshold = check_coverage.MODULE_THRESHOLDS["src/ttwid.py"]
+    ttwid_threshold = check_coverage.MODULE_THRESHOLDS["src/streams/ttwid.py"]
     assert ttwid_threshold > check_coverage.GLOBAL_FLOOR, "用例前提失效：ttwid 阈值须高于全局下限"
     percents = {module: 100.0 for module in _REGISTERED}
-    percents["src/ttwid.py"] = ttwid_threshold - 1.0
+    percents["src/streams/ttwid.py"] = ttwid_threshold - 1.0
     assert check_coverage.evaluate_report(_report(percents), root) == 1
 
 
@@ -159,7 +159,7 @@ def test_missing_data_file_exits_2(tmp_path: Path, capsys: pytest.CaptureFixture
 def test_root_without_src_dir_exits_2(tmp_path: Path) -> None:
     # 判定面为空（root 解析错位、src/ 被误删）→ 旧形态会打印「PASSED: All 0 module(s)」。
     with pytest.raises(SystemExit) as excinfo:
-        check_coverage.evaluate_report(_report({"src/spider.py": 100.0}), tmp_path)
+        check_coverage.evaluate_report(_report({"src/streams/spider.py": 100.0}), tmp_path)
     assert excinfo.value.code == 2, "枚举不到任何模块却继续判定 = 空检查自证通过"
 
 
@@ -234,8 +234,8 @@ def test_missing_summary_counts_as_zero(tmp_path: Path) -> None:
 def test_find_module_coverage_rejects_tests_only_key(tmp_path: Path) -> None:
     root = _make_root(tmp_path)
     report = _report({"tests/utils.py": 99.5})
-    assert check_coverage._find_module_coverage(report, "src/utils.py") is None, (
-        "tests/utils.py 顶替了 src/utils.py 的读数（6.7 的形态回来了）"
+    assert check_coverage._find_module_coverage(report, "src/support/utils.py") is None, (
+        "tests/utils.py 顶替了 src/support/utils.py 的读数（6.7 的形态回来了）"
     )
 
 

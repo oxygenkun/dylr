@@ -15,7 +15,7 @@
 import ast
 from pathlib import Path
 
-_MAIN_PATH = Path(__file__).resolve().parent.parent / "src/main.py"
+_MAIN_PATH = Path(__file__).resolve().parent.parent / "src/recording/session.py"
 # 同类回归的第二处定义点：tool/douyin_live_recorder_standalone.py 的两处录制命令
 # 同样拼接 -reconnect*，与 main.py 保持一字不差是对它的既有要求，一并纳入防线。
 _STANDALONE_PATH = Path(__file__).resolve().parent.parent / "tool" / "douyin_live_recorder_standalone.py"

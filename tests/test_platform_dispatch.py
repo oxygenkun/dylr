@@ -7,30 +7,24 @@
 #   3. 无法识别的地址返回 None；自定义流地址按**路径扩展名**判定，大小写不敏感。
 #
 # 所有 spider / stream 调用均替换为记录型异步桩，用例不发任何真实网络请求。
-
 import ast
-import sys
 import threading
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from src.recording import state
+from src.streams import dispatch as platform_dispatch
+
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 @pytest.fixture(scope="module")
 def main_mod() -> Any:
-    # 与 test_start_record_command_golden 一致：导入前把 sys.argv[0] 钉到 main.py，
-    # 否则 _app_root() 解析出的路径不对（配置/日志目录会落到别处）。
-    old_argv = sys.argv[:]
-    sys.argv = [str(_REPO_ROOT / "src/main.py")]
-    try:
-        from src import main
+    from src.recording import engine as main
 
-        return main
-    finally:
-        sys.argv = old_argv
+    return main
 
 
 class _RecordingShim:
@@ -51,8 +45,8 @@ class _RecordingShim:
 @pytest.fixture
 def dispatch_env(main_mod: Any, monkeypatch: pytest.MonkeyPatch) -> tuple[Any, list]:
     calls: list[tuple[str, str]] = []
-    monkeypatch.setattr(main_mod, "spider", _RecordingShim("spider", calls), raising=False)
-    monkeypatch.setattr(main_mod, "stream", _RecordingShim("stream", calls), raising=False)
+    monkeypatch.setattr(platform_dispatch, "spider", _RecordingShim("spider", calls), raising=False)
+    monkeypatch.setattr(platform_dispatch, "stream", _RecordingShim("stream", calls), raising=False)
     # main() 运行期才赋值的全局量：import 期不存在，需补齐否则 NameError
     for name in (
         "dy_cookie",
@@ -80,15 +74,15 @@ def dispatch_env(main_mod: Any, monkeypatch: pytest.MonkeyPatch) -> tuple[Any, l
         "liveme_cookie",
         "global_proxy",
     ):
-        if not hasattr(main_mod, name):
-            monkeypatch.setattr(main_mod, name, "", raising=False)
-    if not hasattr(main_mod, "semaphore"):
-        monkeypatch.setattr(main_mod, "semaphore", threading.Semaphore(8), raising=False)
+        if not hasattr(state, name):
+            monkeypatch.setattr(state, name, "", raising=False)
+    if not hasattr(state, "semaphore"):
+        monkeypatch.setattr(state, "semaphore", threading.Semaphore(8), raising=False)
     return main_mod, calls
 
 
 def test_resolver_table_is_wellformed(main_mod: Any) -> None:
-    table = main_mod._PLATFORM_RESOLVERS
+    table = platform_dispatch._PLATFORM_RESOLVERS
     # 空表意味着分派链整体丢失（所有地址都会落到「无法识别」）
     assert table, "平台分发表不应为空"
     handlers = [handler for _, handler in table]
@@ -103,7 +97,7 @@ def test_resolver_table_priority_head(main_mod: Any) -> None:
     # hy.fan（2026-10-03 插入虎牙之后、斗鱼之前，白名单同批登记）。顺序即优先级：抖音短链
     # v.douyin.com 等形态必须最先判定，不能被更宽松的片段抢走；插入新表项会挪动其后所有下标，
     # 所以这里显式列出顺序，改顺序必须同步改本锁并说明理由。
-    names = [handler.__name__ for _, handler in main_mod._PLATFORM_RESOLVERS[:6]]
+    names = [handler.__name__ for _, handler in platform_dispatch._PLATFORM_RESOLVERS[:6]]
     assert names == [
         "_resolve_douyin_com",
         "_resolve_tiktok_com",
@@ -113,7 +107,7 @@ def test_resolver_table_priority_head(main_mod: Any) -> None:
         "_resolve_douyu_com",
     ]
     # 自定义流地址必须垫底：它只按扩展名匹配，放前面会截获平台地址
-    assert main_mod._PLATFORM_RESOLVERS[-1][1].__name__ == "_resolve_custom_stream"
+    assert platform_dispatch._PLATFORM_RESOLVERS[-1][1].__name__ == "_resolve_custom_stream"
 
 
 # （URL, 预期平台名, 预期命中的解析入口）：入口名用于确认「走的是哪条分支」，
@@ -142,16 +136,44 @@ def test_resolve_platform_stream_dispatches(
 ) -> None:
     main_mod, calls = dispatch_env
     # 代理非空才会走 TikTok / LiveMe 等「需要代理」的分支，此处统一带代理避免空转
-    result = main_mod._resolve_platform_stream(url, "http://127.0.0.1:1", "原画")
+    result = platform_dispatch._resolve_platform_stream(url, "http://127.0.0.1:1", "原画")
     assert result is not None, f"{url} 应被识别，实际返回 None"
     platform, _port_info, _danmaku, _new_url = result
     assert platform == expected_platform
     assert expected_entry in [name for _tag, name in calls]
 
 
+@pytest.mark.parametrize(
+    "url, platform",
+    [
+        ("https://www.tiktok.com/@u/live", "TikTok直播"),
+        ("https://www.twitch.tv/channel", "TwitchTV"),
+        ("https://www.liveme.com/live/1", "未知平台"),
+        ("https://play.sooplive.co.kr/channel/1", "SOOP(原AfreecaTV)"),
+    ],
+)
+def test_proxy_required_resolver_keeps_empty_defaults(
+    dispatch_env: tuple, monkeypatch: pytest.MonkeyPatch, url: str, platform: str
+) -> None:
+    _, calls = dispatch_env
+    monkeypatch.setattr(state, "global_proxy", False)
+
+    async def douyu_data(**kwargs: object) -> dict[str, object]:
+        return {"room_id": "99", "is_live": True}
+
+    monkeypatch.setattr(platform_dispatch.spider, "get_douyu_info_data", douyu_data)
+    previous = platform_dispatch._resolve_platform_stream("https://www.douyu.com/99", None, "原画")
+    assert previous is not None
+    assert previous[2] == {"room_id": "99"}
+    calls.clear()
+
+    assert platform_dispatch._resolve_platform_stream(url, None, "原画") == (platform, {}, None, "")
+    assert calls == []
+
+
 def test_resolve_platform_stream_unknown_returns_none(dispatch_env: tuple) -> None:
     main_mod, _calls = dispatch_env
-    assert main_mod._resolve_platform_stream("https://example.com/nothing", None, "原画") is None
+    assert platform_dispatch._resolve_platform_stream("https://example.com/nothing", None, "原画") is None
 
 
 # 自定义流地址分支：扩展名大小写两种形态都要落到「自定义录制直播」，
@@ -168,7 +190,7 @@ _CUSTOM_STREAM_CASES = [
 @pytest.mark.parametrize("url,expected_key", _CUSTOM_STREAM_CASES)
 def test_custom_stream_suffix_is_case_insensitive(dispatch_env: tuple, url: str, expected_key: str) -> None:
     main_mod, _calls = dispatch_env
-    result = main_mod._resolve_platform_stream(url, None, "原画")
+    result = platform_dispatch._resolve_platform_stream(url, None, "原画")
     assert result is not None
     platform, port_info, _danmaku, _new_url = result
     assert platform == "自定义录制直播"
@@ -185,11 +207,11 @@ def test_new_platform_entry_can_be_registered(main_mod: Any, monkeypatch: pytest
         ctx.platform = "测试平台"
 
     monkeypatch.setattr(
-        main_mod,
+        platform_dispatch,
         "_PLATFORM_RESOLVERS",
-        ((main_mod._match_host("https://probe.example/"), _fake_handler),),
+        ((platform_dispatch._match_host("https://probe.example/"), _fake_handler),),
     )
-    result = main_mod._resolve_platform_stream("https://probe.example/room", None, "原画")
+    result = platform_dispatch._resolve_platform_stream("https://probe.example/room", None, "原画")
     assert result is not None
     assert result[0] == "测试平台"
     assert seen == ["https://probe.example/room"]
@@ -203,31 +225,33 @@ def test_new_platform_entry_can_be_registered(main_mod: Any, monkeypatch: pytest
 # 也**不记 record_error**（熔断/背压统计完全看不到），白占监控位并持续污染日志。
 # --------------------------------------------------------------------------------------
 def test_every_platform_host_has_a_resolver(main_mod: Any) -> None:
-    matchers = [matcher for matcher, _handler in main_mod._PLATFORM_RESOLVERS]
+    matchers = [matcher for matcher, _handler in platform_dispatch._PLATFORM_RESOLVERS]
 
     def _covered(host: str) -> bool:
         # 用两种协议各试一次：白名单只写裸 host，用户粘贴的地址两种形态都合法
         return any(matcher(f"{scheme}://{host}/123456") for scheme in ("https", "http") for matcher in matchers)
 
-    uncovered = [host for host in main_mod.PLATFORM_HOST if not _covered(host)]
+    uncovered = [host for host in platform_dispatch.PLATFORM_HOST if not _covered(host)]
     assert not uncovered, f"PLATFORM_HOST 中以下 host 没有任何 resolver 命中: {uncovered}"
 
 
 def test_platform_host_entries_that_were_fixed_on_2026_09_20(main_mod: Any) -> None:
     # www.redelight.cn：全仓（spider / stream / JS 签名脚本 / 平台清单）零引用，
     # 留在白名单里只会让用户配一个永不录制的地址 → 已按 MID-04 摘除。
-    assert "www.redelight.cn" not in main_mod.PLATFORM_HOST
+    assert "www.redelight.cn" not in platform_dispatch.PLATFORM_HOST
     # huodong.m.taobao.com：淘宝直播分享页 host（get_taobao_stream_url 的 Referer 即该域名），
     # 此前白名单有、表项没有 → 现已接入 _resolve_tb_cn。
-    assert main_mod._match_host("tb.cn", "tbzb.taobao.com", "huodong.m.taobao.com")("https://huodong.m.taobao.com/x")
+    assert platform_dispatch._match_host("tb.cn", "tbzb.taobao.com", "huodong.m.taobao.com")(
+        "https://huodong.m.taobao.com/x"
+    )
 
 
 def test_douyu_mobile_host_is_admitted_and_dispatched(main_mod: Any) -> None:
     # 斗鱼移动端 host 必须在准入白名单（精确匹配）且分派表命中：缺前者时
     # https://m.douyu.com/8751648 在读取 URL 配置阶段就被判「未知链接」注释掉；缺后者则会落入
     # _resolve_unrecognized 无限空转（SEV-2203 同型：永不录制、不记 record_error）。
-    assert "m.douyu.com" in main_mod.PLATFORM_HOST
-    matcher = main_mod._match_host("www.douyu.com/", "m.douyu.com/")
+    assert "m.douyu.com" in platform_dispatch.PLATFORM_HOST
+    matcher = platform_dispatch._match_host("www.douyu.com/", "m.douyu.com/")
     assert matcher("https://m.douyu.com/8751648")
     assert matcher("http://m.douyu.com/8751648/")
     assert matcher("https://www.douyu.com/8751648")
@@ -252,7 +276,7 @@ _PLATFORM_NAME_LITERALS = (
 
 
 def _resolver_platform_names(tree: "ast.Module") -> set[str]:
-    # 收集所有 _resolve_* 处理函数里对 `platform` 的字面量赋值（含 if/else 分支内的）
+    # 收集各平台处理函数写入 ctx.platform 的名称。
     names: set[str] = set()
     for node in ast.walk(tree):
         if not isinstance(node, ast.FunctionDef) or not node.name.startswith("_resolve_"):
@@ -260,7 +284,11 @@ def _resolver_platform_names(tree: "ast.Module") -> set[str]:
         for inner in ast.walk(node):
             if isinstance(inner, ast.Assign) and isinstance(inner.value, ast.Constant):
                 if isinstance(inner.value.value, str) and any(
-                    isinstance(t, ast.Name) and t.id == "platform" for t in inner.targets
+                    isinstance(t, ast.Attribute)
+                    and isinstance(t.value, ast.Name)
+                    and t.value.id == "ctx"
+                    and t.attr == "platform"
+                    for t in inner.targets
                 ):
                     names.add(inner.value.value)
     return names
@@ -315,7 +343,9 @@ def _platform_cookie_map_entries(tree: "ast.Module") -> dict[str, str]:
         entries: dict[str, str] = {}
         for key, val in zip(dict_node.keys, dict_node.values):
             if isinstance(key, ast.Constant) and isinstance(key.value, str):
-                if isinstance(val, ast.Name):
+                if isinstance(val, ast.Attribute) and isinstance(val.value, ast.Name) and val.value.id == "state":
+                    entries[key.value] = val.attr
+                elif isinstance(val, ast.Name):
                     entries[key.value] = val.id
                 elif isinstance(val, ast.Constant):
                     entries[key.value] = repr(val.value)
@@ -325,7 +355,12 @@ def _platform_cookie_map_entries(tree: "ast.Module") -> dict[str, str]:
 
 
 def test_platform_name_literals_match_resolver_writeback(main_mod: Any) -> None:
-    tree = ast.parse((_REPO_ROOT / "src/main.py").read_text(encoding="utf-8"))
+    tree = ast.parse(
+        "\n".join(
+            (_REPO_ROOT / "src" / name).read_text(encoding="utf-8")
+            for name in ("recording/session.py", "streams/dispatch.py")
+        )
+    )
     resolver_names = _resolver_platform_names(tree)
     assert resolver_names, "AST 未能取到任何 resolver 回写的平台名（扫描口径失效即假绿）"
     sequences = _literal_sequences_by_name(tree)
@@ -342,7 +377,12 @@ def test_platform_name_literals_match_resolver_writeback(main_mod: Any) -> None:
 
 def test_migu_is_not_a_dead_http_record_entry(main_mod: Any) -> None:
     # 回归具体缺陷：http_record_list 曾写 "migu"，而咪咕 resolver 回写 "咪咕直播" → 死项
-    tree = ast.parse((_REPO_ROOT / "src/main.py").read_text(encoding="utf-8"))
+    tree = ast.parse(
+        "\n".join(
+            (_REPO_ROOT / "src" / name).read_text(encoding="utf-8")
+            for name in ("recording/session.py", "streams/dispatch.py")
+        )
+    )
     sequences = _literal_sequences_by_name(tree)
     assert "migu" not in sequences["http_record_list"]
     assert "咪咕直播" in sequences["http_record_list"]
@@ -379,7 +419,7 @@ _SUFFIX_BYPASS_URLS = [
 @pytest.mark.parametrize("url", _LEGITIMATE_STREAM_URLS)
 def test_custom_stream_still_matches_real_stream_paths(dispatch_env: tuple, url: str) -> None:
     main_mod, _calls = dispatch_env
-    result = main_mod._resolve_platform_stream(url, None, "原画")
+    result = platform_dispatch._resolve_platform_stream(url, None, "原画")
     assert result is not None
     platform, port_info, _danmaku, _new_url = result
     assert platform == "自定义录制直播"
@@ -388,30 +428,30 @@ def test_custom_stream_still_matches_real_stream_paths(dispatch_env: tuple, url:
 @pytest.mark.parametrize("url", _SUFFIX_BYPASS_URLS)
 def test_query_or_fragment_suffix_cannot_reach_custom_stream_branch(dispatch_env: tuple, url: str) -> None:
     main_mod, _calls = dispatch_env
-    assert main_mod._resolve_platform_stream(url, None, "原画") is None, f"{url} 不应命中自定义流分支"
-    assert main_mod._match_stream_suffix(".m3u8", ".flv")(url) is False
+    assert platform_dispatch._resolve_platform_stream(url, None, "原画") is None, f"{url} 不应命中自定义流分支"
+    assert platform_dispatch._match_stream_suffix(".m3u8", ".flv")(url) is False
 
 
 def test_stream_path_suffix_ignores_query_and_fragment(main_mod: Any) -> None:
-    assert main_mod._stream_path_suffix("https://h/a.m3u8?x=1") == ".m3u8"
-    assert main_mod._stream_path_suffix("https://h/a.FLV#z") == ".flv"
-    assert main_mod._stream_path_suffix("https://h/a?x=.flv") == ""
-    assert main_mod._stream_path_suffix("https://h") == ""
+    assert platform_dispatch._stream_path_suffix("https://h/a.m3u8?x=1") == ".m3u8"
+    assert platform_dispatch._stream_path_suffix("https://h/a.FLV#z") == ".flv"
+    assert platform_dispatch._stream_path_suffix("https://h/a?x=.flv") == ""
+    assert platform_dispatch._stream_path_suffix("https://h") == ""
     # 畸形入参（urlsplit 抛 ValueError）按「无扩展名」处理，不得抛出
-    assert main_mod._stream_path_suffix("http://[::1:notaport]/a.flv") in ("", ".flv")
+    assert platform_dispatch._stream_path_suffix("http://[::1:notaport]/a.flv") in ("", ".flv")
 
 
 def test_custom_stream_keys_follow_path_extension(dispatch_env: tuple) -> None:
     # flv_url / m3u8_url 的归属必须与匹配器同一判据（路径扩展名）：
     # 旧实现按整串子串选键，于是 `.m3u8?....flv` 的 HLS 清单被写进 flv_url（当成 FLV 直下）
     main_mod, _calls = dispatch_env
-    result = main_mod._resolve_platform_stream("https://cdn.example.com/a.m3u8?f=.flv", None, "原画")
+    result = platform_dispatch._resolve_platform_stream("https://cdn.example.com/a.m3u8?f=.flv", None, "原画")
     assert result is not None
     platform, port_info, _danmaku, _new_url = result
     assert platform == "自定义录制直播"
     assert "m3u8_url" in port_info and "flv_url" not in port_info
 
-    result2 = main_mod._resolve_platform_stream("https://cdn.example.com/a.flv?f=.m3u8", None, "原画")
+    result2 = platform_dispatch._resolve_platform_stream("https://cdn.example.com/a.flv?f=.m3u8", None, "原画")
     assert result2 is not None
     port_info2 = result2[1]
     assert "flv_url" in port_info2 and "m3u8_url" not in port_info2
@@ -423,7 +463,12 @@ def test_forced_direct_download_platforms_carry_cookie(main_mod: Any) -> None:
     # huajiao_cookie 已有读取点并透传给解析函数，却不在映射里，于是同一份 Cookie 在「解析」与
     # 「探针 / ffmpeg 录制头 / 直下」两条路口径不一——直下路径按游客态取流，CDN 可 403 或钳到最低档。
     # 判据：删掉任一键、或把值写成 "" 字面量即变红；映射整体丢失时开头的非空见证变红。
-    tree = ast.parse((_REPO_ROOT / "src/main.py").read_text(encoding="utf-8"))
+    tree = ast.parse(
+        "\n".join(
+            (_REPO_ROOT / "src" / name).read_text(encoding="utf-8")
+            for name in ("recording/session.py", "streams/dispatch.py")
+        )
+    )
     entries = _platform_cookie_map_entries(tree)
     assert entries, "AST 未能取到 platform_cookie 字面量映射（扫描口径失效即假绿）"
     only_flv = _literal_sequences_by_name(tree).get("only_flv_platform_list")

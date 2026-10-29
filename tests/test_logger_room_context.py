@@ -3,7 +3,7 @@
 # 背景：多房间并发时所有房间线程共用同一条文件 sink，enqueue 队列按到达顺序交织落盘，
 # 此前只有 main.py 手写的 [record_name] 前缀可辨房间，src/* 内部日志与解析失败/退出等
 # 早期日志无法归属。修复方式是线程级 ContextVar + 全局 patcher 写入 extra（见
-# src/logger.py::ROOM_FIELD），并把该字段加进两个录制文件 sink 的 format。
+# src/support/logger.py::ROOM_FIELD），并把该字段加进两个录制文件 sink 的 format。
 #
 # 本文件锁定四件事：
 #   ① 两房间并发交织时，同一房间的行可按该字段可靠切出（不要求行连续）；
@@ -23,7 +23,7 @@ from typing import Iterator
 import pytest
 from loguru import logger
 
-import src.logger as logger_mod
+import src.support.logger as logger_mod
 
 # 每房间写入的行数：大于 1 才能证明「交织后仍能切出」，而不是碰巧只有一行
 _PROBE_COUNT = 20
@@ -35,7 +35,7 @@ _ROOM_B = "序号2 主播乙"
 def recorder_logger(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     # 与 tests/test_logger.py 同口径：把 _app_root() 的落点指向 tmp_path 以隔离
     # logs/ 与 config/，sys.stderr 置 None 跳过控制台 sink（本组用例只看文件 sink 落盘内容）。
-    # 重载 src.logger 让「录制进程」分支重新注册两个文件 sink，同时重新装上房间 patcher。
+    # 重载 src.support.logger 让「录制进程」分支重新注册两个文件 sink，同时重新装上房间 patcher。
     monkeypatch.setattr(sys, "argv", [str(tmp_path / "entry.py")])
     monkeypatch.setattr(sys, "stderr", None)
     config_dir = tmp_path / "config"

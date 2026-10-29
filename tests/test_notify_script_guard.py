@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# src/notify.py 录后自定义脚本钩子（run_script）的安全不变量回归锁（WP-C / M-5）。
+# src/notifications/notify.py 录后自定义脚本钩子（run_script）的安全不变量回归锁（WP-C / M-5）。
 #
 # 四条必须锁住的行为（任意一条被改回旧形态即应变红）：
 #   ① 凭据不落盘：command 与异常文本一律过 utils.mask_credentials 才进 logger（logs/ 按 rotation
@@ -13,7 +13,7 @@
 #   ④ 平台分支由模块级常量 _KILL_TREE_VIA_TASKKILL 选择，用例强制置 True，让 taskkill 路径在
 #      Linux CI 上真实执行（平台专属分支不得靠 skipif 让 CI 跳过；CI 全在 ubuntu）。
 #
-# 打桩面只有 subprocess（浅拷贝 shim 后替换 src.notify 命名空间里的引用，不改 stdlib 本体，
+# 打桩面只有 subprocess（浅拷贝 shim 后替换 src.notifications.notify 命名空间里的引用，不改 stdlib 本体，
 # AGENTS.md 测试约定）与超时常量；脱敏 / 分支选择 / 退化路径全部走真实代码。
 # 唯一真起进程的是最后那条端到端用例，判定只看耗时与日志文本，从不解码子进程输出
 # （taskkill/python 在中文 Windows 上按 GBK 码页回显）。
@@ -33,21 +33,10 @@ from typing import Any, cast
 import pytest
 from loguru import logger
 
-# src.notify 通过 `import main` 读写运行时全局；必须先引入 main 才能加载 src.notify。
+# src.notifications.notify 通过 `import main` 读写运行时全局；必须先引入 main 才能加载 src.notifications.notify。
 # [LT-07] 注入只为下面两行的**导入期**服务，用完当场摘回（完整理由见 tests/test_notify.py 的同名
 # 注释：旧形态把仓库根永久留在 sys.path[0]、从不还原，而 fixture 又晚于模块级 import、搬不进去）。
-_REPO_ROOT = str(Path(__file__).resolve().parent.parent)
-_PATH_BASELINE = sys.path.count(_REPO_ROOT)  # 注入前的条目数（各调用形态下都实测为 0 或 1）
-sys.path.insert(0, _REPO_ROOT)
-try:
-    import src.notify as notify  # noqa: E402
-    from src import main  # noqa: E402  必须在 src.notify 之前（本文件不直接用其成员，仅为导入顺序）
-finally:
-    if _REPO_ROOT in sys.path:
-        sys.path.remove(_REPO_ROOT)
-# LT-07 泄漏判据：「注入 → 导入 → 摘回」三步必须把 sys.path 归还成注入前的条目数（按计数比，不按
-# 整表相等）。与 tests/test_notify.py 末尾同一条守卫。
-assert sys.path.count(_REPO_ROOT) == _PATH_BASELINE, "仓库根被永久留在 sys.path：注入未归还，状态泄漏"
+import src.notifications.notify as notify
 
 # 四类真实凭据形态，全部落在 utils.mask_credentials 的五条模式覆盖范围内（写用例前逐条实测）：
 # 裸 user:pass@host、scheme://user:pass@host、请求头 Authorization、命令行 --password=。
@@ -177,7 +166,7 @@ class _PosixSpy:
 def _install_subprocess_stub(
     monkeypatch: pytest.MonkeyPatch, popen: _PopenFactory, run: _RunRecorder | None = None
 ) -> None:
-    # 浅拷贝 vars(subprocess) 成 SimpleNamespace 后**只替换 src.notify 命名空间里的引用**：
+    # 浅拷贝 vars(subprocess) 成 SimpleNamespace 后**只替换 src.notifications.notify 命名空间里的引用**：
     # 直接 monkeypatch.setattr(subprocess, "Popen", ...) 改的是全进程唯一的 stdlib 模块本体，
     # 会波及 harness 守护线程与其他用例。
     # PIPE / TimeoutExpired 仍从真 subprocess 继承，故生产代码里的异常判定照常成立。
@@ -417,7 +406,7 @@ def test_tree_kill_failure_degrades_to_plain_kill_and_never_raises(
 
 
 def test_posix_group_kill_sends_sigkill_to_the_childs_own_group(monkeypatch: pytest.MonkeyPatch) -> None:
-    # 真跑 _kill_posix_process_group（不用替身），但把 src.notify 命名空间里的 os 换成记录型 shim：
+    # 真跑 _kill_posix_process_group（不用替身），但把 src.notifications.notify 命名空间里的 os 换成记录型 shim：
     # 绝不能真发 SIGKILL——Linux 上 getpgid(真 PID)+killpg 会把跑测试的进程自己打死。
     # 两种平台形态一起断言：win32 必须走 sys.platform 早返回（Windows 根本没有这组符号），
     # POSIX 必须对 pid 本身发 SIGKILL —— 「进程组 ID == 子进程 PID」正是 start_new_session 换来的。

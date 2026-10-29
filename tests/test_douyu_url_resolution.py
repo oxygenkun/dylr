@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from src import spider
+from src.streams import spider
 
 ROOM_ID = "8751648"
 
@@ -109,12 +109,12 @@ async def test_mobile_url_reuses_existing_douyu_pipeline(url: str) -> None:
     # 核心契约：移动端链接复用既有斗鱼流程，最终请求的 betard 地址与 www 形态逐字一致
     requested: list[str] = []
 
-    # 形参必须叫 url：生产侧恒以关键字 `async_req(url=..., proxy_addr=..., headers=...)` 调用
+    # 形参必须叫 url：生产侧恒以关键字 `request(url=..., proxy_addr=..., headers=...)` 调用
     async def _fake_req(url: str, **_kwargs: Any) -> str:
         requested.append(url)
         return _betard_json() if "betard" in url else _mobile_html()
 
-    with patch("src.spider.async_req", new_callable=AsyncMock, side_effect=_fake_req):
+    with patch("src.network.http.request", new_callable=AsyncMock, side_effect=_fake_req):
         result = await spider.get_douyu_info_data(url)
 
     assert result["is_live"] is True
@@ -134,7 +134,7 @@ async def test_non_numeric_resolved_rid_raises() -> None:
     # 故直接测未装饰本体（functools.wraps 保留的 __wrapped__），再单独锁装饰后的兜底结果——
     # 两条合起来才是「抛得出来 + 不穿透主循环」的完整契约。
     raw = getattr(spider.get_douyu_info_data, "__wrapped__")
-    with patch("src.spider.async_req", new_callable=AsyncMock, side_effect=_fake_req):
+    with patch("src.network.http.request", new_callable=AsyncMock, side_effect=_fake_req):
         with pytest.raises(ValueError, match="非数字"):
             await raw("https://m.douyu.com/字母号")
         assert await spider.get_douyu_info_data("https://m.douyu.com/字母号") == {"is_live": False}
@@ -149,7 +149,7 @@ async def test_non_numeric_rid_param_falls_back_to_page_resolution() -> None:
         requested.append(url)
         return _betard_json() if "betard" in url else _mobile_html()
 
-    with patch("src.spider.async_req", new_callable=AsyncMock, side_effect=_fake_req):
+    with patch("src.network.http.request", new_callable=AsyncMock, side_effect=_fake_req):
         result = await spider.get_douyu_info_data("https://m.douyu.com/8751648?rid=abc")
 
     assert requested[0] == f"https://m.douyu.com/{ROOM_ID}"

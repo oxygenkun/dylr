@@ -11,7 +11,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from src.douyin_dm import (
+from src.monitors.douyin_dm import (
     ADDED,
     Conversation,
     DmApiError,

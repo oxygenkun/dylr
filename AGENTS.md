@@ -9,7 +9,7 @@
 
 ## 项目结构
 
-[目录参考](docs/agent-reference/project-structure.md)。运行时代码统一在 `src/`，维护与构建工具统一在 `tool/`；CLI / Web 入口分别为 `src.main:main`、`src.web:main`，源码使用 `python -m src.main` / `src.web` 启动。
+[目录与文件职责参考](docs/agent-reference/project-structure.md)。`src/` 根层保留入口、包初始化与资源；运行时代码按职责放入子包：support 共用支撑、app 生命周期、config 配置、network 网络、recording 录制、streams 视频取流、danmaku 弹幕、monitors 账号监控、notifications 通知、runtime 外部程序与 JS 执行、api Web 后端。维护与构建工具统一在 `tool/`，前端静态资源在 `web/`；根目录 `config/` 是运行期数据，区别于源码包 `src/config/`。CLI / Web 入口分别为 `src.main:main`、`src.web:main`，从项目根目录使用 `python -m src.main` / `python -m src.web` 启动。
 
 ## 项目级 Skill
 
@@ -116,27 +116,27 @@ uv run --locked --extra dev python tool/check_coverage.py
 
 每房间独立线程，以各自 asyncio.run 驱动异步请求；不存在共享全局事件循环。
 
-### 调度中枢 src/scheduler.py
+### 调度中枢 src/recording/scheduler.py
 
 - 并发由 ConcurrencyScheduler 管理：最大同时录制数为 0 时动态调速，非 0 时固定并发；动态容量不低于配置下限。ResizableSemaphore 允许 0 暂停，缩容不回收在用槽位。
 - host 熔断 open→half-open 只放一个带租约探针，超时可重授，避免未上报轮次永久占住探针。计数增量维护，不在持锁热路径反复 sum(deque)。
 - start_record 先初始化 record_host，再在平台分派前 allow 预检；网络与录制信号量保持分工，录制槽必须在 Popen 前 acquire，启动及运行全部包在 try/finally 中释放。
 
-### 录制结果反馈约定（src/main.py / src/stream_select.py）
+### 录制结果反馈约定（src/recording/session.py / src/streams/selection.py）
 
 ffmpeg 按退出码上报成功/失败，禁止轮末无条件成功。解析成功和直下成功也须反馈 host 样本；快速失败按实际 `-i` 地址标记退避，成功只清实际成功地址，白名单由 stream_select 维护，不扩大到斗鱼。
 
 ### 锁的强制约定
 
 - 异步锁按当前事件循环缓存/重建，不建跨循环共享单例。线程锁的种类与持有范围以当前源码为准，不靠历史清单推断。
-- 不跨 await 持有线程锁；异步请求去重复用 cookie_cache 的 singleflight，缓存状态在零 await 的短临界区读写。RLock 仅解决同线程重入，不能提供协程间互斥。
+- 不跨 await 持有线程锁；异步请求去重复用 `network.credentials.CredentialCache.get_or_fetch()`，缓存状态在零 await 的短临界区读写。RLock 仅解决同线程重入，不能提供协程间互斥。
 - 锁所有权在函数内部或调用方明确选一处；变更时搜索全部调用点，避免 Lock 嵌套死锁。
 
 ## 关键约定
 
 - 版本唯一声明在 pyproject；入口直接读取 pyproject.toml，Docker 经 APP_VERSION 注入；文档版本按需同步。
 - 布尔解析复用 config_bool.parse_config_bool，读取写回复用 config_io.read_config_bool；前端 parseConfigBool 保持同一 token 集合，未知值走默认且不覆写用户原文。
-- 改公共符号前用 rg 搜索调用点、测试、资源和 standalone 孪生实现；删符号后不留悬空调用。src/main.py 内部的 main 是函数，不作模块前缀使用。
+- 改公共符号前用 rg 搜索调用点、测试、资源和 standalone 孪生实现；删符号后不留悬空调用。入口只负责启动；业务模块依赖 state，不反向导入 main、web 或 recorder。
 - 外部可执行资源的下载地址、版本与校验值统一维护在 `src/external_resources.json`；更新采用上游公布的哈希或已钉公钥签名，不增加独立检查脚本或重复配置清单。运行期仅直接下载，不调用包管理器、不维护 TOFU/备用源；Docker 使用镜像内组件。
 - JS 文件增删与 `src/external_resources.json` 的 `javascript_sha256` 同步；migu.js 返回完整签名 URL，调用方不再拼过时参数。
 - 启动缓存清理只限程序顶层与 src 直接含 .py 的目录下 pyc/pyo；不递归全仓。基线用版本 + 路径/源码内容哈希，不能用 size/mtime；冻结或开关关闭时零 I/O，基线失败仍清理并告警。

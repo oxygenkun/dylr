@@ -11,7 +11,7 @@ import sys
 # 故需把项目根目录插入 sys.path，使 `python tests/xxx.py` 直接运行时能 import src 包。
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src import spider, stream
+from src.streams import spider, stream
 
 # 参数带默认值：不传参时用固定房间便于快速回归；传参可针对具体房间排查（风控状态与清晰度档位可能不同）。
 URL = sys.argv[1] if len(sys.argv) > 1 else "https://www.douyu.com/88080"

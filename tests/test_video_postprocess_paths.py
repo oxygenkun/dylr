@@ -1,4 +1,4 @@
-# tests/test_video_postprocess_paths.py - src/video_postprocess.py 的分支补全。
+# tests/test_video_postprocess_paths.py - src/recording/postprocess.py 的分支补全。
 #
 # test_video_postprocess.py 只锁了 MIN-04（转码超时放大 + 半成品清理）这一条
 # 与 converts_mp4 相关的不变量；本文件补其余三条**会静默丢产物**的路径：
@@ -10,7 +10,6 @@
 #
 # 全部离线：ffmpeg 由 _run_ffmpeg_checked 的替身模拟，不启动真实进程；
 # time.sleep 经模块内 time 引用的 SimpleNamespace 浅拷贝替换（AGENTS：不改 stdlib 本体）。
-
 # 本文件只管「异常分类」与「退出条件」两类行为，因为这两类缺陷的共同症状是
 # 「产物目录里莫名多/少一个文件」，而后端的转码线程又是长驻的：
 #   · 异常分类——超时 / CalledProcessError / 其它异常必须落入三条不同日志文案。
@@ -24,8 +23,6 @@
 #     交叉测试/异常环境里会走到的分支，不得尝试构造 Windows 专属对象。
 # Mock 口径：ffmpeg 由 _run_ffmpeg_checked 替身模拟；体积读取与 os.remove 都经
 # types.SimpleNamespace(**vars(mod)) 浅拷贝注入，不改 stdlib 模块本体（R1 检查）。
-
-
 import datetime
 import os
 import subprocess
@@ -37,15 +34,15 @@ from typing import Any, cast
 
 import pytest
 
-import src.main as main
-import src.video_postprocess as vp
+import src.recording.postprocess as vp
+from src.recording import state
 
 
 @pytest.fixture(autouse=True)
 def _stub_main_globals(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(main, "converts_to_h264", False, raising=False)
-    monkeypatch.setattr(main, "os_type", "nt", raising=False)
-    monkeypatch.setattr(main, "text_encoding", "utf-8", raising=False)
+    monkeypatch.setattr(state, "converts_to_h264", False, raising=False)
+    monkeypatch.setattr(state, "os_type", "nt", raising=False)
+    monkeypatch.setattr(state, "text_encoding", "utf-8", raising=False)
 
     class _Color:
         YELLOW = ""
@@ -53,9 +50,9 @@ def _stub_main_globals(monkeypatch: pytest.MonkeyPatch) -> None:
         def print_colored(self, *_a: Any, **_k: Any) -> None:
             return None
 
-    monkeypatch.setattr(main, "color_obj", _Color(), raising=False)
-    monkeypatch.setattr(main, "recording", set(), raising=False)
-    monkeypatch.setattr(main, "record_state_lock", threading.Lock(), raising=False)
+    monkeypatch.setattr(state, "color_obj", _Color(), raising=False)
+    monkeypatch.setattr(state, "recording", set(), raising=False)
+    monkeypatch.setattr(state, "record_state_lock", threading.Lock(), raising=False)
 
 
 def _make_source(tmp_path: Path, size: int = 64, name: str = "live_000.ts") -> Path:
@@ -356,10 +353,10 @@ class TestGeneratesSubtitles:
 
         def stop_after_one(_seconds: float) -> None:
             sleeps.append(_seconds)
-            main.recording.discard("room-a")
+            state.recording.discard("room-a")
 
         monkeypatch.setattr(vp, "time", types.SimpleNamespace(sleep=stop_after_one))
-        main.recording.add("room-a")
+        state.recording.add("room-a")
         vp.generate_subtitles("room-a", str(prefix))
         text = (tmp_path / "sub.srt").read_text(encoding="utf-8")
         assert text.startswith("1\n00:00:01,000 --> 00:00:02,000")
@@ -390,10 +387,10 @@ class TestGeneratesSubtitles:
         def step(_seconds: float) -> None:
             count["n"] += 1
             if count["n"] >= 2:
-                main.recording.discard("room-b")
+                state.recording.discard("room-b")
 
         monkeypatch.setattr(vp, "time", types.SimpleNamespace(sleep=step))
-        main.recording.add("room-b")
+        state.recording.add("room-b")
         vp.generate_subtitles("room-b", str(tmp_path / "sub"))
         text = (tmp_path / "sub.srt").read_text(encoding="utf-8")
         assert "00:00:02,000 --> 00:00:03,000" in text

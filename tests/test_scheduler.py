@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# src.scheduler 单元测试：覆盖 ResizableSemaphore / PlatformBreaker / ConcurrencyScheduler。
+# src.recording.scheduler 单元测试：覆盖 ResizableSemaphore / PlatformBreaker / ConcurrencyScheduler。
 # 聚焦高并发录制调度的关键不变量：信号量可安全调容、熔断器状态机正确、
 # 全局并发容量随活跃任务数自适应缩放且带安全下限、按 key 错误预算隔离、录制并发软上限。
 # 2026-09-20 补 SEV-01（有持有者时重算不得放大可用许可）与 MIN-22（探针代数标记）回归锁：
@@ -12,7 +12,7 @@ from typing import Any
 
 import pytest
 
-from src.scheduler import (
+from src.recording.scheduler import (
     _PROBE_LEASE_SECONDS,
     ConcurrencyScheduler,
     PlatformBreaker,

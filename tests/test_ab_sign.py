@@ -13,7 +13,7 @@ import types
 
 import pytest
 
-from src import ab_sign as signer
+from src.streams import ab_sign as signer
 
 
 @pytest.mark.parametrize(

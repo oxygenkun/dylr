@@ -15,10 +15,10 @@ from typing import Any, cast
 
 import pytest
 
-from src.base import DanmakuMessage, DanmakuMessageType
-from src.collector import DanmakuCollector
-from src.danmaku_monitor import DanmakuMonitorHub
-from src.srt_writer import SrtWriter
+from src.danmaku.base import DanmakuMessage, DanmakuMessageType
+from src.danmaku.collector import DanmakuCollector
+from src.danmaku.monitor import DanmakuMonitorHub
+from src.danmaku.srt_writer import SrtWriter
 
 
 class _FakeDanmaku:

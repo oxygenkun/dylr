@@ -1,4 +1,4 @@
-# src/spider.py 批次4修复：平台解析健壮性回归测试。
+# src/streams/spider.py 批次4修复：平台解析健壮性回归测试。
 # 多数用例直接调用装饰器的 __wrapped__ 原函数，以便断言精确返回/异常，
 # 不被 trace_error_decorator 的「吞异常返回未直播」掩盖。
 # 单测聚焦「解析失败/边界输入不得崩溃或误判开播」，覆盖 vvxqiu/migu/faceit/shopee/zhihu/weibo/twitcasting/lianjie 及并发取凭据。
@@ -13,9 +13,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from src import spider as sp
-from src import utils as u
-from src.cookie_cache import clear as clear_cookie_cache
+from src.network import credentials
+from src.runtime import javascript
+from src.streams import spider as sp
 
 
 def _unwrap(func: object) -> Any:
@@ -25,7 +25,7 @@ def _unwrap(func: object) -> Any:
 
 
 def _subprocess_shim(run: Any = None, popen: Any = None) -> types.SimpleNamespace:
-    # SEV-2225 迁移：把 subprocess 替身装进 **src/utils** 的命名空间，不再改写 stdlib 模块本体。
+    # 只替换 JS 执行模块的 subprocess 引用，不改写 stdlib 模块本体。
     # 旧写法 patch("subprocess.run") 的容器是全进程唯一的 stdlib 模块对象，with 窗口内同进程的
     # harness safe-delete 守卫线程（其 subprocess.run 依赖真 Popen 的上下文管理协议，否则报
     # SAFE_DELETE_BULK_GUARD_ERROR）、loguru enqueue 线程、coverage 全部拿到假实现。
@@ -49,7 +49,7 @@ def _fake_popen_class(
     captured: dict[str, Any] | None = None,
     calls: list[str] | None = None,
 ) -> Any:
-    # 造一个 **Popen 替身类**（不是实例）：src/utils.run_node_script_async 里 `subprocess.Popen(argv, …)`
+    # 造一个 **Popen 替身类**（不是实例）：src.runtime.javascript.run_node_script_async 里 `subprocess.Popen(argv, …)`
     # 是构造调用，而 `subprocess.Popen[bytes]` 这类注解在 def 求值期就要 `__class_getitem__`
     # （AGENTS「FakePopen 必须是类并定义 __class_getitem__」的既有口径，缺一样都起不来）。
     # 四个成员各自对应被测实现的一个调用点：communicate（读 stdout/交 stdin/带超时）、
@@ -95,7 +95,7 @@ class TestVvxqiu:
     # 空播放列表响应（仅 anchorName 无 m3u8）须判未直播且不产出 record_url，避免误判开播
     async def test_empty_playlist_response_not_live(self) -> None:
         raw = _unwrap(sp.get_vvxqiu_stream_url)
-        with patch.object(sp, "async_req", new=AsyncMock(side_effect=['{"data": {"anchorName": "N"}}', ""])):
+        with patch.object(sp.http, "request", new=AsyncMock(side_effect=['{"data": {"anchorName": "N"}}', ""])):
             result = await raw("https://x/?roomId=123456")
         assert result["is_live"] is False
         assert "record_url" not in result
@@ -103,7 +103,7 @@ class TestVvxqiu:
     # 房间号缺失时直接判未直播，且不得再发 m3u8 探测请求（省一次网络，也避免对无效房间误判开播）
     async def test_missing_room_id_not_live_no_extra_request(self) -> None:
         raw = _unwrap(sp.get_vvxqiu_stream_url)
-        with patch.object(sp, "async_req", new=AsyncMock(return_value='{"data": {"anchorName": "N"}}')) as mock:
+        with patch.object(sp.http, "request", new=AsyncMock(return_value='{"data": {"anchorName": "N"}}')) as mock:
             result = await raw("https://h5p.vvxqiu.com/live")
         assert result["is_live"] is False
         assert mock.await_count == 1  # 房间号缺失时不再请求 m3u8
@@ -112,8 +112,8 @@ class TestVvxqiu:
     async def test_live_when_playlist_found(self) -> None:
         raw = _unwrap(sp.get_vvxqiu_stream_url)
         with patch.object(
-            sp,
-            "async_req",
+            sp.http,
+            "request",
             new=AsyncMock(side_effect=['{"data": {"anchorName": "N"}}', "#EXTM3U\nhttps://cdn/x.m3u8"]),
         ):
             result = await raw("https://x/?roomId=123456")
@@ -142,15 +142,16 @@ class TestMigu:
         captured: dict[str, Any] = {}
 
         # [L-19] run_node_script_async 现走自管 Popen+communicate，非零退出码由**被测实现**自己转成
-        # CalledProcessError（复刻旧 check=True 契约，见 src/utils.py 的 `if proc.returncode != 0`），故替身只置 returncode。
+        # CalledProcessError（复刻旧 check=True 契约，见 src/runtime/javascript.py 的 `if proc.returncode != 0`），故替身只置 returncode。
         raw = _unwrap(sp.get_migu_stream_url)
         with (
-            patch.object(sp, "async_req", new=AsyncMock(return_value=self._basic_json())),
-            # MI-15 后 spider 不再 import subprocess（改走 utils.run_node_script_async），真正执行
-            # subprocess.run 的是 src/utils.py，故替身装在 utils 命名空间上。
+            patch.object(sp.http, "request", new=AsyncMock(return_value=self._basic_json())),
+            # subprocess 由 JS 执行模块持有，替身须安装到实际执行位置。
             # 末尾的 captured["timeout"] == 30 同时是「替身确实被走到」的见证：装错命名空间就会
             # 去起真实 node 进程、captured 保持为空而变红，不会静默假绿。
-            patch.object(u, "subprocess", _subprocess_shim(popen=_fake_popen_class(returncode=1, captured=captured))),
+            patch.object(
+                javascript, "subprocess", _subprocess_shim(popen=_fake_popen_class(returncode=1, captured=captured))
+            ),
         ):
             with pytest.raises(sp.ProgramError):
                 await raw("https://x/123")
@@ -168,9 +169,12 @@ class TestMigu:
         # migu.js（2026-08 重写版）输出契约：带 ddCalcu/sv 参数的完整地址，按字节捕获（MID-62，无 text=True）。
         hits: list[str] = []
         raw = _unwrap(sp.get_migu_stream_url)
-        # 替身装在 src/utils 上（见 _subprocess_shim），理由同 TestMigu 首条用例
+        # 替身装在 src/runtime/javascript.py 上（见 _subprocess_shim），理由同 TestMigu 首条用例
         stub = _fake_popen_class(stdout=b"https://x.miguvideo.com/abc.m3u8&ddCalcu=dd&sv=119\n", calls=hits)
-        with patch.object(sp, "async_req", new=fake_req), patch.object(u, "subprocess", _subprocess_shim(popen=stub)):
+        with (
+            patch.object(sp.http, "request", new=fake_req),
+            patch.object(javascript, "subprocess", _subprocess_shim(popen=stub)),
+        ):
             result = await raw("https://x/123")
         assert hits == ["spawn", "communicate"], f"Popen 替身未被走到（真起了 node 进程？）: {hits}"
         assert result["is_live"] is False
@@ -198,11 +202,14 @@ class TestMigu:
         stub = _fake_popen_class(stdout=b"dd\n", calls=calls)
 
         raw = _unwrap(sp.get_migu_stream_url)
-        # 替身装在 src/utils 上（见 _subprocess_shim）。calls 非空即「替身真被走到」的见证：
+        # 替身装在 src/runtime/javascript.py 上（见 _subprocess_shim）。calls 非空即「替身真被走到」的见证：
         # 本条的 is_live/anchor_name 断言只依赖 fake_req，装错命名空间时会静默假绿，故补这条。
-        with patch.object(sp, "async_req", new=fake_req), patch.object(u, "subprocess", _subprocess_shim(popen=stub)):
+        with (
+            patch.object(sp.http, "request", new=fake_req),
+            patch.object(javascript, "subprocess", _subprocess_shim(popen=stub)),
+        ):
             result = await raw("https://x/123")
-        assert calls, "subprocess 替身未被调用：patch 目标命名空间错位（真正的执行点在 src/utils.py）"
+        assert calls, "subprocess 替身未被调用：patch 目标命名空间错位（真正的执行点在 src/runtime/javascript.py）"
         assert result["is_live"] is True
         assert result["anchor_name"] == ""  # title 为 None 时不再 TypeError
 
@@ -217,7 +224,7 @@ class TestFaceit:
 
         raw = _unwrap(sp.get_faceit_stream_data)
         with (
-            patch.object(sp, "async_req", new=fake_req),
+            patch.object(sp.http, "request", new=fake_req),
             patch.object(sp, "get_twitchtv_stream_data", new=AsyncMock(return_value={"is_live": True})) as mock_twitch,
         ):
             result = await raw("https://www.faceit.com/players/abc/stream", proxy_addr="http://p:1", cookies="c=1")
@@ -244,7 +251,7 @@ class TestShopee:
             return "{}"
 
         raw = _unwrap(sp.get_shopee_stream_url)
-        with patch.object(sp, "async_req", new=fake_req):
+        with patch.object(sp.http, "request", new=fake_req):
             result = await raw("https://live.shopee.co.id/share?from=live&session=802458")
         assert result["is_live"] is False
         session_url = [u for u in seen_urls if "/session/" in u][0]
@@ -268,7 +275,7 @@ class TestShopee:
 
     async def test_malformed_url_returns_not_live(self) -> None:
         raw = _unwrap(sp.get_shopee_stream_url)
-        with patch.object(sp, "async_req", new=AsyncMock(return_value="")):
+        with patch.object(sp.http, "request", new=AsyncMock(return_value="")):
             result = await raw("not-a-url")
         # URL 解析失败必须判未直播而非抛异常（下游轮询可安全跳过该房间）
         assert result["is_live"] is False
@@ -279,7 +286,7 @@ class TestZhihu:
     # zhihu 无 drama（未开播）即判未直播且不发多余请求，避免空转探测浪费配额
     async def test_no_drama_returns_not_live(self) -> None:
         raw = _unwrap(sp.get_zhihu_stream_url)
-        with patch.object(sp, "async_req", new=AsyncMock(return_value='{"drama": null}')) as mock:
+        with patch.object(sp.http, "request", new=AsyncMock(return_value='{"drama": null}')) as mock:
             result = await raw("https://www.zhihu.com/people/abc")
         assert result == {"anchor_name": "", "is_live": False}
         assert mock.await_count == 1  # 未开播时不再继续请求
@@ -308,7 +315,7 @@ class TestLianjie:
             {"data": {"nickname": "N", "isonline": 1, "defaultRoomTitle": "T", "videoUrl": "http://x/plain"}}
         )
         raw = _unwrap(sp.get_lianjie_stream_url)
-        with patch.object(sp, "async_req", new=AsyncMock(return_value=room_json)):
+        with patch.object(sp.http, "request", new=AsyncMock(return_value=room_json)):
             result = await raw("https://show.lailianjie.com/room1")
         assert result["is_live"] is False
         assert "record_url" not in result
@@ -320,7 +327,8 @@ class TestCacheLocks:
     # 快手 did 经统一 cookie 缓存从主页拉取：多线程并发首轮须仅拉取一次（锁二次检查回归）
     def test_kuaishou_did_fetched_once_under_concurrency(self) -> None:
         sp._cached_kuaishou_did = ""
-        clear_cookie_cache()  # 隔离统一 cookie 缓存单例，确保本测试真正发起拉取
+        credentials.cookie_cache.invalidate()
+        credentials.credential_cache.invalidate()  # 隔离统一 cookie 缓存单例，确保本测试真正发起拉取
         call_count = 0
         count_lock = threading.Lock()
 
@@ -334,9 +342,9 @@ class TestCacheLocks:
         def run() -> None:
             asyncio.run(sp._ensure_kuaishou_did())
 
-        # _ensure_kuaishou_did 现经统一 cookie 缓存(src.cookie_cache) 从快手主页拉取，
-        # 通过传入本模块 async_req 作为 fetcher 复用缓存，故此处仍 patch sp.async_req
-        with patch.object(sp, "async_req", new=fake_req):
+        # _ensure_kuaishou_did 现经统一 cookie 缓存(src.network.credentials) 从快手主页拉取，
+        # 通过传入本模块 request 作为 fetcher 复用缓存，故此处仍 patch sp.http.request
+        with patch.object(sp.http, "request", new=fake_req):
             threads = [threading.Thread(target=run) for _ in range(5)]
             for t in threads:
                 t.start()
@@ -364,7 +372,7 @@ class TestCacheLocks:
         def run() -> None:
             asyncio.run(sp._ensure_twitch_client_id())
 
-        with patch.object(sp, "async_req", new=fake_req):
+        with patch.object(sp.http, "request", new=fake_req):
             threads = [threading.Thread(target=run) for _ in range(5)]
             for t in threads:
                 t.start()

@@ -1,15 +1,15 @@
 # M-13 回归锁（2026-09-29 审查）：B站弹幕 host 轮换期间不得投「假关闭」事件。
 #
-# 被测生产实现：src/platforms/bilibili.py::BilibiliDanmaku 的 _report_close 闸门 + start() 的
-# host 轮换循环（挂在 WsClient.on_close 上的是闸门，不是裸回调）。
+# 被测生产实现：src/danmaku/platforms/bilibili.py::BilibiliDanmaku 的 _report_close 闸门 + start() 的
+# host 轮换循环（挂在 WebSocketClient.on_close 上的是闸门，不是裸回调）。
 #
-# 失效形态（修复前）：每个候选 host 各建一个 WsClient 且都把 on_close 直挂 self._on_close
-# （消费端 = src/collector.py::_on_close → hub.room_closed）。host[0] 耗尽 2 次重连即落一条
+# 失效形态（修复前）：每个候选 host 各建一个 WebSocketClient 且都把 on_close 直挂 self._on_close
+# （消费端 = src/danmaku/collector.py::_on_close → hub.room_closed）。host[0] 耗尽 2 次重连即落一条
 # 「房间关闭」，而 start() 随后继续试 host[1]；host[1] 连上又报 room_connected → 监控页
 # 「假关闭→重连」闪烁 + 一条与事实不符的落盘；两候选都失败时同一关闭事件投两次。
-# WsClient 自带的 _close_reported 是**每实例**的，挡不住跨实例重复上报。
+# WebSocketClient 自带的 _close_reported 是**每实例**的，挡不住跨实例重复上报。
 #
-# 打桩边界：只把网络层 WsClient 换成替身（真实现要打 wss:// 且要等满重连退避）；白名单过滤、
+# 打桩边界：只把网络层 WebSocketClient 换成替身（真实现要打 wss:// 且要等满重连退避）；白名单过滤、
 # 轮换循环、闸门判定、_on_ws_ready/_auth_ok 接线一律走生产代码——测试里没有第二套轮换逻辑，
 # 删掉 _report_close 的闸门会让「中间态不上报」「成功不假关闭」两条直接变红（已实跑变异验证）。
 #
@@ -22,7 +22,7 @@ from typing import Any
 
 import pytest
 
-from src.platforms import bilibili
+from src.danmaku.platforms import bilibili
 
 _EXHAUST_REASON = "重连超过最大次数，与服务器断开连接: stub"
 _HOST_A = "a.chat.bilibili.com"
@@ -31,7 +31,7 @@ _HOST_C = "c.chat.bilibili.com"
 
 
 class _StubWs:
-    # WsClient 替身：只替换「敲一个 host 的连、然后按脚本回报」这一步。
+    # WebSocketClient 替身：只替换「敲一个 host 的连、然后按脚本回报」这一步。
     # script：'ok' 触发 on_ready（会话建成）；'exhaust' 触发 on_close（重连耗尽）；
     # 'auth_reject' 复刻 _reject_auth 终态（先置 DanmakuBase._stopped，再上报关闭）。
 
@@ -53,7 +53,7 @@ class _StubWs:
             self._fire("on_ready")
             return
         if self.script == "auth_reject":
-            # 生产里 _reject_auth 置 _stopped=True 后经 WsClient.fail() 上报（MID-2245）。
+            # 生产里 _reject_auth 置 _stopped=True 后经 WebSocketClient.fail() 上报（MID-2245）。
             if self.client is not None:
                 self.client._stopped = True
             self._fire("on_close", "进房认证被拒（AUTH_REPLY 非 0 或超时未回应）")
@@ -67,7 +67,7 @@ class _StubWs:
         return None
 
     async def close(self) -> None:
-        # WsClient.close() 的语义是「调用方主动停止」，不回调 on_close。
+        # WebSocketClient.close() 的语义是「调用方主动停止」，不回调 on_close。
         self.closed += 1
 
     async def fail(self, reason: str = "") -> None:
@@ -76,7 +76,7 @@ class _StubWs:
 
 
 class _Factory:
-    # 每次 WsClient(...) 构造换成一个 _StubWs，按 host 尝试顺序发放脚本结果。
+    # 每次 WebSocketClient(...) 构造换成一个 _StubWs，按 host 尝试顺序发放脚本结果。
 
     def __init__(self, scripts: list[str], client: Any, client_args: dict[str, Any]) -> None:
         self.instances: list[_StubWs] = []
@@ -113,7 +113,7 @@ def _install(
     )
     args: dict[str, Any] = {"server_host": hosts[0], "room_id": 26306423, "host_list": list(hosts)}
     factory = _Factory(scripts, client, args)
-    monkeypatch.setattr(bilibili, "WsClient", factory)
+    monkeypatch.setattr(bilibili, "WebSocketClient", factory)
     return factory, reported, connected, client
 
 
@@ -141,7 +141,7 @@ class TestHostRotationCloseGate:
         assert reported == [], f"修复前这里是 ['重连超过最大次数…']（假关闭），实为 {reported}"
 
     async def test_all_hosts_exhausted_reports_exactly_once(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # 三个候选全部耗尽 → 恰好一次 room_closed（跨 WsClient 实例去重）。
+        # 三个候选全部耗尽 → 恰好一次 room_closed（跨 WebSocketClient 实例去重）。
         factory, reported, connected, client = _install(
             monkeypatch, ["exhaust", "exhaust", "exhaust"], [_HOST_A, _HOST_B, _HOST_C]
         )
@@ -168,7 +168,7 @@ class TestHostRotationCloseGate:
     async def test_mid_session_exhaustion_after_successful_session_reports(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        # 会话建成后再断线（生产里由该 WsClient 自己耗尽重连触发 on_close）：轮换已结束，
+        # 会话建成后再断线（生产里由该 WebSocketClient 自己耗尽重连触发 on_close）：轮换已结束，
         # _hosts_left 必须已归零，否则这条真实关闭会被闸门吞掉（回到 MID-2245 观感）。
         factory, reported, _connected, client = _install(monkeypatch, ["ok"], [_HOST_A, _HOST_B])
         await client.start(dict(factory.client_args))
@@ -183,7 +183,7 @@ class TestHostRotationCloseGate:
         assert reported == [_EXHAUST_REASON]
 
     async def test_stop_does_not_report_close(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # 调用方主动停止（采集线程收尾）走 WsClient.close()，不是「房间关闭」事件。
+        # 调用方主动停止（采集线程收尾）走 WebSocketClient.close()，不是「房间关闭」事件。
         factory, reported, _connected, client = _install(monkeypatch, ["ok"], [_HOST_A])
         await client.start(dict(factory.client_args))
         await client.stop()
@@ -212,18 +212,18 @@ class TestRotationCallSiteContractUnchanged:
         factory, _reported, _connected, client = _install(monkeypatch, ["exhaust", "exhaust"], [_HOST_A, _HOST_B])
         await client.start(dict(factory.client_args))
         first, second = factory.instances[0], factory.instances[1]
-        # 备地址随下一个 host 注入，重连时才会切过去（WsClient 内部主备通道保持原样）。
+        # 备地址随下一个 host 注入，重连时才会切过去（WebSocketClient 内部主备通道保持原样）。
         assert first.kwargs["backup_url"] == f"wss://{_HOST_B}/sub"
         assert second.kwargs["backup_url"] is None
         for ws in factory.instances:
             assert ws.kwargs["max_reconnect"] == 2
             assert ws.kwargs["reconnect_interval"] == 3.0
             assert ws.kwargs["connect_timeout"] == 8.0
-            # AGENTS 红线：弹幕 WS 绝不跟随系统代理（未显式传 ⇒ WsClient 默认 proxy=None）。
+            # AGENTS 红线：弹幕 WS 绝不跟随系统代理（未显式传 ⇒ WebSocketClient 默认 proxy=None）。
             assert ws.kwargs.get("proxy", None) is None
 
     async def test_on_close_hook_is_the_gate_not_the_raw_callback(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # 接线锁：挂给 WsClient 的必须是闸门方法本身。裸挂 self._on_close 正是修复前的形态，
+        # 接线锁：挂给 WebSocketClient 的必须是闸门方法本身。裸挂 self._on_close 正是修复前的形态，
         # 该断言让「退回原写法」在结构层面也被抓住（与上面三条行为断言互为见证）。
         factory, _reported, _connected, client = _install(monkeypatch, ["exhaust"], [_HOST_A])
         await client.start(dict(factory.client_args))

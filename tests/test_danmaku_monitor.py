@@ -14,10 +14,10 @@ from typing import Any
 
 import pytest
 
-import src.danmaku_monitor as dm
-from src.base import DanmakuBase, DanmakuMessage, DanmakuMessageType
-from src.collector import DanmakuCollector
-from src.danmaku_monitor import DanmakuMonitorHub
+import src.danmaku.monitor as dm
+from src.danmaku.base import DanmakuBase, DanmakuMessage, DanmakuMessageType
+from src.danmaku.collector import DanmakuCollector
+from src.danmaku.monitor import DanmakuMonitorHub
 
 
 # 可长期阻塞的弹幕客户端替身：start() 长睡眠模拟常驻连接，collector 经 loop.stop() 中断
@@ -371,7 +371,7 @@ def test_api_danmaku_endpoint_returns_hub_snapshot(tmp_path: Path, monkeypatch: 
     # /api/danmaku 返回注入枢纽的快照（认证关闭的本地配置）。
     from starlette.testclient import TestClient
 
-    from src import web_api as wa
+    from src.api import routes as wa
 
     hub = DanmakuMonitorHub(log_path=None)
     monkeypatch.setattr(dm, "get_hub", lambda: hub)

@@ -34,29 +34,21 @@ def pytest_configure(config: Any) -> None:
 def _hermetic_danmaku_hub(monkeypatch: pytest.MonkeyPatch) -> None:
     # 弹幕监控枢纽替换为无文件输出实例：经 DanmakuCollector 上报的测试不写真实
     # logs/danmaku_monitor.jsonl，测试与仓库目录互不污染。
-    import src.danmaku_monitor as dm
+    import src.danmaku.monitor as dm
 
     monkeypatch.setattr(dm, "_hub", dm.DanmakuMonitorHub(log_path=None))
 
 
 @pytest.fixture(autouse=True)
 def _clean_credential_caches() -> Generator[None]:
-    # 凭据缓存进程级隔离：cookie_cache 的 _cookie_cache/_generic_cache 与 spider/ttwid 的
-    # 模块级 _cached_* 兜底变量是两套独立状态（singleflight 命中即返回，模块变量仅在调用
-    # 方成功时回写），只清一边会让另一边继续提供旧值。跨用例残留会让「打桩后重新拉取」的
-    # 断言命中旧值，表现为「单独跑通过、整包跑失败」；yield 前后各清一次，覆盖用例内写入的
-    # 下游污染。[历史注] 2026-09-12 审查 H-2 把快手 did / Twitch Client-Id / B站 buvid3 /
-    # 抖音 ttwid 四处去重统一到 singleflight 后，残留面从 1 个缓存扩大到 2 个。
-    from src import spider as _spider
-    from src import ttwid as _ttwid
-    from src.cookie_cache import clear as _clear
+    # 共享缓存与平台侧凭据状态都要重置，避免跨用例复用旧凭据。
+    from src.network import credentials
+    from src.streams import spider as _spider
+    from src.streams import ttwid as _ttwid
 
     def _reset() -> None:
-        _clear()
-        # import 在 fixture 顶部且不做容错：这里出错说明被测模块真的坏了，收集/执行期就该红
-        # （ImportError 不是需要吞掉的环境差异）。[历史注] MIN-2266 ④ 前，两个 import 各裹在
-        # `try/except Exception: return` 里，src.spider 导入期抛错（或被摘出 sys.modules）时
-        # 四个 `_cached_*` 与其后的 `_cached_ttwid` **全部不重置且不报错**。
+        credentials.cookie_cache.invalidate()
+        credentials.credential_cache.invalidate()
         _spider._cached_kuaishou_did = ""
         _spider._cached_twitch_client_id = ""
         _spider._bili_buvid_cached = ""
@@ -75,7 +67,7 @@ def _pin_identity_translation(monkeypatch: pytest.MonkeyPatch) -> None:
     # （本机 language 为空 → 探测出 en_US），同一断言在不同机器上会得到不同文本。
     # 断言的是「源语言模板文本」，故 tr(模板, **kw) == 模板.format(**kw) == 迁移前 f-string 输出；
     # 翻译机制本身由 tests/test_i18n_tr.py 与 test_web_api.py 的语言用例单独覆盖。
-    from src import i18n
+    from src.support import i18n
 
     monkeypatch.setattr(i18n, "_tr", lambda text: text)
 

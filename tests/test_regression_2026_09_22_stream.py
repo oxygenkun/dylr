@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# 2026-09-22 审查报告 / 组 A（src/stream.py + src/stream_select.py）修复的回归锁。
+# 2026-09-22 审查报告 / 组 A（src/streams/stream.py + src/streams/selection.py）修复的回归锁。
 #
 # 每条用例都对应报告里的一个编号，判据是「失效形态本身」而不是调用形状：
 #   SEV-2201  play_url_list 元素为裸 URL 串时不得抛 AttributeError，也不得被装饰器兜成
@@ -18,10 +18,10 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from src import main  # noqa: F401  先完整初始化 main，打破 stream_select<->main 的循环导入（同 test_stream_select.py）
-from src import stream as stream_mod
-from src import stream_select as ss
-from src.stream import (
+from src.streams import selection as ss
+from src.streams import stream as stream_mod
+from src.streams.selection import MOBILE_UA, get_record_user_agent
+from src.streams.stream import (
     _probe_headers,
     get_bilibili_stream_url,
     get_douyin_stream_url,
@@ -30,7 +30,6 @@ from src.stream import (
     get_tiktok_stream_url,
     is_downgrade,
 )
-from src.stream_select import MOBILE_UA, get_record_user_agent
 
 # ────────────────────────────────────────────────────────────
 # SEV-2201：play_url_list 元素类型契约（list[str] 与 list[dict] 并存）
@@ -38,7 +37,7 @@ from src.stream_select import MOBILE_UA, get_record_user_agent
 
 
 class TestPlayUrlListStrContract:
-    # 写入侧（src/spider.py 9 处同型产出）给的是按画质排序后的**裸 URL 串**，
+    # 写入侧（src/streams/spider.py 9 处同型产出）给的是按画质排序后的**裸 URL 串**，
     # 读取侧原实现无条件 `.get()` → AttributeError → 被装饰器兜成 {"is_live": False}。
 
     @pytest.mark.asyncio
@@ -127,7 +126,7 @@ class TestProbeCarriesUserAgent:
                 "hevc_flv_url": None,
             },
         }
-        with patch("src.stream.get_response_status", new_callable=AsyncMock, return_value=True) as mock_status:
+        with patch("src.streams.stream.is_reachable", new_callable=AsyncMock, return_value=True) as mock_status:
             await get_douyin_stream_url(json_data, video_quality="OD")
         assert mock_status.await_args is not None
         headers = cast(dict[str, str], mock_status.await_args.kwargs.get("headers") or {})
@@ -154,7 +153,7 @@ class TestProbeCarriesUserAgent:
                 "liveRoom": {"title": "T", "streamData": {"pull_data": {"stream_data": _json.dumps(stream_data)}}},
             }
         }
-        with patch("src.stream.get_response_status", new_callable=AsyncMock, return_value=True) as mock_status:
+        with patch("src.streams.stream.is_reachable", new_callable=AsyncMock, return_value=True) as mock_status:
             await get_tiktok_stream_url(cast(dict[str, object], json_data), video_quality="OD")
         assert mock_status.await_args is not None
         headers = cast(dict[str, str], mock_status.await_args.kwargs.get("headers") or {})
@@ -204,7 +203,7 @@ class TestHuyaTierGapWithoutExsphd:
     async def test_hd_without_exsphd_is_decided_by_bitrate(self) -> None:
         # 缺口形态：无 exsphd、房间 bitRate=30000、请求 HD(1000)。旧实现两个分支都进不去 → 不挂
         # ratio（=原画）而 actual_quality 仍是 HD → is_downgrade 恒 False → 面板显示「高清」、产物是原画。
-        with patch("src.stream.logger.warning") as warn:
+        with patch("src.streams.stream.logger.warning") as warn:
             result = await get_huya_stream_url(cast(dict[str, object], self._json(30000)), video_quality="HD")
         assert str(result["flv_url"]).endswith("&ratio=500")  # 1000 无档 → 就近降到 500
         assert result["actual_quality"] == "LD"
@@ -221,7 +220,7 @@ class TestHuyaTierGapWithoutExsphd:
     @pytest.mark.asyncio
     async def test_no_exsphd_no_bitrate_falls_back_to_od_with_warning(self) -> None:
         # 两者皆缺：不附加 ratio，但必须把 actual_quality 显式写成 OD（旧实现留着请求档）
-        with patch("src.stream.logger.warning") as warn:
+        with patch("src.streams.stream.logger.warning") as warn:
             result = await get_huya_stream_url(cast(dict[str, object], self._json()), video_quality="SD")
         assert "ratio=" not in str(result["flv_url"])
         assert result["actual_quality"] == "OD"
@@ -255,7 +254,7 @@ class TestDouyinRealQualityKeys:
             "HD1": "https://f/hd1.flv",
             "SD1": "https://f/sd1.flv",
         }
-        with patch("src.stream.get_response_status", new_callable=AsyncMock, return_value=True):
+        with patch("src.streams.stream.is_reachable", new_callable=AsyncMock, return_value=True):
             result = await get_douyin_stream_url(cast(dict[str, object], self._json(flv)), video_quality="OD")
         assert result["available_qualities"] == ["BD", "HD", "SD", "LD"]
         assert result["flv_url"] == "https://f/fhd.flv"
@@ -266,7 +265,7 @@ class TestDouyinRealQualityKeys:
         # 旧实现：actual_quality 是 "FULL_HD1" 这类真实键，QUALITY_LEVEL 查不到 →
         # is_downgrade 恒 False → 抖音画质降级永不告警。
         flv = {"FULL_HD1": "https://f/fhd.flv", "SD1": "https://f/sd1.flv"}
-        with patch("src.stream.get_response_status", new_callable=AsyncMock, return_value=True):
+        with patch("src.streams.stream.is_reachable", new_callable=AsyncMock, return_value=True):
             result = await get_douyin_stream_url(cast(dict[str, object], self._json(flv)), video_quality="BD")
         assert result["actual_quality"] == "SD"
         assert is_downgrade("BD", cast(str, result["actual_quality"])) is True
@@ -274,12 +273,12 @@ class TestDouyinRealQualityKeys:
     @pytest.mark.asyncio
     async def test_unknown_key_warns_and_keeps_name(self) -> None:
         # 未知键：留痕 + 原样上抛（order 默认 99 = 按最低档对待），不得伪造档位名
-        from src.stream import DOUYIN_KEY_TO_CODE
+        from src.streams.stream import DOUYIN_KEY_TO_CODE
 
         assert "FULL_HD1" in DOUYIN_KEY_TO_CODE and DOUYIN_KEY_TO_CODE["FULL_HD1"] == "BD"
         with (
-            patch("src.stream.get_response_status", new_callable=AsyncMock, return_value=True),
-            patch("src.stream.logger.warning") as warn,
+            patch("src.streams.stream.is_reachable", new_callable=AsyncMock, return_value=True),
+            patch("src.streams.stream.logger.warning") as warn,
         ):
             result = await get_douyin_stream_url(
                 cast(dict[str, object], self._json({"MYSTERY": "https://f/x.flv"})), video_quality="OD"
@@ -298,7 +297,9 @@ class TestBilibiliSubTierFolding:
     async def _resolve(video_quality: str, current_qn: int = 400) -> tuple[dict[str, object], AsyncMock]:
         json_data = {"anchor_name": "bili", "live_status": 1, "title": "T", "room_url": "https://live.bilibili.com/1"}
         play = {"current_qn": current_qn, "accept_qn": [current_qn], "url": "https://bilivideo/x.m3u8"}
-        with patch("src.stream.get_bilibili_stream_data", new_callable=AsyncMock, return_value=play) as mock_data:
+        with patch(
+            "src.streams.stream.get_bilibili_stream_data", new_callable=AsyncMock, return_value=play
+        ) as mock_data:
             result = await get_bilibili_stream_url(cast(dict[str, object], json_data), video_quality=video_quality)
         return result, mock_data
 
@@ -444,7 +445,7 @@ class TestDerivedHopScope:
         client = _RecordingClient(
             {_PLAYLIST: "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000\nhttp://127.0.0.1:8080/x.m3u8\n"}
         )
-        with patch("src.stream_select.logger.warning") as warn:
+        with patch("src.streams.selection.logger.warning") as warn:
             # S-04（2026-10-19）：安全拒绝改抛内部控制流异常（原先 return False）——
             # False 与「分片 404 不可达」不可区分，会被调用方的 last_resort / 同址复用翻回可达。
             with pytest.raises(ss._DerivedHopRejected):
@@ -455,7 +456,7 @@ class TestDerivedHopScope:
     def test_non_recordable_variant_is_not_requested(self) -> None:
         # 形态不合规变体（file://）：同 SR-01 判据，候选判失败而非维持可达
         client = _RecordingClient({_PLAYLIST: "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000\nfile:///etc/passwd\n"})
-        with patch("src.stream_select.logger.warning"):
+        with patch("src.streams.selection.logger.warning"):
             # S-04（2026-10-19）：同 test_internal_target_is_not_requested，改判内部控制流异常
             with pytest.raises(ss._DerivedHopRejected):
                 _ = ss._probe_hls_segment(cast(object, client), _PLAYLIST, _HEADERS)  # type: ignore[arg-type]
@@ -466,7 +467,7 @@ class TestDerivedHopScope:
         # 必须判候选失败，否则被劫持播放列表把 http://127.0.0.1:6379/ 形态目标经 -i 交给 ffmpeg。
         # 对照：修复前该形态维持可达，逐跳钩子拦不住（正文请求不走客户端钩子）。
         client = _RecordingClient({_PLAYLIST: "#EXTM3U\n#EXTINF:4.0,\nhttp://127.0.0.1:6379/seg.ts\n"})
-        with patch("src.stream_select.logger.warning") as warn:
+        with patch("src.streams.selection.logger.warning") as warn:
             # S-04（2026-10-19）：改判内部控制流异常（详见 tests/test_stream_select.py 的同名锁）
             with pytest.raises(ss._DerivedHopRejected):
                 _ = ss._probe_hls_segment(cast(object, client), _PLAYLIST, _HEADERS)  # type: ignore[arg-type]
@@ -480,7 +481,7 @@ class TestDerivedHopScope:
 
 
 def test_str_branch_is_present_in_get_url_source() -> None:
-    # 判据（可复核）：src/stream.py 的 get_url 内必须有 `isinstance(play_url, str)` 分支。
+    # 判据（可复核）：src/streams/stream.py 的 get_url 内必须有 `isinstance(play_url, str)` 分支。
     # 变异验证：临时删掉该分支 → SEV-2201 的 6 条用例整体变红（AttributeError 被装饰器吞）。
     import inspect
 

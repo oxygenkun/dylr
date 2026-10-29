@@ -20,8 +20,10 @@ from typing import Any
 
 import pytest
 
-from src import main, notify
-from src.douyin_follow import DouyinFollowMonitor
+from src.monitors.douyin_follow import DouyinFollowMonitor
+from src.notifications import notify
+from src.recording import state
+from src.streams import dispatch as platform_dispatch
 
 
 @pytest.mark.parametrize(
@@ -40,9 +42,9 @@ def test_bark_dispatch(monkeypatch: pytest.MonkeyPatch, url: str, expected: str)
         calls.append(kwargs["level"])
         return {"success": ["test"], "error": []}
 
-    monkeypatch.setattr(main, "bark_level_overrides", {"live.douyin.com/123": "timeSensitive"})
-    monkeypatch.setattr(main, "live_status_push", "BARK")
-    monkeypatch.setattr(main, "bark_msg_level", "active")
+    monkeypatch.setattr(state, "bark_level_overrides", {"live.douyin.com/123": "timeSensitive"})
+    monkeypatch.setattr(state, "live_status_push", "BARK")
+    monkeypatch.setattr(state, "bark_msg_level", "active")
     monkeypatch.setattr(notify, "bark", fake_bark)
     notify.push_message("test", url, "test")
     assert calls == [expected]
@@ -65,8 +67,8 @@ def test_follow_resolver_cache_and_fallback(monkeypatch: pytest.MonkeyPatch) -> 
         monitor._rooms = {"123": room}
         monitor._last_success = monitor._clock()
         monitor._revision = 1
-    monkeypatch.setattr(main, "follow_monitor", monitor)
-    monkeypatch.setattr(main, "semaphore", threading.Semaphore(1))
+    monkeypatch.setattr(platform_dispatch, "follow_monitor", monitor)
+    monkeypatch.setattr(state, "semaphore", threading.Semaphore(1))
     requests: list[str] = []
     rate_calls: list[bool] = []
 
@@ -77,16 +79,16 @@ def test_follow_resolver_cache_and_fallback(monkeypatch: pytest.MonkeyPatch) -> 
     async def fake_stream(data: dict[str, Any], *args: Any) -> dict[str, Any]:
         return {"is_live": data["status"] == 2, "anchor_name": data["anchor_name"]}
 
-    monkeypatch.setattr(main.spider, "get_douyin_web_stream_data", fake_web)
-    monkeypatch.setattr(main.stream, "get_douyin_stream_url", fake_stream)
-    monkeypatch.setattr(main, "_douyin_rate_limit", lambda: rate_calls.append(True))
-    ctx = main._PlatformResolveContext("https://live.douyin.com/123", None, "OD")
-    main._resolve_douyin_com(ctx)
+    monkeypatch.setattr(platform_dispatch.spider, "get_douyin_web_stream_data", fake_web)
+    monkeypatch.setattr(platform_dispatch.stream, "get_douyin_stream_url", fake_stream)
+    monkeypatch.setattr(platform_dispatch, "_douyin_rate_limit", lambda: rate_calls.append(True))
+    ctx = platform_dispatch._PlatformResolveContext("https://live.douyin.com/123", None, "OD")
+    platform_dispatch._resolve_douyin_com(ctx)
     assert ctx.port_info["is_live"] is True
     assert ctx.record_danmaku_args is not None
     assert ctx.record_danmaku_args["room_id"] == "999"
     assert not requests and not rate_calls
-    ctx = main._PlatformResolveContext("https://live.douyin.com/456", None, "OD")
-    main._resolve_douyin_com(ctx)
+    ctx = platform_dispatch._PlatformResolveContext("https://live.douyin.com/456", None, "OD")
+    platform_dispatch._resolve_douyin_com(ctx)
     assert requests == ["https://live.douyin.com/456"]
     assert rate_calls == [True]

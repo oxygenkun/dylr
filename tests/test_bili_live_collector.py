@@ -12,9 +12,9 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src import spider
-from src.collector import DanmakuCollector
-from src.platforms.bilibili import BilibiliDanmaku
+from src.danmaku.collector import DanmakuCollector
+from src.danmaku.platforms.bilibili import BilibiliDanmaku
+from src.streams import spider
 
 URL = sys.argv[1] if len(sys.argv) > 1 else "https://live.bilibili.com/545068"
 # 参数守卫必须两步式（R7③）：先排除 `-q`/`-x` 这类 pytest 选项（否则 int('-q') 在收集期

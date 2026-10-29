@@ -2,7 +2,7 @@
 # WP-A / S-1（严重）：Shopee 短链落地页的凭据外泄 + 内网 SSRF 回归锁。
 #
 # 病史（docs/worklog/CODE_REVIEW_2026-09-29_2.md 的 S-1，与已定稿的小红书 SEV-2214 同型）：
-# get_shopee_stream_url 在「非直链且非店铺主页」分支用 async_req(redirect_url=True) 解短链，
+# get_shopee_stream_url 在「非直链且非店铺主页」分支用 request(redirect_url=True) 解短链，
 # 解出的落地页 URL 由**响应**决定并直接替换 url；随后 host_suffix 由裸字符串切分得出、
 # 拼成 api_host=https://live.shopee.{host_suffix}，再对它发三次请求（ongoing / replay_list /
 # session），而 headers 里挂着调用方经 [Cookie] shopee_cookie 透传的登录态。
@@ -10,13 +10,13 @@
 # 都能成立：前者把 Cookie 送出外网，后者把请求打进回环/云元数据。
 #
 # 本文件锁的是**行为**（实际发出去的 URL 与 headers），不是在测试里再实现一遍白名单：
-# 网络层用 monkeypatch.setattr 换成打桩 async_req（自动还原，进程内不留桩），
-# DNS 那一 seam 用 monkeypatch.setattr 换 web_config._host_internal_reason；
+# 网络层用 monkeypatch.setattr 换成打桩 request（自动还原，进程内不留桩），
+# DNS 那一 seam 用 monkeypatch.setattr 换 targets.host_rejection_reason；
 # 而内网/回环/元数据字面量那几条一律走**真实**判据（它们不经 DNS，离线即可定罪）。
 #
-# 判据分层（与 src/spider.py 的三道闸一一对应）：
+# 判据分层（与 src/streams/spider.py 的三道闸一一对应）：
 #   ① 落地页 host 域族白名单 _shopee_is_allowed_host（含 userinfo/@ 拒绝）；
-#   ② 落地页内网判定 web_config._host_internal_reason；
+#   ② 落地页内网判定 targets.host_rejection_reason；
 #   ③ 构造结果 api_host 再过一次白名单（校验的是要发出去的那个 host，不是输入）。
 
 import urllib.parse
@@ -24,8 +24,9 @@ from typing import Any
 
 import pytest
 
-from src import spider as sp
-from src import web_config
+from src.api import config as web_config
+from src.network import targets
+from src.streams import spider as sp
 
 
 def _as_str(value: object) -> str:
@@ -39,7 +40,7 @@ def _as_dict(value: object) -> dict[str, Any]:
 
 
 class _ReqSpy:
-    # async_req 的打桩替身：记下每次**实际发出**的 URL 与 headers。
+    # request 的打桩替身：记下每次**实际发出**的 URL 与 headers。
     # headers 存快照副本——被测函数会在判定后就地 pop('Cookie')，
     # 只存引用的话断言看到的是「事后被改过的那份」，抓不到发出去那一刻的内容。
 
@@ -176,7 +177,7 @@ async def test_landing_outside_family_is_dropped_and_credentials_are_stripped(
     # 修复后：跳转被丢弃、保留用户自己填的原始 url；后续请求一律不带 Cookie。
     spy = _ReqSpy(landing="https://evil.example.com/steal?session=88")
     logger = _LoggerSpy()
-    monkeypatch.setattr(sp, "async_req", spy)
+    monkeypatch.setattr(sp.http, "request", spy)
     monkeypatch.setattr(sp, "logger", logger)
 
     result = await sp.get_shopee_stream_url("https://shopee.sg/live/1?session=777", cookies="SHOPEE_SESS=SECRET")
@@ -213,7 +214,7 @@ async def test_internal_ip_literal_landings_rejected(monkeypatch: pytest.MonkeyP
     for landing in originals:
         spy = _ReqSpy(landing=landing)
         logger = _LoggerSpy()
-        monkeypatch.setattr(sp, "async_req", spy)
+        monkeypatch.setattr(sp.http, "request", spy)
         monkeypatch.setattr(sp, "logger", logger)
 
         result = await sp.get_shopee_stream_url("https://shopee.sg/live/1?session=777", cookies="SHOPEE_SESS=SECRET")
@@ -244,11 +245,11 @@ async def test_allowlisted_landing_that_resolves_internal_is_rejected(
         seen_hosts.append(host)
         return "解析到内网地址 127.0.0.1"
 
-    monkeypatch.setattr(sp, "async_req", spy)
+    monkeypatch.setattr(sp.http, "request", spy)
     monkeypatch.setattr(sp, "logger", logger)
     # 打的是 DNS 这一 seam，不是重新实现判据：本条要证明的是「第二道闸接进了流程、
     # 且拒绝即丢弃跳转」，而真实函数在 CI 上要么走 DNS、要么依赖解析结果。
-    monkeypatch.setattr(web_config, "_host_internal_reason", _internal)
+    monkeypatch.setattr(targets, "host_rejection_reason", _internal)
 
     result = await sp.get_shopee_stream_url("https://shopee.sg/live/1?session=777", cookies="SHOPEE_SESS=SECRET")
 
@@ -271,7 +272,7 @@ async def test_poisoned_host_suffix_blocked_by_api_host_gate(monkeypatch: pytest
     # 前两道闸只看输入，此处必须按**构造结果**再判一次：不过即按未开播早退、零请求外发。
     spy = _ReqSpy()
     logger = _LoggerSpy()
-    monkeypatch.setattr(sp, "async_req", spy)
+    monkeypatch.setattr(sp.http, "request", spy)
     monkeypatch.setattr(sp, "logger", logger)
 
     result = await sp.get_shopee_stream_url(
@@ -293,7 +294,7 @@ async def test_api_host_gate_blocks_poisoned_suffix_arriving_via_landing(
     # 跳转分支不触发（url 里有 "uid"），api_host 直接由这条地址的 host 切出来 → 仍须零请求。
     spy = _ReqSpy(landing="https://shopee.evil.co/x?session=5")
     logger = _LoggerSpy()
-    monkeypatch.setattr(sp, "async_req", spy)
+    monkeypatch.setattr(sp.http, "request", spy)
     monkeypatch.setattr(sp, "logger", logger)
 
     result = await sp.get_shopee_stream_url("https://live.shopee.evil.co/share?uid=1", cookies="SHOPEE_SESS=SECRET")
@@ -315,11 +316,11 @@ async def test_legit_landing_keeps_credentials_and_records(monkeypatch: pytest.M
     )
     spy = _ReqSpy(landing="https://live.shopee.co.id/share?session=4242", body=body)
     logger = _LoggerSpy()
-    monkeypatch.setattr(sp, "async_req", spy)
+    monkeypatch.setattr(sp.http, "request", spy)
     monkeypatch.setattr(sp, "logger", logger)
     # 只替 DNS seam（真实函数这里要解析域名，CI 离线恒判「无法解析」）：
     # 白名单、凭据收口、api_host 闸三条判据全部走真实实现。
-    monkeypatch.setattr(web_config, "_host_internal_reason", lambda host, **kwargs: None)
+    monkeypatch.setattr(targets, "host_rejection_reason", lambda host, **kwargs: None)
 
     result = await sp.get_shopee_stream_url("https://shopee.sg/live/1?session=777", cookies="SHOPEE_SESS=SECRET")
 
@@ -337,7 +338,7 @@ async def test_direct_live_shopee_link_unaffected(monkeypatch: pytest.MonkeyPatc
     # 这条同时守住 MIN-2211 的既有语义——未开播轮次刻意保持静默（不刷 warning/error）。
     spy = _ReqSpy(body='{"data": null}')
     logger = _LoggerSpy()
-    monkeypatch.setattr(sp, "async_req", spy)
+    monkeypatch.setattr(sp.http, "request", spy)
     monkeypatch.setattr(sp, "logger", logger)
 
     result = await sp.get_shopee_stream_url("https://live.shopee.sg/share?session=802458", cookies="C=1")
@@ -354,7 +355,7 @@ async def test_direct_live_shopee_link_unaffected(monkeypatch: pytest.MonkeyPatc
 async def test_uid_query_value_is_percent_encoded(monkeypatch: pytest.MonkeyPatch) -> None:
     # 未编码时 uid="1&limit=999" 会在 ongoing 接口上**新增一个查询参数**（参数走私）。
     spy = _ReqSpy(body='{"data": null}')
-    monkeypatch.setattr(sp, "async_req", spy)
+    monkeypatch.setattr(sp.http, "request", spy)
     monkeypatch.setattr(sp, "logger", _LoggerSpy())
 
     await sp.get_shopee_stream_url("https://live.shopee.sg/share?uid=1%26limit%3D999", cookies="C=1")
@@ -368,7 +369,7 @@ async def test_uid_query_value_is_percent_encoded(monkeypatch: pytest.MonkeyPatc
 async def test_session_path_segment_is_encoded(monkeypatch: pytest.MonkeyPatch) -> None:
     # session_id 落在路径段上：未编码的 "8/../health" 会改写请求行本身。
     spy = _ReqSpy(body='{"data": null}')
-    monkeypatch.setattr(sp, "async_req", spy)
+    monkeypatch.setattr(sp.http, "request", spy)
     monkeypatch.setattr(sp, "logger", _LoggerSpy())
 
     await sp.get_shopee_stream_url("https://live.shopee.sg/share?session=8%2F..%2Fhealth", cookies="C=1")

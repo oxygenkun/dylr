@@ -8,7 +8,6 @@
 #   ② 调用前同名 .mp4 已存在时不得删（那可能是上一次的成功产物）；
 #   ③ 默认超时随源文件体积线性放大（固定 600s 对 1800s 分段的重编码不够），
 #      显式传入的 timeout 优先。
-
 import subprocess
 import types
 from pathlib import Path
@@ -16,15 +15,15 @@ from typing import Any
 
 import pytest
 
-import src.main as main
-import src.video_postprocess as vp
+import src.recording.postprocess as vp
+from src.recording import state
 
 
 @pytest.fixture(autouse=True)
 def _stub_main_globals(monkeypatch: pytest.MonkeyPatch) -> Any:
     # converts_mp4 运行时读取 main 的两个全局：把「是否重编码」与彩色输出对象打桩，
     # 避免依赖真实 config.ini 与控制台（AGENTS：不 patch stdlib 模块本体，只换属性）
-    monkeypatch.setattr(main, "converts_to_h264", False, raising=False)
+    monkeypatch.setattr(state, "converts_to_h264", False, raising=False)
 
     class _Color:
         YELLOW = ""
@@ -32,7 +31,7 @@ def _stub_main_globals(monkeypatch: pytest.MonkeyPatch) -> Any:
         def print_colored(self, *args: Any, **kwargs: Any) -> None:
             return None
 
-    monkeypatch.setattr(main, "color_obj", _Color(), raising=False)
+    monkeypatch.setattr(state, "color_obj", _Color(), raising=False)
     yield
 
 

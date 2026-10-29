@@ -9,7 +9,7 @@ from typing import Iterator
 import pytest
 from loguru import logger
 
-import src.logger as logger_mod
+import src.support.logger as logger_mod
 
 
 @pytest.fixture()
@@ -47,7 +47,7 @@ def test_recorder_process_owns_recording_log_files(reload_logger: Path, monkeypa
 
 def test_import_time_console_sink_colorize_follows_isatty(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # L-16 回归锁：导入期控制台 sink 的 colorize 必须按 isatty 判定，并与 rebind_console_sink()
-    # 共用 src/logger.py::_console_colorize。旧形态导入期硬编码 colorize=True，stderr 被重定向到
+    # 共用 src/support/logger.py::_console_colorize。旧形态导入期硬编码 colorize=True，stderr 被重定向到
     # 文件/管道时（web.py 后台模式、`python -m src.main > x.log`）ANSI 转义序列照样写进日志内容，
     # 而排障恰恰要看这个文件。两侧都钉：非 tty 不得有 ESC、真 tty 仍须有 ESC（防「恒 False」退化）。
     # 关掉文件 sink（配置「否」），本用例只观察控制台这一路，也不往 tmp_path 外落文件。

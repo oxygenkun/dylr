@@ -13,10 +13,10 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src import spider
-from src.collector import DanmakuCollector
-from src.platforms.douyin import DouyinDanmaku
-from src.ttwid import get_ttwid
+from src.danmaku.collector import DanmakuCollector
+from src.danmaku.platforms.douyin import DouyinDanmaku
+from src.streams import spider
+from src.streams.ttwid import get_ttwid
 
 # 抖音弹幕对风控极敏感，故 resolve_cookie 按「命令行 > config 抖音cookie > 动态 ttwid」三级回退；
 # 游客态配合随机 user_id 多数房间可订阅，失败多在受限房间，属可接受的验证边界。

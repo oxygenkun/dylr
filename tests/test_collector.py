@@ -24,9 +24,9 @@ from typing import Any, cast
 
 import pytest
 
-import src.collector as collector_module
-from src.collector import DanmakuCollector
-from src.danmaku_monitor import DanmakuMonitorHub
+import src.danmaku.collector as collector_module
+from src.danmaku.collector import DanmakuCollector
+from src.danmaku.monitor import DanmakuMonitorHub
 
 
 # 构造期即阻塞的弹幕客户端替身：模拟 _run 发布 self._loop 之后、进入 run_until_complete

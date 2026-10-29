@@ -1,6 +1,6 @@
-# src/spider.py 2026-09-20 批次修复（SEV-07、MID-33 spider 半边、MID-40..50）的离线回归用例。
+# src/streams/spider.py 2026-09-20 批次修复（SEV-07、MID-33 spider 半边、MID-40..50）的离线回归用例。
 # 2026-09-21 追加 SEV-N02（popkontv token 双 "Bearer " 前缀）回归锁，见文件末尾同名小节。
-# 原则（AGENTS「测试不得自实现被测逻辑」）：只打桩 HTTP 层（src.spider.async_req / httpx /
+# 原则（AGENTS「测试不得自实现被测逻辑」）：只打桩 HTTP 层（src.network.http.request / httpx /
 # get_token_js 等边界），解析逻辑一律走真实代码；断言以「删掉生产修复就会变红」为判据。
 
 import asyncio
@@ -14,9 +14,9 @@ from unittest.mock import AsyncMock, Mock, patch
 import httpx
 import pytest
 
-from src import cookie_cache
-from src import spider as sp
-from src.spider import (
+from src.network import credentials
+from src.streams import spider as sp
+from src.streams.spider import (
     get_baidu_stream_data,
     get_bilibili_stream_data,
     get_douyu_info_data,
@@ -35,7 +35,7 @@ def _unwrap(func: object) -> Any:
 def _pin_identity_translation() -> Iterator[None]:
     # i18n.tr 在测试环境按 msgid 直通（仅替换占位符），使日志断言不受目录翻译影响；
     # 若某条文案尚未登记，tr 会回落原 msgid——两种路径下断言的都是「中文 msgid 正文」。
-    from src import i18n as i18n_mod
+    from src.support import i18n as i18n_mod
 
     original_tr = i18n_mod.tr
 
@@ -98,7 +98,7 @@ class TestSev07LoginContracts:
     async def test_login_twitcasting_failure_returns_none(self) -> None:
         # 抓页拿不到 cs_session_id → ValueError → 契约必须是 None；
         # dict 兜底值恒真、会被调用方当成 Cookie 写进请求头。
-        with patch.object(sp, "async_req", new=AsyncMock(return_value="<html>no form</html>")):
+        with patch.object(sp.http, "request", new=AsyncMock(return_value="<html>no form</html>")):
             result = await sp.login_twitcasting("twitter", "user", "pass")
         assert result is None
 
@@ -109,7 +109,7 @@ class TestSev07LoginContracts:
         room_info = ["2026", "P-00001", "sign1", 1, 0]
         with (
             patch.object(sp, "get_popkontv_stream_data", new=AsyncMock(return_value=("anchor1", room_info))),
-            patch.object(sp, "async_req", new=AsyncMock(return_value='{"statusCd":"E5000","statusMsg":"x"}')),
+            patch.object(sp.http, "request", new=AsyncMock(return_value='{"statusCd":"E5000","statusMsg":"x"}')),
             patch.object(sp, "login_popkontv", new=AsyncMock(return_value=None)),
         ):
             with pytest.raises(RuntimeError, match="popkontv login failed"):
@@ -125,7 +125,7 @@ class TestSev07LoginContracts:
         raw = _unwrap(get_twitcasting_stream_url)
         with (
             patch.object(sp, "login_twitcasting", new=AsyncMock(return_value={"is_live": False})),
-            patch.object(sp, "async_req", new=AsyncMock(return_value="<html/>")),
+            patch.object(sp.http, "request", new=AsyncMock(return_value="<html/>")),
         ):
             with pytest.raises(RuntimeError, match="TwitCasting login failed"):
                 await raw("https://twitcasting.tv/someanchor?login=true")
@@ -143,7 +143,7 @@ class TestSev07LoginContracts:
 
         with (
             patch.object(sp, "login_twitcasting", new=AsyncMock(return_value="tc_ss=abc")),
-            patch.object(sp, "async_req", new=fake_req),
+            patch.object(sp.http, "request", new=fake_req),
         ):
             with pytest.raises(ValueError):
                 await raw("https://twitcasting.tv/someanchor?login=true")
@@ -155,7 +155,7 @@ class TestSev07LoginContracts:
 
 
 class TestMid40BuvidInvalidation:
-    # singleflight 通用缓存（TTL 30min）是「被拒值复活」的载体：这里用真实 cookie_cache
+    # singleflight 通用缓存（TTL 30min）是「被拒值复活」的载体：这里用真实 credentials
     # 实例（只 clear 隔离、不打桩）证明失效钩子确实触达 invalidate_generic，而非仅改全局。
     @staticmethod
     def _seed(key: str, value: object) -> None:
@@ -163,7 +163,7 @@ class TestMid40BuvidInvalidation:
             return value
 
         async def _go() -> None:
-            await cookie_cache.singleflight(key=key, factory=_factory, timeout=5, cache_falsy=True)
+            await credentials.credential_cache.get_or_fetch(key=key, factory=_factory, wait_timeout=5, cache_falsy=True)
 
         asyncio.run(_go())
 
@@ -175,13 +175,14 @@ class TestMid40BuvidInvalidation:
             return ("FRESH", False)
 
         async def _go() -> None:
-            await cookie_cache.singleflight(key=key, factory=_factory, timeout=5, cache_falsy=True)
+            await credentials.credential_cache.get_or_fetch(key=key, factory=_factory, wait_timeout=5, cache_falsy=True)
 
         asyncio.run(_go())
         return calls["n"]
 
     def test_invalidate_purges_generic_default_key(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        cookie_cache.clear()
+        credentials.cookie_cache.invalidate()
+        credentials.credential_cache.invalidate()
         self._seed("bili_buvid3|", ("REJECTED-UUID", True))
         monkeypatch.setattr(sp, "_bili_buvid_cached", "REJECTED-UUID")
         monkeypatch.setattr(sp, "_bili_buvid_cached_proxy", "")
@@ -190,7 +191,8 @@ class TestMid40BuvidInvalidation:
         assert self._refetch_count("bili_buvid3|") == 1
 
     def test_invalidate_purges_proxy_key_via_param(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        cookie_cache.clear()
+        credentials.cookie_cache.invalidate()
+        credentials.credential_cache.invalidate()
         self._seed("bili_buvid3|http://p:8080", ("REJECTED-UUID", True))
         monkeypatch.setattr(sp, "_bili_buvid_cached_proxy", "other-proxy")
         sp.invalidate_bili_buvid_cache(proxy_addr="http://p:8080")
@@ -198,7 +200,8 @@ class TestMid40BuvidInvalidation:
 
     def test_invalidate_purges_proxy_key_via_recorded(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # platforms/bilibili.py 的调用点是**无参**的——必须靠缓存写入时记录的代理清对键
-        cookie_cache.clear()
+        credentials.cookie_cache.invalidate()
+        credentials.credential_cache.invalidate()
         self._seed("bili_buvid3|http://q:3128", ("REJECTED-UUID", True))
         monkeypatch.setattr(sp, "_bili_buvid_cached", "REJECTED-UUID")
         monkeypatch.setattr(sp, "_bili_buvid_cached_proxy", "http://q:3128")
@@ -247,8 +250,8 @@ class TestMid41DouyinAppOrigin:
         raw = _unwrap(sp.get_douyin_app_stream_data)
         with (
             patch.object(sp, "get_sec_user_id", new=AsyncMock(return_value=("745964462470", "MS4wLjABAAAA_sec"))),
-            patch.object(sp, "_ensure_ttwid", new=AsyncMock(return_value="ttwid=x")),
-            patch.object(sp, "async_req", new=AsyncMock(return_value=app_resp)),
+            patch.object(sp, "get_ttwid", new=AsyncMock(return_value="ttwid=x")),
+            patch.object(sp.http, "request", new=AsyncMock(return_value=app_resp)),
         ):
             result = await raw("https://v.douyin.com/iQLgKSj/")
         stream_url = cast(dict[str, object], result["stream_url"])
@@ -289,7 +292,7 @@ class TestMid42Huajiao:
                 return self._FEED
             return '{"data": {"h264_url": "http://x/h264.flv"}}'
 
-        with patch.object(sp, "async_req", new=fake_req):
+        with patch.object(sp.http, "request", new=fake_req):
             result = await raw("https://v.huajiao.com/x/AAAA")
         substream = [u for u in seen if "substream" in u][0]
         # 请求参数与消费字段编码器必须一致：要么 h264+h264_url，要么 h265 且补 &codec=h265。
@@ -310,7 +313,7 @@ class TestMid42Huajiao:
                 return self._FEED
             return '{"data": {}}'  # 改版/WAF 页形态：缺 h264_url
 
-        with patch.object(sp, "async_req", new=fake_req), patch.object(sp, "logger", fake):
+        with patch.object(sp.http, "request", new=fake_req), patch.object(sp, "logger", fake):
             result = await raw("https://v.huajiao.com/x/AAAA")
         assert result["is_live"] is False
         assert any("h264_url" in m for m in fake.msgs)
@@ -344,7 +347,7 @@ class TestMid43Taobao:
     async def _anchor(self, broadcaster: object) -> object:
         raw = _unwrap(sp.get_taobao_stream_url)
         resp: tuple[str, dict[str, str]] = (self._jsonp(broadcaster), {})
-        with patch.object(sp, "async_req", new=AsyncMock(return_value=resp)):
+        with patch.object(sp.http, "request", new=AsyncMock(return_value=resp)):
             result = await raw("https://h5.m.taobao.com/taolive/video.html?id=a&liveId=500123")
         return result["anchor_name"]
 
@@ -383,7 +386,7 @@ class TestMid45TailParams:
     # 串尾参数形态是「用户手工删参数 / 平台短分享链」的常见产出，正则必须有 $ 出口；
     # 与 MI-17 已收口的 rid=/castId= 同口径，防止下一个平台抄错写法。
     async def test_baidu_room_id_at_end_of_string(self) -> None:
-        with patch.object(sp, "async_req", new=AsyncMock(return_value='{"data": {}}')):
+        with patch.object(sp.http, "request", new=AsyncMock(return_value='{"data": {}}')):
             result = await get_baidu_stream_data(
                 "https://live.baidu.com/m/media/pclive/pchome/live.html?room_id=9175031377"
             )
@@ -394,7 +397,7 @@ class TestMid45TailParams:
     async def test_popkon_mcid_at_end_of_string(self) -> None:
         raw = _unwrap(sp.get_popkontv_stream_data)
         responses = ['{"data": {"broadCastList": []}}', "<html/>", "<html no next data/>"]
-        with patch.object(sp, "async_req", new=AsyncMock(side_effect=list(responses))):
+        with patch.object(sp.http, "request", new=AsyncMock(side_effect=list(responses))):
             result = await raw("https://www.popkontv.com/channel/notices?mcid=ABC123")
         assert result is not None
         anchor_name, room_info = result
@@ -413,8 +416,8 @@ class TestMid46TiktokGuestCookie:
         with (
             patch.object(sp, "logger", fake),
             patch.object(sp, "_read_tiktok_guest_cookie", return_value=sp._TIKTOK_BUILTIN_GUEST_COOKIE),
-            patch.object(sp, "async_req", new=AsyncMock(return_value="<html>no SIGI</html>")),
-            patch("src.spider.asyncio.sleep", new_callable=AsyncMock),
+            patch.object(sp.http, "request", new=AsyncMock(return_value="<html>no SIGI</html>")),
+            patch("src.streams.spider.asyncio.sleep", new_callable=AsyncMock),
         ):
             result = await sp.get_tiktok_stream_data("https://www.tiktok.com/@x/live")
         assert result == {"is_live": False}
@@ -425,8 +428,8 @@ class TestMid46TiktokGuestCookie:
         with (
             patch.object(sp, "logger", fake),
             patch.object(sp, "_read_tiktok_guest_cookie", return_value="fresh-cookie"),
-            patch.object(sp, "async_req", new=AsyncMock(return_value="<html>no SIGI</html>")),
-            patch("src.spider.asyncio.sleep", new_callable=AsyncMock),
+            patch.object(sp.http, "request", new=AsyncMock(return_value="<html>no SIGI</html>")),
+            patch("src.streams.spider.asyncio.sleep", new_callable=AsyncMock),
         ):
             await sp.get_tiktok_stream_data("https://www.tiktok.com/@x/live")
         assert not any("tiktok_guest_cookie" in m for m in fake.msgs)
@@ -445,7 +448,7 @@ class TestMid47SoopGlobal:
             '{"data": {"isStream": true, "title": "T"}}',
             "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1000\n1080/index.m3u8\n",
         ]
-        with patch.object(sp, "async_req", new=AsyncMock(side_effect=list(responses))):
+        with patch.object(sp.http, "request", new=AsyncMock(side_effect=list(responses))):
             result = await raw("https://www.sooplive.com/abc")
         play_list = cast(list[str], result["play_url_list"])
         # 旧实现 "/".join(m3u8.split("/")[0:3]) 无尾斜杠 → ...sooplive.com1080/index.m3u8
@@ -462,7 +465,7 @@ class TestMid48JsonHardening:
         fake = _fake_logger()
         with (
             patch.object(sp, "logger", fake),
-            patch.object(sp, "async_req", new=AsyncMock(return_value='{"error": "anti-crawler"}')),
+            patch.object(sp.http, "request", new=AsyncMock(return_value='{"error": "anti-crawler"}')),
         ):
             result = await get_douyu_info_data("https://www.douyu.com/12345?rid=12345")
         assert result == {"is_live": False}
@@ -472,7 +475,7 @@ class TestMid48JsonHardening:
         fake = _fake_logger()
         with (
             patch.object(sp, "logger", fake),
-            patch.object(sp, "async_req", new=AsyncMock(return_value="")),
+            patch.object(sp.http, "request", new=AsyncMock(return_value="")),
         ):
             result = await get_douyu_info_data("https://www.douyu.com/12345?rid=12345")
         assert result == {"is_live": False}
@@ -483,7 +486,7 @@ class TestMid48JsonHardening:
         # playUrl 返回 WAF 页：_loads_dict 回 {} → code 判定落入 getRoomPlayInfo 回退分支。
         # 旧实现 json.loads 抛错 → 装饰器吞成 {"is_live": False}，回退链永不执行。
         fallback = '{"data": {"live_status": 0, "playurl_info": {}}}'
-        with patch.object(sp, "async_req", new=AsyncMock(side_effect=["<html>WAF</html>", fallback])) as mock:
+        with patch.object(sp.http, "request", new=AsyncMock(side_effect=["<html>WAF</html>", fallback])) as mock:
             result = await get_bilibili_stream_data("https://live.bilibili.com/12345")
         assert result is None
         assert mock.await_count == 2
@@ -493,7 +496,7 @@ class TestMid48JsonHardening:
         with (
             patch.object(sp, "logger", fake),
             patch.object(sp, "_ensure_twitch_client_id", new=AsyncMock(return_value="cid123")),
-            patch.object(sp, "async_req", new=AsyncMock(return_value='[{"errors": [{"message": "rejected"}]}]')),
+            patch.object(sp.http, "request", new=AsyncMock(return_value='[{"errors": [{"message": "rejected"}]}]')),
         ):
             with pytest.raises(RuntimeError, match="Twitch GQL errors"):
                 await sp.get_twitchtv_room_info("https://www.twitch.tv/someone", token="tk")
@@ -503,7 +506,7 @@ class TestMid48JsonHardening:
         # Client-Id 拉取失败不得再照发 `Client-Id: ""`（必然失败且无日志的组合）
         with (
             patch.object(sp, "_ensure_twitch_client_id", new=AsyncMock(return_value="")),
-            patch.object(sp, "async_req", new=AsyncMock(return_value="[]")) as mock,
+            patch.object(sp.http, "request", new=AsyncMock(return_value="[]")) as mock,
         ):
             with pytest.raises(RuntimeError, match="Client-Id"):
                 await sp.get_twitchtv_room_info("https://www.twitch.tv/someone", token="tk")
@@ -522,7 +525,7 @@ class TestMid49DouyuPostBody:
         sign = {"enc_data": "abc+def&g=h%20i", "did": "d1", "ts": 123, "auth": "a1"}
         with (
             patch.object(sp, "get_token_js", new=AsyncMock(return_value=sign)),
-            patch.object(sp, "async_req", new=AsyncMock(return_value='{"error": 0, "data": {}}')) as mock,
+            patch.object(sp.http, "request", new=AsyncMock(return_value='{"error": 0, "data": {}}')) as mock,
         ):
             result = await get_douyu_stream_data("12345")
         assert result == {"error": 0, "data": {}}
@@ -537,7 +540,7 @@ class TestMid49DouyuPostBody:
         sign = {"did": "d1", "ts": 123, "auth": "a1"}
         with (
             patch.object(sp, "get_token_js", new=AsyncMock(return_value=sign)),
-            patch.object(sp, "async_req", new=AsyncMock(return_value="x")) as mock,
+            patch.object(sp.http, "request", new=AsyncMock(return_value="x")) as mock,
         ):
             result = await get_douyu_stream_data("12345")
         assert result == {}
@@ -561,19 +564,19 @@ class TestMid50OverridesAndUa:
                 captured.update(cast(dict[str, str], headers))
             return "<html></html>"
 
-        with patch.object(sp, "async_req", new=fake_req):
+        with patch.object(sp.http, "request", new=fake_req):
             await raw("https://www.xiaohongshu.com/user/profile/test123")
         assert captured["xy-common-params"] == "platform=iOS&sid=session.custom123"
 
     async def test_xhs_sid_builtin_default(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("XHS_SESSION_SID", raising=False)
-        monkeypatch.setattr(sp.utils, "read_ini_value", lambda *a, **k: None)
+        monkeypatch.setattr(sp.config_files, "read_ini_value", lambda *a, **k: None)
         assert sp._read_xhs_sid() == sp._XHS_BUILTIN_SESSION_SID
 
     async def test_xhs_sid_config_level(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # 三级覆盖：env > config.ini [Cookie] xhs_session_sid > 内置缺省（与 F-10/CR-12 同模式）
         monkeypatch.delenv("XHS_SESSION_SID", raising=False)
-        monkeypatch.setattr(sp.utils, "read_ini_value", lambda *a, **k: " session.cfg ")
+        monkeypatch.setattr(sp.config_files, "read_ini_value", lambda *a, **k: " session.cfg ")
         assert sp._read_xhs_sid() == "session.cfg"
 
     async def test_twitch_usher_params_ua_consistent_and_single_encoded(self) -> None:
@@ -588,7 +591,7 @@ class TestMid50OverridesAndUa:
         ]
         with (
             patch.object(sp, "_ensure_twitch_client_id", new=AsyncMock(return_value="cid123")),
-            patch.object(sp, "async_req", new=AsyncMock(side_effect=list(responses))),
+            patch.object(sp.http, "request", new=AsyncMock(side_effect=list(responses))),
         ):
             result = await raw("https://www.twitch.tv/someone")
         # m3u8_url 即拼出来的 usher 地址，参数正确性直接在其中断言
@@ -602,17 +605,18 @@ class TestMid50OverridesAndUa:
 
 
 class TestMid33CredentialTtl:
-    # TTL 判定与失效钩子都走真实 cookie_cache 实例；「fresh 短路」用例断言 async_req 被
+    # TTL 判定与失效钩子都走真实 credentials 实例；「fresh 短路」用例断言 request 被
     # 打桩为必炸 Mock——误把 TTL 改成永久有效或每次重取都会在这里现形。
     def test_kuaishou_did_ttl_expiry_forces_refetch(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        cookie_cache.clear()
+        credentials.cookie_cache.invalidate()
+        credentials.credential_cache.invalidate()
         monkeypatch.setattr(sp, "_cached_kuaishou_did", "did=old")
         monkeypatch.setattr(sp, "_cached_kuaishou_did_ts", time.monotonic() - 4000.0)  # > 30min
 
         async def fake_fetch_cookies(**kwargs: object) -> dict[str, str]:
             return {"did": "new", "didv": ""}
 
-        monkeypatch.setattr(sp, "async_req", fake_fetch_cookies)
+        monkeypatch.setattr(sp.http, "request", fake_fetch_cookies)
         got = asyncio.run(sp._ensure_kuaishou_did())
         # 旧行为：全局非空即永久返回被作废的旧 did，不重启进程永不自愈
         assert got == "did=new"
@@ -621,27 +625,29 @@ class TestMid33CredentialTtl:
     def test_kuaishou_did_fresh_cache_short_circuits(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(sp, "_cached_kuaishou_did", "did=fresh")
         monkeypatch.setattr(sp, "_cached_kuaishou_did_ts", time.monotonic())
-        with patch.object(sp, "async_req", new=Mock(side_effect=AssertionError("must not refetch"))):
+        with patch.object(sp.http, "request", new=Mock(side_effect=AssertionError("must not refetch"))):
             assert asyncio.run(sp._ensure_kuaishou_did()) == "did=fresh"
 
     def test_twitch_client_id_ttl_expiry_forces_refetch(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        cookie_cache.clear()
+        credentials.cookie_cache.invalidate()
+        credentials.credential_cache.invalidate()
         monkeypatch.setattr(sp, "_cached_twitch_client_id", "stale_client_id_value1")
         monkeypatch.setattr(sp, "_cached_twitch_client_id_ts", time.monotonic() - 4000.0)
         html = '<html>"Client-ID" : "freshclientid000000000000"</html>'
-        monkeypatch.setattr(sp, "async_req", AsyncMock(return_value=html))
+        monkeypatch.setattr(sp.http, "request", AsyncMock(return_value=html))
         got = asyncio.run(sp._ensure_twitch_client_id())
         assert got == "freshclientid000000000000"
 
     def test_invalidate_hooks_clear_global_and_generic(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        cookie_cache.clear()
+        credentials.cookie_cache.invalidate()
+        credentials.credential_cache.invalidate()
 
         async def _seed() -> None:
             async def _factory() -> str:
                 return "did=one"
 
-            await cookie_cache.singleflight(key="kuaishou_did|", factory=_factory, timeout=5)
-            await cookie_cache.singleflight(key="twitch_client_id|", factory=_factory, timeout=5)
+            await credentials.credential_cache.get_or_fetch(key="kuaishou_did|", factory=_factory, wait_timeout=5)
+            await credentials.credential_cache.get_or_fetch(key="twitch_client_id|", factory=_factory, wait_timeout=5)
 
         asyncio.run(_seed())
         monkeypatch.setattr(sp, "_cached_kuaishou_did", "did=one")
@@ -661,8 +667,8 @@ class TestMid33CredentialTtl:
                 calls["n"] += 1
                 return "did=two"
 
-            await cookie_cache.singleflight(key="kuaishou_did|", factory=_factory, timeout=5)
-            await cookie_cache.singleflight(key="twitch_client_id|", factory=_factory, timeout=5)
+            await credentials.credential_cache.get_or_fetch(key="kuaishou_did|", factory=_factory, wait_timeout=5)
+            await credentials.credential_cache.get_or_fetch(key="twitch_client_id|", factory=_factory, wait_timeout=5)
 
         asyncio.run(_refetch())
         assert calls["n"] == 2
@@ -676,7 +682,7 @@ class TestSevN02PopkonBearerPrefix:
     #   - 落盘侧未改成裸值 → test_refreshed_token_is_stored_bare 的第一条断言变红；
     #   - 读取侧未剥前缀 → 后两条（以落盘原值 / 已被旧版本写坏的存量值再进入时，
     #     Authorization 恰含一个前缀）变红。
-    # 只打桩传输层（async_req / login_popkontv / get_popkontv_stream_data），
+    # 只打桩传输层（request / login_popkontv / get_popkontv_stream_data），
     # 前缀归一、长度 640 校验、statusCd 分支与 new_token 回传全部走真实代码。
     _TOKEN = "K" * 640  # 登录接口真实返回的 token 固定 640 字符（spider 的长度校验即以此为准）
     _E5000 = '{"statusCd":"E5000","statusMsg":"token expired"}'
@@ -696,13 +702,13 @@ class TestSevN02PopkonBearerPrefix:
                 auth = cast("dict[str, str]", header).get("Authorization")
                 if auth:
                     sent_auth.append(auth)
-            assert queue, "async_req 桩响应已用尽（说明解析链路多发了请求）"
+            assert queue, "request 桩响应已用尽（说明解析链路多发了请求）"
             return queue.pop(0)
 
         with (
             patch.object(sp, "get_popkontv_stream_data", new=AsyncMock(return_value=("anchor1", room_info))),
             patch.object(sp, "login_popkontv", new=AsyncMock(return_value=(self._TOKEN, "P-00002"))),
-            patch.object(sp, "async_req", new=fake_req),
+            patch.object(sp.http, "request", new=fake_req),
             patch.object(sp, "logger", _fake_logger()),
         ):
             result = await raw(self._URL, access_token=access_token, username="user1", password="password125")
@@ -742,7 +748,7 @@ class TestPopkontvIsPrivateParsing:
     # "True" 后 int() 抛 ValueError，被兜底装饰器吞成 {"is_live": False}，开播房间恒判未开播。
     # 变异判据：判定改成裸真值 `if is_private` → 字符串 "0" 的用例变红（bool("0") 是 True，
     # 公开房间被误判私有而整轮报错）；判定改回 int(str(...)) → 布尔与 "true"/"false" 变红。
-    # 只打桩传输层（async_req / login_popkontv / get_popkontv_stream_data），
+    # 只打桩传输层（request / login_popkontv / get_popkontv_stream_data），
     # parse_config_bool 归一、statusCd 分支与结果组装一律走真实代码。
     _TOKEN = "K" * 640
     _OK = '{"statusCd":"L0000","statusMsg":"ok","data":{"castHlsUrl":"https://p/h.m3u8"}}'
@@ -755,7 +761,7 @@ class TestPopkontvIsPrivateParsing:
         with (
             patch.object(sp, "get_popkontv_stream_data", new=AsyncMock(return_value=("anchor1", room_info))),
             patch.object(sp, "login_popkontv", new=AsyncMock(return_value=(self._TOKEN, "P-00002"))),
-            patch.object(sp, "async_req", new=AsyncMock(return_value=self._OK)),
+            patch.object(sp.http, "request", new=AsyncMock(return_value=self._OK)),
             patch.object(sp, "logger", _fake_logger()),
         ):
             try:

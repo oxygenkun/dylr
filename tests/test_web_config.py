@@ -1,4 +1,4 @@
-# tests/test_web_config.py - src/web_config.py 纯函数模块的安全不变量回归。
+# tests/test_web_config.py - src/api/config.py 纯函数模块的安全不变量回归。
 # 守护：换行注入防护（C3/C7）、密钥哈希往返与明文兼容、原子写不残留临时文件、
 # 默认值含受信代理字段、画质选项的规范化/持久化、URL_config.ini 房间画质保序改写与主播名反查 URL。
 # 全程纯函数 + tmp_path，不触网、不依赖全局 config。
@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from src.web_config import (
+from src.api.config import (
     BUILTIN_QUALITIES,
     SENSITIVE_MASK,
     clamp_pbkdf2_iterations,
@@ -31,6 +31,7 @@ from src.web_config import (
     verify_web_password,
     write_quality_options,
 )
+from src.network import targets
 
 
 class TestFormatUrlLine:
@@ -96,7 +97,7 @@ def _stub_offline_dns(monkeypatch: pytest.MonkeyPatch, table: dict[str, list[str
     # SEV-03 之后房间地址要过 socket.getaddrinfo。这里只替换「解析」这一步（网络层桩），
     # 回环/私网/保留/CGNAT 的分类与「任一结果内部即拒绝」的裁决全部走真实代码。
     # 表外域名默认解析到一个公网地址；需要构造「解析失败」的用例把值写成 OSError 实例。
-    from src import web_config as wc
+    from src.api import config as wc
 
     mapping: dict[str, list[str] | OSError] = {"__default__": ["114.114.114.114"]}
     mapping.update(table or {})
@@ -107,7 +108,7 @@ def _stub_offline_dns(monkeypatch: pytest.MonkeyPatch, table: dict[str, list[str
             raise outcome
         return outcome
 
-    monkeypatch.setattr(wc, "_resolve_host_ips", _fake_resolve)
+    monkeypatch.setattr(targets, "resolve_host_ips", _fake_resolve)
 
 
 class TestRoomTargetInternalBlocklist:
@@ -194,31 +195,31 @@ class TestRoomTargetInternalBlocklist:
 
         assert not ipaddress.ip_address("100.64.0.1").is_private
         # 直接调分类函数：入参已是字面量地址，本就不需要 DNS
-        from src.web_config import _internal_ip_reason
+        from src.network.targets import ip_rejection_reason
 
-        assert _internal_ip_reason(ipaddress.ip_address("100.64.0.1")) is not None
-        assert _internal_ip_reason(ipaddress.ip_address("100.100.100.200")) is not None
+        assert ip_rejection_reason(ipaddress.ip_address("100.64.0.1")) is not None
+        assert ip_rejection_reason(ipaddress.ip_address("100.100.100.200")) is not None
 
     def test_ipv4_aton_forms_normalized_to_loopback(self) -> None:
         # 缩写/非十进制形态必须在本层还原（不能「看起来不像 IP 就交给 DNS」）
-        from src.web_config import _parse_ip_literal
+        from src.network.targets import parse_ip_literal
 
         for text in ("2130706433", "0177.0.0.1", "0x7f000001", "127.1", "127.0.1"):
-            addr = _parse_ip_literal(text)
+            addr = parse_ip_literal(text)
             assert addr is not None and addr.is_loopback, f"{text} 未还原成回环地址: {addr}"
 
     def test_partial_or_namey_strings_are_not_ip_literals(self) -> None:
         from ipaddress import IPv4Address
 
-        from src.web_config import _parse_ip_literal
+        from src.network.targets import parse_ip_literal
 
         # a.b.c 是 inet_aton 的合法形态（末段独占剩余两字节），刻意保持同款语义：
         # 只拦「看起来像但越界/含非数字」的串，不做「少一段就当主机名」的宽松处理
-        assert _parse_ip_literal("1.2.3") == IPv4Address("1.2.0.3")
-        assert _parse_ip_literal("999.1.1.1") is None
-        assert _parse_ip_literal("example.com") is None
-        assert _parse_ip_literal("1.2.3.4.5") is None
-        assert _parse_ip_literal("live.douyin.com") is None
+        assert parse_ip_literal("1.2.3") == IPv4Address("1.2.0.3")
+        assert parse_ip_literal("999.1.1.1") is None
+        assert parse_ip_literal("example.com") is None
+        assert parse_ip_literal("1.2.3.4.5") is None
+        assert parse_ip_literal("live.douyin.com") is None
 
 
 class TestDnsRebindingBoundary:
@@ -226,10 +227,10 @@ class TestDnsRebindingBoundary:
     # 该用例锁住这个事实（而不是假装能挡重绑定），提醒后续改动不要把它当完整防线。
 
     def test_ttl_zero_rebinding_passes_write_time_check(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from src import web_config as wc
+        from src.api import config as wc
 
         answers: dict[str, list[str]] = {"host": ["114.114.114.114"]}
-        monkeypatch.setattr(wc, "_resolve_host_ips", lambda host: list(answers["host"]))
+        monkeypatch.setattr(targets, "resolve_host_ips", lambda host: list(answers["host"]))
         # 写入时公网 → 放行（无法预知录制时 ffmpeg 重新解析到什么）
         validate_room_target("http://evil.example.com/room?a=.flv")
         # 之后记录被改成回环：本层无从拦截，只能在出站网络层（egress 防火墙/代理）收口

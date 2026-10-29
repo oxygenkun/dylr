@@ -1,4 +1,4 @@
-# src/utils.py 两个兜底装饰器「返回契约 → 装饰器配对」与「装饰器贴 def」的全仓 AST 回归锁。
+# src/support/utils.py 两个兜底装饰器「返回契约 → 装饰器配对」与「装饰器贴 def」的全仓 AST 回归锁。
 #
 # 背景（SEV-07 / CR-12 建议④ / MID-68、MID-69）：
 #   - trace_error_decorator 的失败兜底值是 {"is_live": False}，只适用于**返回 dict** 的平台函数；
@@ -172,12 +172,12 @@ def test_trace_error_decorator_contract_across_repo() -> None:
 def test_decorator_names_are_still_defined_and_used() -> None:
     # 与上一条互补的**指向性**锁：若有人把装饰器改名后连本文件的 _DEC_NAMES 一起改掉，命中数
     # 守卫就可能救不回来（两个名字都换新、新名字同样挂满全仓 → 命中数不降）。这条额外钉住
-    # 「判定名确实定义在 src/utils.py、且仓库里仍有 @该名 的挂点」，让「改名 + 同步改测试」
+    # 「判定名确实定义在 src/support/utils.py、且仓库里仍有 @该名 的挂点」，让「改名 + 同步改测试」
     # 不能一次性骗过两面。
-    utils_src = (ROOT / "src" / "utils.py").read_text(encoding="utf-8-sig")
+    utils_src = (ROOT / "src" / "streams/errors.py").read_text(encoding="utf-8-sig")
     corpus = chr(10).join(path.read_text(encoding="utf-8-sig", errors="replace") for path in _iter_py_files())
     for name in sorted(_DEC_NAMES):
         assert f"def {name}" in utils_src, (
-            f"src/utils.py 里已无 {name} 的定义：判定名需同步更新（并同步 AGENTS.md CR-12 条目）"
+            f"src/support/utils.py 里已无 {name} 的定义：判定名需同步更新（并同步 AGENTS.md CR-12 条目）"
         )
         assert f"@{name}" in corpus, f"仓库里已无 @{name} 挂点：要么平台函数全删了，要么装饰器改了名"

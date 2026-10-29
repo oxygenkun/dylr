@@ -13,11 +13,9 @@
 # 2026-09-23 追加：补齐本文件上方曾点名、但当时**并不存在**的 9 条回归锁（grep 对 9 个用例名全部 0
 # 命中），见文件末尾 TestSegmentTemplate* 起各节；另追加 test_watchdog_elapsed_ignores_wall_clock_jump /
 # test_segment_observation_failure_is_not_stall（对应 MID-2208 / MID-2207 的整改）。
-
 import ast
 import importlib.util
 import inspect
-import json
 import re
 import subprocess
 import textwrap
@@ -31,11 +29,19 @@ from urllib.parse import urlsplit
 import httpx
 import pytest
 
-from src import i18n, main, spider, stream, utils
-from src.scheduler import host_of
+from src.recording import session as recording
+from src.recording import state
+from src.recording.scheduler import host_of
+from src.streams import dispatch as platform_dispatch
+from src.streams import selection as stream_select
+from src.streams import spider, stream
+from src.support import i18n, utils
 
 ROOT = Path(__file__).resolve().parents[1]
-MAIN_SRC = ROOT / "src/main.py"
+MAIN_SRC = ROOT / "src/recording/engine.py"
+ENGINE_SOURCES = tuple(
+    ROOT / "src" / name for name in ("recording/engine.py", "recording/session.py", "streams/dispatch.py")
+)
 
 
 def _load_extractor() -> Any:
@@ -73,7 +79,7 @@ class TestI18nStringsExtractable:
     @pytest.fixture(scope="class")
     @classmethod
     def extracted(cls) -> set[str]:
-        return cast(set[str], _load_extractor().scan_file(MAIN_SRC))
+        return cast(set[str], set().union(*(_load_extractor().scan_file(path) for path in ENGINE_SOURCES)))
 
     @pytest.mark.parametrize("msgid", MSGIDS)
     def test_msgid_reachable_by_extractor(self, msgid: str, extracted: set[str]) -> None:
@@ -83,7 +89,7 @@ class TestI18nStringsExtractable:
         # 防回归到「整串写死」形态：两条内置推送模板必须以**含占位符的常量**形式传给
         # msg_push.render_push_content(...)，既不能是裸赋值，也不能把主播名/时间直接拼进字面量
         # （拼进去就没有模板字段了，翻译层只能看着一坨已插值的文本）。
-        tree = ast.parse(MAIN_SRC.read_text(encoding="utf-8-sig"))
+        tree = ast.parse("\n".join(path.read_text(encoding="utf-8-sig") for path in ENGINE_SOURCES))
         naked: list[str] = []
         bad_render_args: list[str] = []
         for node in ast.walk(tree):
@@ -114,7 +120,7 @@ class TestI18nStringsExtractable:
     def test_tr_kwargs_are_actually_used(self) -> None:
         # tr 模板用了 {record_name}/{anchor_name} 等占位符就必须传 kwargs，否则 tr() 内部格式化抛
         # KeyError 时会静默降级回原文模板（i18n.tr 永不抛），译文形同虚设。这里只校验「能格式化成功」。
-        from src import i18n
+        from src.support import i18n
 
         cases = [
             ("\r{record_name} 正在直播中...", {"record_name": "张三"}),
@@ -142,7 +148,7 @@ def _english_catalog() -> dict[str, dict[str, str]]:
     # 删除，「袋子写过、目录没合并」同样要红。复用 i18n 自己的 JSON 加载器，不写第二套解析口径。
     from pathlib import Path
 
-    from src import i18n
+    from src.support import i18n
 
     cats = {
         "en_US": i18n._load_json_catalog(Path(i18n.locale_path) / "en_US.json"),
@@ -208,7 +214,7 @@ class TestFlvConvertBeforeCommentEnd:
     # 复核失效形态：把 main.py 里 `if comment_end:` 的两个 _convert 调用删掉，下方 FLV 用例立即变红。
 
     def _branch_stmts(self) -> list[ast.stmt]:
-        tree = ast.parse(MAIN_SRC.read_text(encoding="utf-8-sig"))
+        tree = ast.parse("\n".join(path.read_text(encoding="utf-8-sig") for path in ENGINE_SOURCES))
         target: list[ast.stmt] | None = None
         for node in ast.walk(tree):
             body = getattr(node, "body", None)
@@ -249,6 +255,7 @@ class TestFlvConvertBeforeCommentEnd:
         namespace: dict[str, Any] = {
             "started": started,
             "record_save_type": save_type,
+            "state": types.SimpleNamespace(split_video_by_time=False),
             "save_file_path": f"D:/rec/a.{save_type.lower()}",
             "split_video_by_time": False,
             "_convert_after_record": lambda p, s: calls.append(p),
@@ -285,7 +292,7 @@ class TestNoGlobForSegmentEnumeration:
     def test_main_has_no_glob_call(self) -> None:
         # 分段枚举必须走 _segment_files（scandir + 字符串前缀/后缀判定）：glob 会把文件名
         # 里的方括号当字符类 → 恒返回空。main.py 内不得出现任何 Path.glob()/glob.glob() 调用。
-        tree = ast.parse(MAIN_SRC.read_text(encoding="utf-8-sig"))
+        tree = ast.parse("\n".join(path.read_text(encoding="utf-8-sig") for path in ENGINE_SOURCES))
         offenders: list[str] = []
         for node in ast.walk(tree):
             if isinstance(node, ast.Attribute) and node.attr == "glob":
@@ -295,12 +302,12 @@ class TestNoGlobForSegmentEnumeration:
         assert offenders == [], f"src/main.py 内仍有 glob 调用: {offenders}"
 
     def test_no_glob_import(self) -> None:
-        src = MAIN_SRC.read_text(encoding="utf-8-sig")
+        src = "\n".join(path.read_text(encoding="utf-8-sig") for path in ENGINE_SOURCES)
         assert re.search(r"^\s*(?:from|import)\s+glob\b", src, re.M) is None
 
     def test_segment_files_used_by_convert(self) -> None:
         # _convert_after_record 的分段枚举必须调用 _segment_files
-        fn = inspect.getsource(main._convert_after_record)
+        fn = inspect.getsource(recording._convert_after_record)
         assert "_segment_files" in fn
 
 
@@ -384,38 +391,38 @@ def _prime_check_subprocess(
     # 装配 check_subprocess 运行所需的最小环境（只打桩子进程/网络/时钟/弹幕，不重写任何判定）
     calls: dict[str, list] = {"ok": [], "err": [], "term": [], "unregister": [], "marks": [], "release": []}
     sem = types.SimpleNamespace(acquire=lambda timeout=None: True, release=lambda: calls["release"].append(1))
-    monkeypatch.setattr(main, "recording_semaphore", sem)
-    monkeypatch.setattr(main, "exit_recording", False)
-    monkeypatch.setattr(main, "recording_enabled", True)
-    monkeypatch.setattr(main, "url_comments", set())
-    monkeypatch.setattr(main, "recording", set())
-    monkeypatch.setattr(main, "recording_time_list", {})
-    monkeypatch.setattr(main, "running_list", [])
-    monkeypatch.setattr(main, "record_state_lock", threading.Lock())
-    monkeypatch.setattr(main, "enable_danmaku", False)
-    monkeypatch.setattr(main, "enable_danmaku_monitor", False)
-    monkeypatch.setattr(main, "danmaku_platforms", [])
-    monkeypatch.setattr(main, "create_time_file", False)
-    monkeypatch.setattr(main, "converts_to_mp4", False)
-    monkeypatch.setattr(main, "delete_origin_file", False)
-    monkeypatch.setattr(main, "register_ffmpeg_process", lambda proc: None)
-    monkeypatch.setattr(main, "unregister_ffmpeg_process", lambda proc: calls["unregister"].append(proc))
-    monkeypatch.setattr(main, "clear_ffmpeg_reject", lambda url, platform: None)
-    monkeypatch.setattr(main, "mark_ffmpeg_reject", lambda url, platform: calls["marks"].append((url, platform)))
-    monkeypatch.setattr(main, "record_success", lambda key=None: calls["ok"].append(key))
-    monkeypatch.setattr(main, "record_error", lambda key=None: calls["err"].append(key))
+    monkeypatch.setattr(state, "recording_semaphore", sem)
+    monkeypatch.setattr(state, "exit_recording", False)
+    monkeypatch.setattr(state, "recording_enabled", True)
+    monkeypatch.setattr(state, "url_comments", set())
+    monkeypatch.setattr(state, "recording", set())
+    monkeypatch.setattr(state, "recording_time_list", {})
+    monkeypatch.setattr(state, "running_list", [])
+    monkeypatch.setattr(state, "record_state_lock", threading.Lock())
+    monkeypatch.setattr(state, "enable_danmaku", False)
+    monkeypatch.setattr(state, "enable_danmaku_monitor", False)
+    monkeypatch.setattr(state, "danmaku_platforms", [])
+    monkeypatch.setattr(state, "create_time_file", False)
+    monkeypatch.setattr(state, "converts_to_mp4", False)
+    monkeypatch.setattr(state, "delete_origin_file", False)
+    monkeypatch.setattr(recording, "register_ffmpeg_process", lambda proc: None)
+    monkeypatch.setattr(recording, "unregister_ffmpeg_process", lambda proc: calls["unregister"].append(proc))
+    monkeypatch.setattr(recording, "clear_ffmpeg_reject", lambda url, platform: None)
+    monkeypatch.setattr(recording, "mark_ffmpeg_reject", lambda url, platform: calls["marks"].append((url, platform)))
+    monkeypatch.setattr(recording, "record_success", lambda key=None: calls["ok"].append(key))
+    monkeypatch.setattr(recording, "record_error", lambda key=None: calls["err"].append(key))
 
     def _terminate(proc: Any, timeout: int = 30) -> bool:
         calls["term"].append(proc)
         return True
 
-    monkeypatch.setattr(main, "_terminate_ffmpeg_process", _terminate)
+    monkeypatch.setattr(recording, "_terminate_ffmpeg_process", _terminate)
     shim = types.SimpleNamespace(**vars(subprocess))
     shim.Popen = popen_cls
-    monkeypatch.setattr(main, "subprocess", shim)
+    monkeypatch.setattr(recording, "subprocess", shim)
     if time_shim is None:
         time_shim = _time_shim(sleep=lambda seconds: None)
-    monkeypatch.setattr(main, "time", time_shim)
+    monkeypatch.setattr(recording, "time", time_shim)
     return calls
 
 
@@ -427,18 +434,18 @@ class TestSegmentTemplateSinglePercent:
     def test_segment_template_has_single_percent_placeholder(self, tmp_path: Any) -> None:
         # 行为用例：真调 main._build_record_output_path（生产函数本身拼模板）
         for save_type in ("TS", "FLV", "MKV", "MP4"):
-            path = main._build_record_output_path(
+            path = recording._build_record_output_path(
                 str(tmp_path), "主播100%名", "标题%d次", "260923_101112", save_type, True
             )
             assert path.count("%") == 1, f"{save_type} 分段模板残留多个 % : {path}"
-            assert path.endswith("_%03d." + main._EXTENSION_BY_SAVE_TYPE.get(save_type, "ts")), path
+            assert path.endswith("_%03d." + recording._EXTENSION_BY_SAVE_TYPE.get(save_type, "ts")), path
             # 唯一幸存的 % 必须仍是序号占位符，否则 _is_segmented_output / SRT 分片对应全部错位
-            assert main._is_segmented_output(path) is True, path
+            assert recording._is_segmented_output(path) is True, path
             assert "100" in path and "标题" in path, f"清洗把有效文件名字符一起吃掉了: {path}"
 
     def test_audio_template_uses_single_percent_placeholder(self, tmp_path: Any) -> None:
         for save_type, ext in (("MP3音频", "mp3"), ("M4A音频", "m4a")):
-            path = main._build_record_output_path(
+            path = recording._build_record_output_path(
                 str(tmp_path), "主播%名", "", "260923_101112", save_type, True, is_audio=True
             )
             assert path.count("%") == 1, f"{save_type} 音频分段模板残留多个 % : {path}"
@@ -447,18 +454,20 @@ class TestSegmentTemplateSinglePercent:
     def test_non_segmented_output_has_no_percent_at_all(self, tmp_path: Any) -> None:
         # 非分段不走 segment muxer，但同一清洗照做：`%` 会再炸在录后转封装/合并环节
         for save_type in ("TS", "FLV", "MKV", "MP4"):
-            path = main._build_record_output_path(str(tmp_path), "主播%名", "%标题", "260923_101112", save_type, False)
+            path = recording._build_record_output_path(
+                str(tmp_path), "主播%名", "%标题", "260923_101112", save_type, False
+            )
             assert "%" not in path, f"{save_type} 非分段输出仍含 % : {path}"
 
     def test_filename_filter_rstr_contains_percent(self) -> None:
         # 第一道防线（rstr 清洗）与第二道（_sanitize_output_name_base）互不替代：
         # rstr 由 src/stream_select.clean_name 经 main.rstr 消费，掉了 % 就等于放开入口面
-        assert "%" in main.rstr, "rstr 必须过滤 `%`（SEV-2202 第一道防线）"
+        assert "%" in state.rstr, "rstr 必须过滤 `%`（SEV-2202 第一道防线）"
 
     def test_sanitizer_logs_a_warning_when_stripping(self) -> None:
         # 静默改名会让用户查不到「文件名怎么少了个 %」，必须留一条可检索告警
         seen: list[str] = []
-        real_logger = main.logger
+        real_logger = recording.logger
 
         class _SpyLogger:
             def __getattr__(self, name: str) -> Any:
@@ -466,11 +475,11 @@ class TestSegmentTemplateSinglePercent:
                     return lambda *a: seen.append(str(a[0]) if a else "")
                 return getattr(real_logger, name)
 
-        main.logger = cast(Any, _SpyLogger())
+        recording.logger = cast(Any, _SpyLogger())
         try:
-            main._sanitize_output_name_base("主播%名")
+            recording._sanitize_output_name_base("主播%名")
         finally:
-            main.logger = real_logger
+            recording.logger = real_logger
         assert any("主播%名" in line for line in seen), f"清洗未告警: {seen}"
 
 
@@ -485,11 +494,13 @@ class TestPlatformHostSchemeAgnostic:
 
     def test_every_platform_host_matches_without_scheme(self) -> None:
         unmatched: list[str] = []
-        for entry in main.PLATFORM_HOST:
+        for entry in platform_dispatch.PLATFORM_HOST:
             host = self._SAMPLE_HOSTS.get(entry, entry)
             for scheme in ("http", "https"):
                 url = f"{scheme}://{host}/123456"
-                handlers = [handler.__name__ for matcher, handler in main._PLATFORM_RESOLVERS if matcher(url)]
+                handlers = [
+                    handler.__name__ for matcher, handler in platform_dispatch._PLATFORM_RESOLVERS if matcher(url)
+                ]
                 if not handlers:
                     unmatched.append(url)
         assert unmatched == [], f"以下准入地址无任何解析器命中（会无限空转）: {unmatched}"
@@ -498,14 +509,14 @@ class TestPlatformHostSchemeAgnostic:
         # 本轮修掉的第 8 条（SEV-2203 残留）：单点复现，避免上面的遍历将来因新增条目而漂移
         hit = {
             handler.__name__
-            for matcher, handler in main._PLATFORM_RESOLVERS
+            for matcher, handler in platform_dispatch._PLATFORM_RESOLVERS
             if matcher("http://www.xiaohongshu.com/1") or matcher("https://www.xiaohongshu.com/1")
         }
         assert hit == {"_resolve_xhslink_com"}, hit
 
     def test_no_resolver_fragment_pins_a_scheme(self) -> None:
         # 静态锁：分派表的匹配片段一律不得带 scheme（整个失效形态的族锁，比逐条遍历更直白）
-        tree = ast.parse(MAIN_SRC.read_text(encoding="utf-8-sig"))
+        tree = ast.parse("\n".join(path.read_text(encoding="utf-8-sig") for path in ENGINE_SOURCES))
         offenders: list[str] = []
         for node in ast.walk(tree):
             if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Name)):
@@ -525,7 +536,7 @@ class TestDiskLimitedRecoverable:
 
     @staticmethod
     def _disk_block_src() -> str:
-        tree = ast.parse(MAIN_SRC.read_text(encoding="utf-8-sig"))
+        tree = ast.parse("\n".join(path.read_text(encoding="utf-8-sig") for path in ENGINE_SOURCES))
         for node in ast.walk(tree):
             if not isinstance(node, ast.If) or not isinstance(node.test, ast.Compare):
                 continue
@@ -533,24 +544,25 @@ class TestDiskLimitedRecoverable:
             if not (isinstance(left, ast.Name) and left.id == "disk_free_gb"):
                 continue
             assigned = {
-                t.id
+                t.attr
                 for stmt in ast.walk(node)
                 if isinstance(stmt, ast.Assign)
                 for t in stmt.targets
-                if isinstance(t, ast.Name)
+                if isinstance(t, ast.Attribute) and isinstance(t.value, ast.Name) and t.value.id == "state"
             }
             if "disk_limited" in assigned and "exit_recording" in assigned:
                 return ast.unparse(node)
         raise AssertionError(
-            "src/main.py 里找不到 `if disk_free_gb < disk_space_limit:` 磁盘限制块（SEV-2206 形态已丢失）"
+            "src/main.py 里找不到 `if disk_free_gb < state.disk_space_limit:` 磁盘限制块（SEV-2206 形态已丢失）"
         )
 
     @classmethod
     def _drive(cls, **state: Any) -> tuple[bool, bool] | None:
         src = "def _branch(disk_free_gb, disk_space_limit, disk_limited, exit_recording, recording, non_interactive):\n"
         src += textwrap.indent(cls._disk_block_src(), "    ") + "\n"
-        src += "    return disk_limited, exit_recording\n"
+        src += "    return state.disk_limited, state.exit_recording\n"
         ns: dict[str, Any] = {
+            "state": types.SimpleNamespace(**{key: value for key, value in state.items() if key != "_shutdown"}),
             "logger": _QuietLogger(),
             "i18n": i18n,
             "sys": _SysStub(),
@@ -631,17 +643,18 @@ class TestDiskLimitedRecoverable:
     def test_entry_condition_still_in_place(self) -> None:
         # 静态锁（防再被删成无条件进入）：磁盘限制块的 test 必须仍是 disk_free_gb < disk_space_limit
         src = self._disk_block_src()
-        assert src.startswith("if disk_free_gb < disk_space_limit:"), src.splitlines()[0]
+        assert src.startswith("if disk_free_gb < state.disk_space_limit:"), src.splitlines()[0]
 
-    def test_flags_are_declared_global_in_main(self) -> None:
-        # 复位要落到模块全局才有意义：main() 里缺 `global disk_limited` 时上面的写入只是局部变量
-        tree = ast.parse(MAIN_SRC.read_text(encoding="utf-8-sig"))
-        fn = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "main")
-        declared: set[str] = set()
-        for node in ast.walk(fn):
-            if isinstance(node, ast.Global):
-                declared.update(node.names)
-        assert {"disk_limited", "exit_recording"} <= declared, "磁盘限制的可逆复位没有写回模块全局"
+    def test_disk_flags_are_written_to_shared_state(self) -> None:
+        tree = ast.parse(self._disk_block_src())
+        assigned = {
+            target.attr
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Assign)
+            for target in node.targets
+            if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name) and target.value.id == "state"
+        }
+        assert {"disk_limited", "exit_recording"} <= assigned
 
 
 class TestDiskFullPauseCleanupStillRuns:
@@ -650,21 +663,21 @@ class TestDiskFullPauseCleanupStillRuns:
     # 空间恢复后主循环的「not in running_list」拉起条件恒假，全部房间不再被拉起。
     # 本类只锁「清理不再被 exit_recording 拦下」这半个不变量（reset 语义属于 SEV-2206 那侧）。
     def test_room_thread_cleanup_survives_disk_full_pause(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        import src.notify as notify_module
+        import src.notifications.notify as notify_module
 
-        monkeypatch.setattr(main, "exit_recording", True)
-        monkeypatch.setattr(main, "running_list", ["https://room.example/1", "https://room.example/2"])
-        monkeypatch.setattr(main, "monitoring", 2)
+        monkeypatch.setattr(state, "exit_recording", True)
+        monkeypatch.setattr(state, "running_list", ["https://room.example/1", "https://room.example/2"])
+        monkeypatch.setattr(state, "monitoring", 2)
         notify_module.remove_room_from_running("https://room.example/1")
-        assert main.running_list == ["https://room.example/2"], "磁盘满暂停期退出的房间未从 running_list 清理"
-        assert main.monitoring == 1, "移除房间时未同步扣减监控计数"
+        assert state.running_list == ["https://room.example/2"], "磁盘满暂停期退出的房间未从 running_list 清理"
+        assert state.monitoring == 1, "移除房间时未同步扣减监控计数"
         # 幂等：已被 clear_record_info 或上一轮移除的 URL 再次传入为无操作
         notify_module.remove_room_from_running("https://room.example/1")
-        assert main.running_list == ["https://room.example/2"]
-        assert main.monitoring == 1
+        assert state.running_list == ["https://room.example/2"]
+        assert state.monitoring == 1
         # 空串 URL 不做任何事（守卫保留）
         notify_module.remove_room_from_running("")
-        assert main.running_list == ["https://room.example/2"]
+        assert state.running_list == ["https://room.example/2"]
 
 
 class _QuietLogger:
@@ -725,7 +738,7 @@ class TestClockJudgements:
         calls = _prime_check_subprocess(monkeypatch, _Popen, time_shim=shim, out_ts="")
         out = tmp_path / "主播_2026-09-23_00-00-00.ts"
         assert (
-            main.check_subprocess(
+            recording.check_subprocess(
                 "主播名",
                 "https://www.huya.com/16028551",
                 ["ffmpeg", "-i", "http://hs.hls.huya.com/src/x.m3u8", str(out)],
@@ -736,7 +749,7 @@ class TestClockJudgements:
             is False
         )
         # 挂钟确实被拨动过（否则这条用例什么都没测）
-        assert abs(wall["now"] - 1_700_000_000.0) > main._FFMPEG_FAST_FAIL_SECONDS
+        assert abs(wall["now"] - 1_700_000_000.0) > recording._FFMPEG_FAST_FAIL_SECONDS
         marked = [url for url, _plat in calls["marks"]]
         if expect_mark:
             assert marked == ["http://hs.hls.huya.com/src/x.m3u8"], "秒退未记入探针退避 → 房间无限重撞同一条死线路"
@@ -769,7 +782,7 @@ class TestClockJudgements:
         out = tmp_path / "主播_2026-09-23_00-00-00.ts"
         out.write_bytes(b"\x00" * 4096)
         assert (
-            main.check_subprocess(
+            recording.check_subprocess(
                 "主播名",
                 "https://www.huya.com/16028551",
                 ["ffmpeg", "-i", "http://hs.flv.huya.com/src/x.flv", str(out)],
@@ -797,21 +810,21 @@ class TestSubprocessUnwind:
 
         calls = _prime_check_subprocess(monkeypatch, _Popen, out_ts="")
         collector = _CollectorStub()
-        monkeypatch.setattr(main, "get_danmaku_collector", lambda **kw: collector)
-        monkeypatch.setattr(main, "enable_danmaku", True)
-        monkeypatch.setattr(main, "danmaku_platforms", ["虎牙直播"])
+        monkeypatch.setattr(recording, "get_danmaku_collector", lambda **kw: collector)
+        monkeypatch.setattr(state, "enable_danmaku", True)
+        monkeypatch.setattr(state, "danmaku_platforms", ["虎牙直播"])
 
         class _ExplodingDict(dict):
             # 现实形态：字幕线程 Thread.start() 抛「can't start new thread」（80+ 房间各持线程）
             def __setitem__(self, key: object, value: object) -> None:
                 raise RuntimeError("can't start new thread")
 
-        monkeypatch.setattr(main, "create_var", cast(Any, _ExplodingDict()))
-        monkeypatch.setattr(main, "create_time_file", True)
+        monkeypatch.setattr(state, "create_var", cast(Any, _ExplodingDict()))
+        monkeypatch.setattr(state, "create_time_file", True)
         out = tmp_path / "主播_2026-09-23_00-00-00.ts"
 
         with pytest.raises(RuntimeError):
-            main.check_subprocess(
+            recording.check_subprocess(
                 "主播名",
                 "https://www.huya.com/16028551",
                 ["ffmpeg", "-i", "http://hs.flv.huya.com/src/x.flv", str(out)],
@@ -832,25 +845,25 @@ class TestSubprocessUnwind:
             rc = 0
 
         calls = _prime_check_subprocess(monkeypatch, _Popen, out_ts="")
-        monkeypatch.setattr(main, "recording", {"主播名"})
-        monkeypatch.setattr(main, "recording_time_list", {"主播名": []})
+        monkeypatch.setattr(state, "recording", {"主播名"})
+        monkeypatch.setattr(state, "recording_time_list", {"主播名": []})
 
         def _register_raises(proc: Any) -> None:
             raise RuntimeError("can't start new thread")
 
-        monkeypatch.setattr(main, "register_ffmpeg_process", _register_raises)
+        monkeypatch.setattr(recording, "register_ffmpeg_process", _register_raises)
         out = tmp_path / "主播_2026-09-23_00-00-00.ts"
 
         with pytest.raises(RuntimeError):
-            main.check_subprocess(
+            recording.check_subprocess(
                 "主播名",
                 "https://www.huya.com/16028551",
                 ["ffmpeg", "-i", "http://hs.flv.huya.com/src/x.flv", str(out)],
                 "TS",
             )
         assert len(calls["unregister"]) == 1, "进程已自然退出时也必须注销（否则 _ffmpeg_processes 只增不清）"
-        assert main.recording == set(), "进程已自然退出时也必须回收 recording，否则面板恒显「录制中」"
-        assert main.recording_time_list == {}
+        assert state.recording == set(), "进程已自然退出时也必须回收 recording，否则面板恒显「录制中」"
+        assert state.recording_time_list == {}
         assert calls["term"] == [], "进程已退出，terminate 仍应被跳过（存活判定只约束终止动作）"
         assert calls["release"] == [1], "finally 必须无条件归还录制槽"
 
@@ -861,21 +874,21 @@ class TestSegmentObservationTriState:
     def test_segment_files_tri_state(self, tmp_path: Path) -> None:
         (tmp_path / "主播_000.ts").write_bytes(b"\x00" * 10)
         template = str(tmp_path / "主播_%03d.ts")
-        assert main._segment_files(template) == [str(tmp_path / "主播_000.ts")]
+        assert recording._segment_files(template) == [str(tmp_path / "主播_000.ts")]
         # 目录可读但没有分段 → [] （真实的「尚无产物」）
         empty = tmp_path / "空目录"
         empty.mkdir()
-        assert main._segment_files(str(empty / "主播_%03d.ts")) == []
+        assert recording._segment_files(str(empty / "主播_%03d.ts")) == []
         # 目录不可读 → None（观测失败，绝不与 [] 混同）
-        assert main._segment_files(str(tmp_path / "不存在的目录" / "主播_%03d.ts")) is None
+        assert recording._segment_files(str(tmp_path / "不存在的目录" / "主播_%03d.ts")) is None
 
     def test_record_output_bytes_distinguishes_none_from_minus_one(self, tmp_path: Path) -> None:
         (tmp_path / "主播_000.ts").write_bytes(b"\x00" * 120)
-        assert main._record_output_bytes(str(tmp_path / "主播_%03d.ts"), True) == 120
+        assert recording._record_output_bytes(str(tmp_path / "主播_%03d.ts"), True) == 120
         empty = tmp_path / "空目录"
         empty.mkdir()
-        assert main._record_output_bytes(str(empty / "主播_%03d.ts"), True) == -1
-        assert main._record_output_bytes(str(tmp_path / "nope" / "主播_%03d.ts"), True) is None
+        assert recording._record_output_bytes(str(empty / "主播_%03d.ts"), True) == -1
+        assert recording._record_output_bytes(str(tmp_path / "nope" / "主播_%03d.ts"), True) is None
 
     def test_segment_observation_failure_is_not_stall(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         # 分段模板落在一个不存在的目录里（scandir 恒 OSError＝观测失败）：
@@ -887,7 +900,7 @@ class TestSegmentObservationTriState:
         calls = _prime_check_subprocess(monkeypatch, _Popen, out_ts="")
         template = str(tmp_path / "产物目录尚未出现" / "主播_%03d.ts")
         assert (
-            main.check_subprocess(
+            recording.check_subprocess(
                 "主播名",
                 "https://www.huya.com/16028551",
                 ["ffmpeg", "-i", "http://hs.hls.huya.com/src/x.m3u8", template],
@@ -924,10 +937,10 @@ class TestCredentialWritebackResilience:
         spider_shim.get_shopee_stream_url = cast(Any, _spider)
         spider_shim.get_flextv_stream_data = cast(Any, _spider)
         stream_shim.get_stream_url = cast(Any, _stream)
-        monkeypatch.setattr(main, "spider", spider_shim)
-        monkeypatch.setattr(main, "stream", stream_shim)
+        monkeypatch.setattr(platform_dispatch, "spider", spider_shim)
+        monkeypatch.setattr(platform_dispatch, "stream", stream_shim)
 
-        utils_shim = types.SimpleNamespace(**vars(utils))
+        utils_shim = types.SimpleNamespace(**vars(platform_dispatch.config_files))
 
         def _update_config(*args: Any, **kwargs: Any) -> None:
             writes.append(
@@ -939,21 +952,23 @@ class TestCredentialWritebackResilience:
             )
 
         utils_shim.update_config = cast(Any, _update_config)
-        monkeypatch.setattr(main, "utils", utils_shim)
+        monkeypatch.setattr(platform_dispatch, "config_files", utils_shim)
 
     def test_twitcasting_persists_cookie_when_live(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # 在播 + 登录成功（json_data 带 new_cookies）→ 回写恰好一次，且值来自 json_data
         writes: list[tuple[str, str, str]] = []
         self._patch_async(monkeypatch, writes, spider_returns={"is_live": True, "new_cookies": "udid=abc;"})
-        ctx = main._PlatformResolveContext("https://twitcasting.tv/example", None, "原画")
-        main._resolve_twitcasting_tv(ctx)
+        ctx = platform_dispatch._PlatformResolveContext("https://twitcasting.tv/example", None, "原画")
+        platform_dispatch._resolve_twitcasting_tv(ctx)
         assert writes == [("Cookie", "twitcasting_cookie", "udid=abc;")], f"在播轮次未落盘 new_cookies: {writes}"
         assert ctx.port_info["is_live"] is True, "回写失败不得影响已拿到的流信息"
 
     def test_twitcasting_skips_writeback_when_no_new_cookies(self, monkeypatch: pytest.MonkeyPatch) -> None:
         writes: list[tuple[str, str, str]] = []
         self._patch_async(monkeypatch, writes, spider_returns={"is_live": True})
-        main._resolve_twitcasting_tv(main._PlatformResolveContext("https://twitcasting.tv/example", None, "原画"))
+        platform_dispatch._resolve_twitcasting_tv(
+            platform_dispatch._PlatformResolveContext("https://twitcasting.tv/example", None, "原画")
+        )
         assert writes == []
 
     def test_flextv_cookie_writeback_failure_keeps_stream_url(self, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -964,15 +979,15 @@ class TestCredentialWritebackResilience:
             writes,
             spider_returns={"new_cookies": "t=1", "play_url_list": {"masterUrl": "http://cdn/x.m3u8"}},
         )
-        utils_shim = cast(types.SimpleNamespace, main.utils)
+        utils_shim = cast(types.SimpleNamespace, platform_dispatch.config_files)
 
         def _boom(*args: Any, **kwargs: Any) -> None:
             raise OSError("Read-only file system")
 
         utils_shim.update_config = cast(Any, _boom)
-        monkeypatch.setattr(main, "global_proxy", True)
-        ctx = main._PlatformResolveContext("https://www.flextv.co.kr/channels/1", None, "原画")
-        main._resolve_flextv_co_kr(ctx)  # 不得冒异常
+        monkeypatch.setattr(state, "global_proxy", True)
+        ctx = platform_dispatch._PlatformResolveContext("https://www.flextv.co.kr/channels/1", None, "原画")
+        platform_dispatch._resolve_flextv_co_kr(ctx)  # 不得冒异常
         assert ctx.unrecognized is False, "凭据回写失败被冒成「未识别」→ 整轮流地址被丢弃"
         assert ctx.port_info.get("is_live") is True or ctx.port_info.get("durl"), ctx.port_info
 
@@ -991,7 +1006,7 @@ class TestShopeeUrlSanitized:
         ids=["plain-query", "minimal"],
     )
     def test_good_uid_is_appended_to_base_without_query(self, uid: str) -> None:
-        got = main._build_shopee_record_url(_SHOPEE_UID_BASE, uid)
+        got = platform_dispatch._build_shopee_record_url(_SHOPEE_UID_BASE, uid)
         assert got == _SHOPEE_UID_BASE.split("?")[0] + "?" + uid
 
     @pytest.mark.parametrize(
@@ -1011,7 +1026,7 @@ class TestShopeeUrlSanitized:
         # 被测对象是 main.py 的 _build_shopee_record_url。不合格的 uid 段必须被**整段丢弃**（返回
         # 空串），调用方（start_record 的 `if new_record_url:`）因此不写配置 = 退回原 record_url。
         # 接线侧的端到端断言见下方 test_resolver_keeps_original_url_on_reject。
-        assert main._build_shopee_record_url(_SHOPEE_UID_BASE, uid) == ""
+        assert platform_dispatch._build_shopee_record_url(_SHOPEE_UID_BASE, uid) == ""
 
     def test_accepted_url_always_keeps_the_original_host(self) -> None:
         # 第二道（同源）断言。诚实标注：uid 段过不了字符白名单里的 `@`，且 candidate 恒为
@@ -1019,7 +1034,7 @@ class TestShopeeUrlSanitized:
         # 因此只锁「被接受的回写地址必与原地址同源」，不谎称它抓得住注入。
         for base in (_SHOPEE_UID_BASE, "https://live.shopee.sg/x?token=1", "https://s.shp.ee/live/9"):
             for uid in ("a=1&b=2", "uid=1"):
-                got = main._build_shopee_record_url(base, uid)
+                got = platform_dispatch._build_shopee_record_url(base, uid)
                 assert got, f"合法 uid 被误拒: base={base} uid={uid}"
                 assert urlsplit(got).hostname == urlsplit(base).hostname, got
                 assert got.startswith(base.split("?")[0]), got
@@ -1037,11 +1052,11 @@ class TestShopeeUrlSanitized:
         stream_shim = types.SimpleNamespace(**vars(stream))
         spider_shim.get_shopee_stream_url = cast(Any, _spider)
         stream_shim.get_stream_url = cast(Any, _stream)
-        monkeypatch.setattr(main, "spider", spider_shim)
-        monkeypatch.setattr(main, "stream", stream_shim)
+        monkeypatch.setattr(platform_dispatch, "spider", spider_shim)
+        monkeypatch.setattr(platform_dispatch, "stream", stream_shim)
 
-        ctx = main._PlatformResolveContext(_SHOPEE_UID_BASE, None, "原画")
-        main._resolve_live_shopee(ctx)
+        ctx = platform_dispatch._PlatformResolveContext(_SHOPEE_UID_BASE, None, "原画")
+        platform_dispatch._resolve_live_shopee(ctx)
         assert ctx.new_record_url == "", f"不合格 uid 仍被拼进回写地址: {ctx.new_record_url!r}"
         assert ctx.platform == "shopee"
         assert ctx.port_info.get("is_live") is True, "丢弃 uid 段不得连累本轮流信息"
@@ -1057,11 +1072,11 @@ class TestShopeeUrlSanitized:
         stream_shim = types.SimpleNamespace(**vars(stream))
         spider_shim.get_shopee_stream_url = cast(Any, _spider)
         stream_shim.get_stream_url = cast(Any, _stream)
-        monkeypatch.setattr(main, "spider", spider_shim)
-        monkeypatch.setattr(main, "stream", stream_shim)
+        monkeypatch.setattr(platform_dispatch, "spider", spider_shim)
+        monkeypatch.setattr(platform_dispatch, "stream", stream_shim)
 
-        ctx = main._PlatformResolveContext(_SHOPEE_UID_BASE, None, "原画")
-        main._resolve_live_shopee(ctx)
+        ctx = platform_dispatch._PlatformResolveContext(_SHOPEE_UID_BASE, None, "原画")
+        platform_dispatch._resolve_live_shopee(ctx)
         assert ctx.new_record_url == "https://live.shopee.sg/api/v1/live/play?session_uid=abc"
 
 
@@ -1100,22 +1115,22 @@ class TestDirectDownloadUserAgent:
         # httpx 是全进程共享的三方模块本体 → 按 MID-66 口径改走浅拷贝替身
         httpx_shim = types.SimpleNamespace(**vars(httpx))
         httpx_shim.Client = cast(Any, _Client)
-        monkeypatch.setattr(main, "httpx", httpx_shim)
+        monkeypatch.setattr(recording, "httpx", httpx_shim)
 
     @pytest.mark.parametrize(
-        "platform_ua,expected", [("", main.MOBILE_UA), ("desktop-ua-for-huya", "desktop-ua-for-huya")]
+        "platform_ua,expected", [("", stream_select.MOBILE_UA), ("desktop-ua-for-huya", "desktop-ua-for-huya")]
     )
     def test_direct_download_always_sends_ua(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, platform_ua: str, expected: str
     ) -> None:
         captured: dict[str, str] = {}
         self._install_httpx_capture(monkeypatch, captured)
-        monkeypatch.setattr(main, "get_record_headers", lambda *a, **k: {})
+        monkeypatch.setattr(recording, "get_record_headers", lambda *a, **k: {})
         # 花椒/shopee 这类「强制直下」平台在 get_record_user_agent 里返回空 → 必须回落常量
-        monkeypatch.setattr(main, "get_record_user_agent", lambda *a, **k: platform_ua)
+        monkeypatch.setattr(recording, "get_record_user_agent", lambda *a, **k: platform_ua)
 
         assert (
-            main.direct_download_stream(
+            recording.direct_download_stream(
                 "http://cdn.example/live.flv",
                 str(tmp_path / "out.flv"),
                 "主播",
@@ -1131,10 +1146,10 @@ class TestDirectDownloadUserAgent:
 
     def test_fallback_ua_is_the_same_constant_as_ffmpeg_path(self) -> None:
         # AGENTS「UA 双端一字不差」：回落值必须与 ffmpeg 拉流路径共用 stream_select.MOBILE_UA。
-        # 延迟 import：src.stream_select 在模块级 import 会经 main 形成循环导入。
-        from src import stream_select
+        # 延迟 import：src.streams.selection 在模块级 import 会经 main 形成循环导入。
+        from src.streams import selection as stream_select
 
-        assert main.MOBILE_UA == stream_select.MOBILE_UA
+        assert stream_select.MOBILE_UA == stream_select.MOBILE_UA
 
 
 class TestCredentialMasking:
@@ -1164,7 +1179,7 @@ class TestCredentialMasking:
             "Use Direct Downloader to Download FLV Stream: {record_url}",
             "无法识别的直播地址，本轮跳过: {record_url}",
         }
-        tree = ast.parse(MAIN_SRC.read_text(encoding="utf-8-sig"))
+        tree = ast.parse("\n".join(path.read_text(encoding="utf-8-sig") for path in ENGINE_SOURCES))
         offenders: list[str] = []
         checked = 0
         for node in ast.walk(tree):

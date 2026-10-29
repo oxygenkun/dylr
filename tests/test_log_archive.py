@@ -6,7 +6,7 @@
 # 2. web_console.log：sys.stdout/stderr 绑定句柄的关闭-改名-重建轮转、
 #    未绑定标准流的遗留文件仅改名不劫持 stdout
 # 3. 弹幕监控边车：DanmakuMonitorHub.close_file() 关闭后下一条事件自动重开
-# 4. src.logger 文件 sink：remove_file_sinks/add_file_sinks 往返与幂等、GUI/配置关闭时不注册
+# 4. src.support.logger 文件 sink：remove_file_sinks/add_file_sinks 往返与幂等、GUI/配置关闭时不注册
 # 5. main.py atexit 注册顺序静态锁（atexit 为 LIFO，归档须先注册、后执行）
 
 import importlib
@@ -22,9 +22,9 @@ from typing import Iterator
 import pytest
 from loguru import logger
 
-import src.log_archive as la
-import src.logger as logger_mod
-from src.danmaku_monitor import DanmakuMonitorHub
+import src.app.log_archive as la
+import src.support.logger as logger_mod
+from src.danmaku.monitor import DanmakuMonitorHub
 
 
 # 在隔离 logs 目录内创建一个待归档日志文件
@@ -112,7 +112,7 @@ class TestArchiveRuntimeLogs:
             real_rename(src, dst)
 
         monkeypatch.setattr(la, "os", types.SimpleNamespace(**{**vars(os), "rename": fake_rename}))
-        # M-27 回归锁：替身只落进 src.log_archive 的命名空间；进程全局 os.rename 必须仍是真实现。
+        # M-27 回归锁：替身只落进 src.app.log_archive 的命名空间；进程全局 os.rename 必须仍是真实现。
         # 恢复成 `monkeypatch.setattr(os, "rename", ...)` 形态时，这一行当场变红。
         assert os.rename is real_rename
         _touch(logs_dir, "streamget.log")
@@ -195,7 +195,7 @@ class TestWebConsoleRotation:
         # 落在里面就崩。取证手法：os.rename 换成「先睡 0.3s、再打一条、最后真改名」的替身，
         # 睡眠段即被人为放大的归档窗口（旧顺序下此刻标准流已关、替身尚未接管），另起一支线程
         # 整窗口持续 print()。判据：① 两支打印都不许抛；② 窗口内那条输出最终并入重建后的新文件
-        # （替身不是黑洞）。按 M-27/MT-11 口径，替身只落进 src.log_archive 命名空间。
+        # （替身不是黑洞）。按 M-27/MT-11 口径，替身只落进 src.app.log_archive 命名空间。
         path = logs_dir / "web_console.log"
         real_rename = os.rename
         marker = "窗口内主线程打印的一行\n"
@@ -341,10 +341,10 @@ class TestLoggerFileSinkOps:
 def test_main_registers_archive_before_cleanup_atexit() -> None:
     # 静态回归锁：atexit 为 LIFO，归档必须先于两个 cleanup 注册，
     # 才能在 ffmpeg 清理等收尾日志落盘之后最后执行（close_all_clients → cleanup → archive）
-    source = (Path(__file__).resolve().parents[1] / "src/main.py").read_text(encoding="utf-8")
+    source = (Path(__file__).resolve().parents[1] / "src/recording/engine.py").read_text(encoding="utf-8")
     archive_pos = source.find("atexit.register(archive_runtime_logs")
     cleanup_pos = source.find("atexit.register(cleanup_all_ffmpeg_processes)")
-    clients_pos = source.find("atexit.register(close_all_clients_sync)")
+    clients_pos = source.find("atexit.register(close_clients)")
     assert archive_pos != -1, "src/main.py 缺少归档 atexit 注册"
     assert cleanup_pos != -1 and clients_pos != -1
     assert archive_pos < cleanup_pos < clients_pos, "归档必须先于 cleanup 注册（LIFO 后执行）"

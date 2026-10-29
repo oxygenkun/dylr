@@ -30,11 +30,11 @@ NO_DATA_HINT = (
 # —— 逐模块覆盖率阈值：本表是唯一事实源，AGENTS.md 只链接到此处、不复制数值。
 # 新模块不必登记（未登记的按 GLOBAL_FLOOR 判），生成物豁免由 GATE_EXEMPT_MODULES 明确列出。
 MODULE_THRESHOLDS: dict[str, float] = {
-    "src/spider.py": 50,
-    "src/stream.py": 70,
-    "src/utils.py": 80,
-    "src/ttwid.py": 85,
-    "src/proxy.py": 50,
+    "src/streams/spider.py": 50,
+    "src/streams/stream.py": 70,
+    "src/support/utils.py": 80,
+    "src/streams/ttwid.py": 85,
+    "src/network/proxy.py": 50,
 }
 
 # 未显式登记阈值的模块所用下限（MID-2259）。取 50.0 与 pyproject
@@ -263,8 +263,8 @@ def _find_module_coverage(coverage_data: CoverageData, module_path: str) -> Cove
 
     # 第二级（现规则）：**整段模块路径（含 src/）必须出现在报告键的尾部**，分隔符按 POSIX 归一
     # 后再比。这条被收紧过两次，两次都是「同名模块顶掉读数」：① 按纯文件名命中，于是
-    # tests/utils.py 能顶掉 src/utils.py；② 去 src/ 前缀 + endswith('/文件名')，tests/utils.py
-    # 照样命中 src/utils.py（本仓两处同名模块真实存在）。故现规则要求整段路径出现在键尾。
+    # tests/utils.py 能顶掉 src/support/utils.py；② 去 src/ 前缀 + endswith('/文件名')，tests/utils.py
+    # 照样命中 src/support/utils.py（本仓两处同名模块真实存在）。故现规则要求整段路径出现在键尾。
     module_norm = Path(module_path).as_posix()
 
     def _posix(key: str) -> str:
@@ -282,7 +282,7 @@ def _find_module_coverage(coverage_data: CoverageData, module_path: str) -> Cove
     for file_path, file_data in files.items():
         key = _posix(file_path)
         # 相等 = 相对键（"src/x.py"）；尾部匹配 = 绝对键（"D:/repo/src/x.py"、"/__w/repo/src/x.py"），
-        # 且必须以 "/" 边界起始，避免 "mysrc/utils.py" 这类前缀粘连命中
+        # 且必须以 "/" 边界起始，避免 "mysrc/support/utils.py" 这类前缀粘连命中
         if key == module_norm or key.endswith("/" + module_norm):
             return file_data
 

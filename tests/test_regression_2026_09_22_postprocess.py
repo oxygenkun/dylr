@@ -1,4 +1,4 @@
-# tests/test_regression_2026_09_22_postprocess.py - src/video_postprocess.py 的 MIN-2236 回归锁。
+# tests/test_regression_2026_09_22_postprocess.py - src/recording/postprocess.py 的 MIN-2236 回归锁。
 #
 # 覆盖三条 2026-09-23 实测确认「仍未修复」的条目：
 #   ① MIN-2236① generate_subtitles 的写盘段无 try/except：线程跑在**录制子进程**里（main.py 的
@@ -14,10 +14,7 @@
 # 全部离线：ffmpeg 由 vp._run_ffmpeg_checked 的替身模拟，不启动真实进程；time.sleep 经模块内 time
 # 引用的 SimpleNamespace 浅拷贝替换。计时口径：generate_subtitles 的退避/聚合以循环自身的秒计数
 # index_time 为基准，故用例只需控制 sleep 次数即可确定性推进窗口，不依赖真实时钟。
-
 import ast
-import importlib.util
-import json
 import re
 import subprocess
 import threading
@@ -27,8 +24,8 @@ from typing import Any
 
 import pytest
 
-import src.main as main
-import src.video_postprocess as vp
+import src.recording.postprocess as vp
+from src.recording import state
 
 ROOT = Path(__file__).resolve().parents[1]
 _PLACEHOLDER_RE = re.compile(r"\{([^{}]+)\}")
@@ -45,11 +42,11 @@ NEW_MSGIDS = [
 @pytest.fixture(autouse=True)
 def _stub_main_globals(monkeypatch: pytest.MonkeyPatch) -> None:
     # 三个入口都在运行时惰性读 main 的少量全局，这里全部打桩，避免依赖真实 config.ini
-    monkeypatch.setattr(main, "converts_to_h264", False, raising=False)
-    monkeypatch.setattr(main, "os_type", "nt", raising=False)
-    monkeypatch.setattr(main, "text_encoding", "utf-8", raising=False)
-    monkeypatch.setattr(main, "recording", set(), raising=False)
-    monkeypatch.setattr(main, "record_state_lock", threading.Lock(), raising=False)
+    monkeypatch.setattr(state, "converts_to_h264", False, raising=False)
+    monkeypatch.setattr(state, "os_type", "nt", raising=False)
+    monkeypatch.setattr(state, "text_encoding", "utf-8", raising=False)
+    monkeypatch.setattr(state, "recording", set(), raising=False)
+    monkeypatch.setattr(state, "record_state_lock", threading.Lock(), raising=False)
 
     class _Color:
         YELLOW = ""
@@ -57,7 +54,7 @@ def _stub_main_globals(monkeypatch: pytest.MonkeyPatch) -> None:
         def print_colored(self, *_a: Any, **_k: Any) -> None:
             return None
 
-    monkeypatch.setattr(main, "color_obj", _Color(), raising=False)
+    monkeypatch.setattr(state, "color_obj", _Color(), raising=False)
 
 
 @pytest.fixture()
@@ -258,17 +255,17 @@ class TestNoOverwriteFlagOnAllConverters:
 
 def _run_subtitles_for(monkeypatch: pytest.MonkeyPatch, room: str, stop_after: int) -> None:
     # 让线程跑满 stop_after 轮后自行退出（sleep 桩推进计数并把房间移出 recording）
-    state = {"n": 0}
+    ticks = {"n": 0}
     shim = types.SimpleNamespace(**vars(vp.time))
 
     def _sleep(seconds: float) -> None:
-        state["n"] += 1
-        if state["n"] >= stop_after:
-            main.recording.discard(room)
+        ticks["n"] += 1
+        if ticks["n"] >= stop_after:
+            state.recording.discard(room)
 
     shim.sleep = _sleep
     monkeypatch.setattr(vp, "time", shim)
-    main.recording.add(room)
+    state.recording.add(room)
 
 
 class TestSubtitleWriteGuard:
@@ -340,7 +337,7 @@ class TestSubtitleWriteGuard:
     def test_non_oserror_is_not_swallowed(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         # 守卫只捕 OSError：main.text_encoding 配成非法编码名属真 bug（LookupError），
         # 在这里吞掉会让「字幕永远不生成」再次变成无解释的现象
-        monkeypatch.setattr(main, "text_encoding", "no-such-codec", raising=False)
+        monkeypatch.setattr(state, "text_encoding", "no-such-codec", raising=False)
         _run_subtitles_for(monkeypatch, "room-e", 3)
         with pytest.raises(LookupError):
             vp.generate_subtitles("room-e", str(tmp_path / "sub"))
@@ -352,7 +349,7 @@ class TestSubtitleWriteGuard:
 
 
 def _tr_templates_in_module() -> set[str]:
-    tree = ast.parse((ROOT / "src" / "video_postprocess.py").read_text(encoding="utf-8"))
+    tree = ast.parse((ROOT / "src" / "recording/postprocess.py").read_text(encoding="utf-8"))
     found: set[str] = set()
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
@@ -367,7 +364,7 @@ def _tr_templates_in_module() -> set[str]:
 
 
 def _catalog_keys() -> set[str]:
-    from src import i18n
+    from src.support import i18n
 
     catalog = i18n._load_translations(i18n.locale_path, "en_US")
     assert catalog is not None
@@ -379,7 +376,7 @@ def _english_catalog() -> dict[str, dict[str, str]]:
     # 复用 i18n 自己的 JSON 加载器，不写第二套解析口径。
     from pathlib import Path
 
-    from src import i18n
+    from src.support import i18n
 
     cats = {
         "en_US": i18n._load_json_catalog(Path(i18n.locale_path) / "en_US.json"),

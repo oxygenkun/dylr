@@ -16,8 +16,8 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from typing import Any
 
-from src.base import DanmakuMessageType
-from src.platforms.douyu import DouyuDanmaku
+from src.danmaku.base import DanmakuMessageType
+from src.danmaku.platforms.douyu import DouyuDanmaku
 
 count = 0
 start_ts = time.monotonic()

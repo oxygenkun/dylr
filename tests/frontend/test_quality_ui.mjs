@@ -67,7 +67,14 @@ function makeElement(id) {
         addEventListener(type, fn) { (listeners[type] = listeners[type] || []).push(fn); },
         setAttribute(k, v) { attrs[k] = String(v); },
         getAttribute(k) { return k in attrs ? attrs[k] : null; },
-        appendChild() {},
+        children: [],
+        appendChild(node) { this.children.push(node); return node; },
+        replaceChildren(...nodes) {
+            this._text = '';
+            this._innerHTML = '';
+            this.children = nodes;
+            this.options = nodes;
+        },
         removeChild() {},
         closest() { return null; },
         matches() { return false; },
@@ -78,18 +85,20 @@ function makeElement(id) {
             el._innerHTML = String(v);
             el._innerHTMLWrites += 1;
             el.options = parseOptionValues(el._innerHTML);
+            el.children = [];
             // 子节点整体替换 ⇒ 原选中态丢失，真实 select 复位到首个 option
             el.value = el.options.length ? el.options[0].value : '';
         },
     });
     Object.defineProperty(el, 'textContent', {
-        get() { return el._text; },
+        get() { return el._text + el.children.map(node => node.textContent || '').join(''); },
         set(v) {
             el._text = String(v);
             // 覆写文本 = 换掉全部子节点（不计入 _innerHTMLWrites：那是「重建 option 集合」的计数）
             el._innerHTML = el._text;
+            if (el.options.length) el.value = '';
+            el.children = [];
             el.options = [];
-            el.value = '';
         },
     });
     return el;
@@ -202,6 +211,8 @@ async function bootApp({ lang, routes, confirm = () => true, injectToken = true,
         return configCache.inputs;
     }
     const document = {
+        createElement: tag => makeElement(tag),
+        createTextNode: text => ({ textContent: String(text) }),
         getElementById: getOrCreate,
         querySelectorAll(sel) {
             if (sel === '.tab') return tabs;
@@ -303,6 +314,22 @@ test('沙箱加载 app.js 并导出事件处理函数', async () => {
     const ctx = await bootApp({ routes: {} });
     assert.equal(typeof ctx.sandbox.toggleRoom, 'function');
     assert.equal(typeof ctx.sandbox.deleteRoom, 'function');
+});
+
+test('画质选项以文本节点渲染，下拉和候选保持一致', async () => {
+    const custom = '<img src=x onerror=alert(1)>';
+    const ctx = await bootApp({ routes: {
+        'GET /api/rooms': roomRoute([]),
+        'GET /api/rooms/qualities': { json: {
+            options: [custom, '标清'], builtin: ['原画', '标清', custom],
+        } },
+    } });
+    await gotoRooms(ctx);
+    assert.deepEqual(ctx.elements.get('room-quality').children.map(node => node.value), ['', custom, '标清']);
+    const chip = ctx.elements.get('quality-chips').children[0];
+    assert.equal(chip.children[0].textContent, custom);
+    assert.equal(chip.children[1].getAttribute('data-quality'), custom);
+    assert.deepEqual(ctx.elements.get('quality-candidate').children.map(node => node.value), ['原画']);
 });
 
 test('房间列表渲染行内画质下拉：选项构成 / 选中态 / 转义 / 行结构', async () => {
@@ -479,9 +506,9 @@ vm.runInContext(extractParseBoolSource(), boolSandbox, { filename: 'app.js#parse
 
 // MID-2263：断言基准**必须**取自两端源码，不得在测试里内联字面量清单——旧写法把 token 表
 // 抄进用例，两侧同时删/改也全绿（「后端回落 default、前端仍显示为『是』」的分叉只能靠人记）。
-// 现在 JS 侧抠 CONFIG_*_TOKENS，Python 侧抠 src/config_bool.py 的 TRUE/FALSE_TOKENS，
+// 现在 JS 侧抠 CONFIG_*_TOKENS，Python 侧抠 src/config/booleans.py 的 TRUE/FALSE_TOKENS，
 // 逐 token 双向断言两端解析同一布尔。
-const CONFIG_BOOL_PY = readFileSync(new URL('../../src/config_bool.py', import.meta.url), 'utf8');
+const CONFIG_BOOL_PY = readFileSync(new URL('../../src/config/booleans.py', import.meta.url), 'utf8');
 
 function extractJsTokenSet(name) {
     const m = APP_JS.match(new RegExp(name + '\\s*=\\s*\\{([^}]*)\\}'));
@@ -497,7 +524,7 @@ function extractJsTokenSet(name) {
 
 function extractPyTokenSet(name) {
     const m = CONFIG_BOOL_PY.match(new RegExp(name + '\\s*:\\s*frozenset\\[str\\]\\s*=\\s*frozenset\\(\\{([^}]*)\\}\\)'));
-    assert.ok(m, `src/config_bool.py 未找到 ${name}`);
+    assert.ok(m, `src/config/booleans.py 未找到 ${name}`);
     const keys = [];
     for (const entry of m[1].split(',')) {
         const key = entry.trim();
@@ -517,9 +544,9 @@ test('MID-2263：前端 CONFIG_*_TOKENS 与后端 TRUE/FALSE_TOKENS 集合逐一
     const pyFalse = extractPyTokenSet('FALSE_TOKENS');
     // 用 sorted 比较而非 deepEqual：集合语义下顺序不承载含义，两端书写顺序不同不应报红
     assert.deepEqual(jsTrue.slice().sort(), pyTrue.slice().sort(),
-        'CONFIG_TRUE_TOKENS 与 src/config_bool.py::TRUE_TOKENS 不是同一集合（改一侧须同步另一侧）');
+        'CONFIG_TRUE_TOKENS 与 src/config/booleans.py::TRUE_TOKENS 不是同一集合（改一侧须同步另一侧）');
     assert.deepEqual(jsFalse.slice().sort(), pyFalse.slice().sort(),
-        'CONFIG_FALSE_TOKENS 与 src/config_bool.py::FALSE_TOKENS 不是同一集合（改一侧须同步另一侧）');
+        'CONFIG_FALSE_TOKENS 与 src/config/booleans.py::FALSE_TOKENS 不是同一集合（改一侧须同步另一侧）');
     // 真/假集合不得有交集——两端各自的 token 语义必须互斥
     assert.deepEqual(jsTrue.filter(t => jsFalse.includes(t)), [], '真值 token 与假值 token 重叠');
     assert.deepEqual(pyTrue.filter(t => pyFalse.includes(t)), [], '后端真值 token 与假值 token 重叠');

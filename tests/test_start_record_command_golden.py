@@ -20,14 +20,11 @@
 #   python -m pytest tests/test_start_record_command_golden.py -q                  # 比对基准（重构后回归）
 #
 # 重构 F-01 后，重跑普通模式，若任一命令与基准不符即说明行为被改动——必须回到「等价重构」。
-
 import copy
 import datetime
 import json
 import os
-import sys
 import threading
-import time
 import traceback
 import types
 from collections.abc import Generator
@@ -37,6 +34,9 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
+
+from src.recording import session as recording
+from src.recording import state
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _GOLDEN_PATH = Path(__file__).resolve().parent / "golden" / "start_record_commands.json"
@@ -49,7 +49,7 @@ def _regen_enabled(raw: str | None) -> bool:
     # 两值再被互换，正是 09-04 的 P0 形态）都会被固化成「新基准」，黄金快照从此自证。
     # 布尔口径一律复用 src/config_bool（AGENTS.md「布尔配置项统一解析口径」第 9 条），
     # 不在测试里另造第二套真值集合；未设置/空串/无法识别 → False（即「默认比对、不生成」）。
-    from src.config_bool import parse_config_bool
+    from src.config.booleans import parse_config_bool
 
     return parse_config_bool(raw if raw is not None else "", False)
 
@@ -89,15 +89,9 @@ _COOKIE_GLOBALS = [
 
 @pytest.fixture(scope="module")
 def main_mod() -> ModuleType:
-    # 与 test_main_fixes 一致：导入前把 sys.argv[0] 钉到 main.py，否则 _app_root 解析错路径。
-    old_argv = sys.argv[:]
-    sys.argv = [str(_REPO_ROOT / "src/main.py")]
-    try:
-        from src import main
+    from src.recording import engine as main
 
-        return main
-    finally:
-        sys.argv = old_argv
+    return main
 
 
 # 收集 start_record 在某次调用中产出的 ffmpeg 命令 / 直下下载参数
@@ -281,12 +275,12 @@ def _setup_case(main: ModuleType, monkeypatch: pytest.MonkeyPatch, case: dict[st
         "color_obj": MagicMock(),
     }
     for name, value in plain.items():
-        monkeypatch.setattr(main, name, value, raising=False)
+        monkeypatch.setattr(recording if name == "OVERSEAS_PLATFORM_HOST" else state, name, value)
 
     for ck in _COOKIE_GLOBALS:
-        monkeypatch.setattr(main, ck, "", raising=False)
+        monkeypatch.setattr(state, ck, "")
 
-    # ssl 校验裁决：main.py 仅当 get_effective_ssl_verify 返回 False（校验关闭）时才插入
+    # ssl 校验裁决：main.py 仅当 should_verify_stream_tls 返回 False（校验关闭）时才插入
     # -tls_verify 0，故 ssl_off=True 要让该接口返回 False。
     # 这条 setattr 必须留在上面的 for 循环**之外**：挂进循环体时 monkeypatch 只记最后一次还原点
     # （看着能跑只是因为反复覆盖同一函数的同一属性），且一旦 _COOKIE_GLOBALS 变空（新增平台忘了
@@ -294,8 +288,8 @@ def _setup_case(main: ModuleType, monkeypatch: pytest.MonkeyPatch, case: dict[st
     # 不符而看不出成因。
     #   [历史注] 2026-09-23 SEV-2224 附带修正前正是那种循环内写法。
     monkeypatch.setattr(
-        main._http_config,
-        "get_effective_ssl_verify",
+        recording.policy,
+        "should_verify_stream_tls",
         lambda platform: not bool(case.get("ssl_off", False)),
     )
 
@@ -314,7 +308,7 @@ def _setup_case(main: ModuleType, monkeypatch: pytest.MonkeyPatch, case: dict[st
     _time_shim.localtime = lambda t=None: _fixed_tt
     _time_shim.sleep = lambda *a, **k: None
     _time_shim.time = lambda: 1_000_000.0
-    monkeypatch.setattr(main, "time", _time_shim)
+    monkeypatch.setattr(recording, "time", _time_shim)
 
     class _FrozenDateTime(datetime.datetime):
         # 返回类型标 Any：typeshed 中 datetime.now/today 返回 Self，标具体类型会触发
@@ -332,13 +326,13 @@ def _setup_case(main: ModuleType, monkeypatch: pytest.MonkeyPatch, case: dict[st
     # 同进程任何线程（loguru 记录时间戳、coverage）此刻都在用冻结子类。
     _datetime_shim = _module_shim(datetime)
     _datetime_shim.datetime = _FrozenDateTime
-    monkeypatch.setattr(main, "datetime", _datetime_shim)
+    monkeypatch.setattr(recording, "datetime", _datetime_shim)
 
     # 所有文件系统副作用：makedirs 变 no-op，full_path 仅为确定字符串
     # MID-66：同上，os 走替身（其余 os.* 属性全部转发真实实现）
     _os_shim = _module_shim(os)
     _os_shim.makedirs = lambda *a, **k: None
-    monkeypatch.setattr(main, "os", _os_shim)
+    monkeypatch.setattr(recording, "os", _os_shim)
 
     # —— mock 网络 / IO ——
     port_info = {
@@ -354,22 +348,22 @@ def _setup_case(main: ModuleType, monkeypatch: pytest.MonkeyPatch, case: dict[st
     # _resolve_platform_stream）。第 3 项以前恒为 None，SEV-2224 之后改为按用例取值，
     # 这样「保存类型分支漏传 danmaku_args」才会体现在快照里。
     monkeypatch.setattr(
-        main,
+        recording,
         "_resolve_platform_stream",
         lambda *a, **k: (case["platform"], port_info, case["danmaku_args"], ""),
     )
     monkeypatch.setattr(
-        main,
+        recording,
         "select_source_url",
         lambda *a, **k: case["real_url"],
     )
     monkeypatch.setattr(
-        main,
+        recording,
         "get_record_headers",
         lambda *a, **k: {"Referer": "http://example.com", "Cookie": "a=b"} if case.get("headers") else None,
     )
     # 返回 None → 走默认移动端 UA（确定性）
-    monkeypatch.setattr(main, "get_record_user_agent", lambda *a, **k: None)
+    monkeypatch.setattr(recording, "get_record_user_agent", lambda *a, **k: None)
 
     def _check(
         record_name: str,
@@ -389,9 +383,9 @@ def _setup_case(main: ModuleType, monkeypatch: pytest.MonkeyPatch, case: dict[st
         )
         return True  # comment_end=True → 触发 if comment_end: return，干净退出
 
-    monkeypatch.setattr(main, "check_subprocess", _check)
-    monkeypatch.setattr(main, "record_success", lambda *a, **k: None)
-    monkeypatch.setattr(main, "record_error", lambda *a, **k: None)
+    monkeypatch.setattr(recording, "check_subprocess", _check)
+    monkeypatch.setattr(recording, "record_success", lambda *a, **k: None)
+    monkeypatch.setattr(recording, "record_error", lambda *a, **k: None)
 
     def _dl(
         flv_url: str,
@@ -412,16 +406,16 @@ def _setup_case(main: ModuleType, monkeypatch: pytest.MonkeyPatch, case: dict[st
         )
         # 用 setattr 而非 main.exit_recording = ...：main 已标注为 ModuleType，
         # 直接属性赋值会被 mypy 判 attr-defined（该全局量在 main() 中才绑定）
-        setattr(main, "exit_recording", True)  # 直下路径无 check_subprocess，靠退出标志干净退出
+        setattr(state, "exit_recording", True)  # 直下路径无 check_subprocess，靠退出标志干净退出
         return True
 
-    monkeypatch.setattr(main, "direct_download_stream", _dl)
+    monkeypatch.setattr(recording, "direct_download_stream", _dl)
     # TS 非分段分支会无条件起一个非 daemon 线程跑 converts_mp4（真实函数会卡在假路径上），
     # 这里直接 no-op，避免 pytest 等待该线程导致挂死。
-    monkeypatch.setattr(main, "converts_mp4", lambda *a, **k: None)
+    monkeypatch.setattr(recording, "converts_mp4", lambda *a, **k: None)
 
     # 退出时房间清理：hub 调用 no-op
-    import src.danmaku_monitor as _dm
+    import src.danmaku.monitor as _dm
 
     monkeypatch.setattr(_dm, "get_hub", lambda: MagicMock())
     # conftest 已把 _hub 设为 hermetic；此处再兜底，防止 finally 真连
@@ -435,12 +429,12 @@ def _setup_case(main: ModuleType, monkeypatch: pytest.MonkeyPatch, case: dict[st
     def _capture(level: str, msg: object) -> None:
         cap.errors.append(f"[{level}] {msg}\n{traceback.format_exc()}")
 
-    monkeypatch.setattr(main.logger, "error", lambda msg, *a, **k: _capture("ERROR", msg))
-    monkeypatch.setattr(main.logger, "warning", lambda msg, *a, **k: _capture("WARNING", msg))
+    monkeypatch.setattr(recording.logger, "error", lambda msg, *a, **k: _capture("ERROR", msg))
+    monkeypatch.setattr(recording.logger, "warning", lambda msg, *a, **k: _capture("WARNING", msg))
     # 真实异常会被 start_record 内部 except 吞掉并无限循环；让 record_error 触发退出标志，使循环
     # 在首个异常后干净退出，异常本身留在 _Cap.errors 里可读。本行**覆盖**上面 record_error 的
     # no-op 桩（顺序敏感：换到那行之前就会被 no-op 抢走，异常轮次重新变成无限循环）。
-    monkeypatch.setattr(main, "record_error", lambda *a, **k: setattr(main, "exit_recording", True))
+    monkeypatch.setattr(recording, "record_error", lambda *a, **k: setattr(state, "exit_recording", True))
 
     return cap
 
@@ -524,7 +518,7 @@ def test_start_record_command_golden(
     main_mod: ModuleType, monkeypatch: pytest.MonkeyPatch, case: dict[str, Any]
 ) -> None:
     cap = _setup_case(main_mod, monkeypatch, case)
-    main_mod.start_record((case["quality"], case["record_url"], case["anchor_name"]))
+    recording.start_record((case["quality"], case["record_url"], case["anchor_name"]))
     actual = _actual_of(case, cap)
 
     if _REGEN:

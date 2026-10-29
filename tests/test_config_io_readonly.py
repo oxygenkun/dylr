@@ -1,6 +1,5 @@
 # 回归测试：read_config_value 写回失败时 best-effort（与 backup_file 一致），
 # 以及 main.py 兼容旧键「虎牙是否禁用SSL证书验证(是/否)」仅读取、绝不写回。
-
 import os
 from pathlib import Path
 from typing import Any
@@ -9,8 +8,9 @@ import pytest
 from loguru import logger
 from pytest import MonkeyPatch
 
-import src.main as main
-from src import config_io
+from src.config import io as config_io
+from src.recording import engine as recorder
+from src.recording import state
 
 
 def test_read_config_value_missing_key_readonly_ok(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
@@ -44,7 +44,7 @@ def test_read_config_value_missing_key_readonly_ok(tmp_path: Path, monkeypatch: 
     try:
         parser = config_io.configparser.RawConfigParser()
         parser.read(str(cfg), encoding="utf-8")
-        monkeypatch.setattr(main, "config_file", str(cfg))
+        monkeypatch.setattr(state, "config_file", str(cfg))
         # 缺键查询：应返回默认值且不抛异常
         result = config_io.read_config_value(parser, "录制设置", "_缺失的键_xyz", "默认")
     finally:
@@ -66,7 +66,7 @@ def test_read_config_value_delimiter_key_no_crash(tmp_path: Path, monkeypatch: M
     # 不得让整个 app 在启动阶段崩溃，且坏键须回滚、不得滞留解析器污染后续写回。
     cfg = tmp_path / "config.ini"
     cfg.write_text("[录制设置]\nlanguage=zh_cn\n", encoding="utf-8")
-    monkeypatch.setattr(main, "config_file", str(cfg))
+    monkeypatch.setattr(state, "config_file", str(cfg))
 
     captured: list[str] = []
     handler_id = logger.add(lambda msg: captured.append(str(msg)), level="WARNING")
@@ -92,7 +92,7 @@ def test_read_config_value_delimiter_key_then_normal_key_still_writes(tmp_path: 
     # 坏键写回失败后，同一解析器上另一个正常缺键的写回应能成功（坏键未污染解析器）
     cfg = tmp_path / "config.ini"
     cfg.write_text("[录制设置]\nlanguage=zh_cn\n", encoding="utf-8")
-    monkeypatch.setattr(main, "config_file", str(cfg))
+    monkeypatch.setattr(state, "config_file", str(cfg))
 
     parser = config_io.configparser.RawConfigParser()
     parser.read_string("[录制设置]\nlanguage=zh_cn\n")
@@ -171,9 +171,9 @@ def test_https_config_new_key_present(tmp_path: Path, monkeypatch: MonkeyPatch) 
     # 新键存在 → 直接取值，不触发任何写回
     cfg = tmp_path / "config.ini"
     cfg.write_text("[录制设置]\n是否启用https录制=是\n", encoding="utf-8")
-    monkeypatch.setattr(main, "config_file", str(cfg))
+    monkeypatch.setattr(state, "config_file", str(cfg))
     parser = _make_parser("[录制设置]\n是否启用https录制=是\n")
-    assert main._read_https_recording_config(parser) is True
+    assert recorder._read_https_recording_config(parser) is True
     assert "是否强制启用https录制" not in cfg.read_text(encoding="utf-8")
 
 
@@ -181,9 +181,9 @@ def test_https_config_legacy_key_migrates_yes(tmp_path: Path, monkeypatch: Monke
     # 新键缺失、旧键「是否强制启用https录制=是」→ 继承 True，并把值迁移写回新键
     cfg = tmp_path / "config.ini"
     cfg.write_text("[录制设置]\n是否强制启用https录制=是\n", encoding="utf-8")
-    monkeypatch.setattr(main, "config_file", str(cfg))
+    monkeypatch.setattr(state, "config_file", str(cfg))
     parser = _make_parser("[录制设置]\n是否强制启用https录制=是\n")
-    assert main._read_https_recording_config(parser) is True
+    assert recorder._read_https_recording_config(parser) is True
     # 新键已写入继承值（Web 配置页可见可编辑），旧键保留仅作历史
     migrated = _read_migrated(cfg)
     assert migrated.get("录制设置", "是否启用https录制") == "是"
@@ -194,9 +194,9 @@ def test_https_config_legacy_key_migrates_no(tmp_path: Path, monkeypatch: Monkey
     # 旧键=否 → 继承 False，新键迁移写回「否」
     cfg = tmp_path / "config.ini"
     cfg.write_text("[录制设置]\n是否强制启用https录制=否\n", encoding="utf-8")
-    monkeypatch.setattr(main, "config_file", str(cfg))
+    monkeypatch.setattr(state, "config_file", str(cfg))
     parser = _make_parser("[录制设置]\n是否强制启用https录制=否\n")
-    assert main._read_https_recording_config(parser) is False
+    assert recorder._read_https_recording_config(parser) is False
     migrated = _read_migrated(cfg)
     assert migrated.get("录制设置", "是否启用https录制") == "否"
 
@@ -205,9 +205,9 @@ def test_https_config_both_missing_writes_default(tmp_path: Path, monkeypatch: M
     # 新旧键皆无 → read_config_value 补写新键默认值「否」（配置自愈）
     cfg = tmp_path / "config.ini"
     cfg.write_text("[录制设置]\nlanguage=zh_cn\n", encoding="utf-8")
-    monkeypatch.setattr(main, "config_file", str(cfg))
+    monkeypatch.setattr(state, "config_file", str(cfg))
     parser = _make_parser("[录制设置]\nlanguage=zh_cn\n")
-    assert main._read_https_recording_config(parser) is False
+    assert recorder._read_https_recording_config(parser) is False
     migrated = _read_migrated(cfg)
     assert migrated.get("录制设置", "是否启用https录制") == "否"
 
@@ -216,9 +216,9 @@ def test_https_config_new_key_overrides_legacy(tmp_path: Path, monkeypatch: Monk
     # 新旧键同时存在（迁移后旧键残留）→ 以新键为准，旧键值被忽略
     cfg = tmp_path / "config.ini"
     cfg.write_text("[录制设置]\n是否启用https录制=否\n是否强制启用https录制=是\n", encoding="utf-8")
-    monkeypatch.setattr(main, "config_file", str(cfg))
+    monkeypatch.setattr(state, "config_file", str(cfg))
     parser = _make_parser("[录制设置]\n是否启用https录制=否\n是否强制启用https录制=是\n")
-    assert main._read_https_recording_config(parser) is False
+    assert recorder._read_https_recording_config(parser) is False
 
 
 # ---------------- 「禁用SSL证书验证的平台」自动追加 ----------------
@@ -228,9 +228,9 @@ def test_sync_ssl_disable_platforms_appends_missing(tmp_path: Path, monkeypatch:
     # 现值缺必需平台时自动追加并写回：用户手填项保留、必需项补齐
     cfg = tmp_path / "config.ini"
     cfg.write_text("[录制设置]\n禁用ssl证书验证的平台(逗号分隔)=斗鱼直播\n", encoding="utf-8")
-    monkeypatch.setattr(main, "config_file", str(cfg))
+    monkeypatch.setattr(state, "config_file", str(cfg))
     parser = _make_parser("[录制设置]\n禁用ssl证书验证的平台(逗号分隔)=斗鱼直播\n")
-    result = main._sync_ssl_disable_platforms(parser)
+    result = recorder._sync_ssl_disable_platforms(parser)
     assert result == {"斗鱼直播", "虎牙直播", "B站直播"}
     # 配置文件已写回合并值（大小写不敏感匹配文件行，保留原键写法）
     text = cfg.read_text(encoding="utf-8")
@@ -243,9 +243,9 @@ def test_sync_ssl_disable_platforms_idempotent(tmp_path: Path, monkeypatch: Monk
     # 现值已含全部必需平台 → 不写回、值不变（幂等）
     cfg = tmp_path / "config.ini"
     cfg.write_text("[录制设置]\n禁用ssl证书验证的平台(逗号分隔)=虎牙直播,B站直播\n", encoding="utf-8")
-    monkeypatch.setattr(main, "config_file", str(cfg))
+    monkeypatch.setattr(state, "config_file", str(cfg))
     parser = _make_parser("[录制设置]\n禁用ssl证书验证的平台(逗号分隔)=虎牙直播,B站直播\n")
-    result = main._sync_ssl_disable_platforms(parser)
+    result = recorder._sync_ssl_disable_platforms(parser)
     assert result == {"虎牙直播", "B站直播"}
     assert cfg.read_text(encoding="utf-8") == "[录制设置]\n禁用ssl证书验证的平台(逗号分隔)=虎牙直播,B站直播\n"
 
@@ -254,10 +254,10 @@ def test_sync_ssl_disable_platforms_missing_key_writes_default(tmp_path: Path, m
     # 键整体缺失 → read_config_value 补写空默认值，随后追加必需平台
     cfg = tmp_path / "config.ini"
     cfg.write_text("[录制设置]\nlanguage=zh_cn\n", encoding="utf-8")
-    monkeypatch.setattr(main, "config_file", str(cfg))
+    monkeypatch.setattr(state, "config_file", str(cfg))
     parser = _make_parser("[录制设置]\nlanguage=zh_cn\n")
-    result = main._sync_ssl_disable_platforms(parser)
-    assert result == set(main.SSL_DISABLE_REQUIRED_PLATFORMS)
+    result = recorder._sync_ssl_disable_platforms(parser)
+    assert result == set(recorder.SSL_DISABLE_REQUIRED_PLATFORMS)
 
 
 # ---------------- 「language」语言键迁移读取 ----------------
@@ -267,9 +267,9 @@ def test_language_new_key_present(tmp_path: Path, monkeypatch: MonkeyPatch) -> N
     # language 键存在 → 直接取值，不触发任何写回
     cfg = tmp_path / "config.ini"
     cfg.write_text("[录制设置]\nlanguage=en_US\n", encoding="utf-8")
-    monkeypatch.setattr(main, "config_file", str(cfg))
+    monkeypatch.setattr(state, "config_file", str(cfg))
     parser = _make_parser("[录制设置]\nlanguage=en_US\n")
-    assert main._read_language_config(parser) == "en_US"
+    assert config_io.read_config_value(parser, "录制设置", "language", "") == "en_US"
     assert cfg.read_text(encoding="utf-8") == "[录制设置]\nlanguage=en_US\n"
 
 
@@ -277,8 +277,8 @@ def test_language_both_missing_writes_empty_default(tmp_path: Path, monkeypatch:
     # language 键缺失 → read_config_value 补写新键空默认值（空 = 跟随系统语言，解析由 i18n 兜底）
     cfg = tmp_path / "config.ini"
     cfg.write_text("[录制设置]\n是否启用https录制=否\n", encoding="utf-8")
-    monkeypatch.setattr(main, "config_file", str(cfg))
+    monkeypatch.setattr(state, "config_file", str(cfg))
     parser = _make_parser("[录制设置]\n是否启用https录制=否\n")
-    assert main._read_language_config(parser) == ""
+    assert config_io.read_config_value(parser, "录制设置", "language", "") == ""
     migrated = _read_migrated(cfg)
     assert migrated.get("录制设置", "language") == ""

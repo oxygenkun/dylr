@@ -12,6 +12,7 @@
 # All generated video and log files are removed by the driver's temporary context.
 # Disposable harness using the actual recorder and signal handler, with synthetic video only.
 import os
+import signal
 import sys
 import threading
 import time
@@ -19,19 +20,24 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
-sys.argv = [str(ROOT / "src/main.py")]
+sys.argv = [str(ROOT / "src/recording/engine.py")]
 os.environ["DOUYIN_SKIP_RUNTIME_CHECK"] = "1"
 os.environ["DOUYIN_LOG_NO_ENQUEUE"] = "1"
 os.environ["DOUYIN_DISABLE_LOG_ARCHIVE"] = "1"
 
-from src import main
+from src.app import graceful_shutdown
+from src.recording import engine as main
+from src.recording import session as recording
+from src.recording import state
 
 
 def run(output: Path) -> None:
+    signal.signal(signal.SIGTERM, main.safe_exit)
+    signal.signal(signal.SIGINT, main.safe_exit)
     output.mkdir(parents=True, exist_ok=True)
-    main.create_time_file = False
-    main.split_video_by_time = True
-    main.recording_enabled = True
+    state.create_time_file = False
+    state.split_video_by_time = True
+    state.recording_enabled = True
     for kind in ["normal", "segmented"]:
         path = output / ("normal.mp4" if kind == "normal" else "segment_%03d.mp4")
         command = [
@@ -65,9 +71,9 @@ def run(output: Path) -> None:
         else:
             command += ["-f", "mp4"]
         command.append(str(path))
-        threading.Thread(target=main.check_subprocess, args=(kind, kind, command, "MP4"), daemon=True).start()
+        threading.Thread(target=recording.check_subprocess, args=(kind, kind, command, "MP4"), daemon=True).start()
     time.sleep(5)
-    assert len([p for p in main.shutdown_manager._processes if p.poll() is None]) == 2
+    assert len([p for p in graceful_shutdown.shutdown_manager._processes if p.poll() is None]) == 2
     (output / "ready").write_text("ready")
     while True:
         time.sleep(1)

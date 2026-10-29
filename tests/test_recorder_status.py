@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# src.recorder_status 单元测试（离线，不依赖网络/真实控制台）。
+# src.recording.status 单元测试（离线，不依赖网络/真实控制台）。
 #
 # 覆盖两条与并发/守护线程节拍相关的回归锁：
 #   - SEV-01 显示侧：控制台「同一时间访问网络的线程数」取自适应**容量**（上限本身），
@@ -8,37 +8,28 @@
 #     无控制台环境（sys.stdout is None，见 AGENTS「无控制台环境」条目）下不得进 try 刷异常。
 #
 # 注：recorder_status 在模块导入期即 `import main`，故本文件的用例都必须先实例化 main_mod。
-
 import json
-import sys
 import types
 from collections.abc import Generator
-from pathlib import Path
 from typing import Any, cast
 
 import pytest
 
-from src.scheduler import ResizableSemaphore
+from src.recording import state
+from src.recording.scheduler import ResizableSemaphore
 
 
 @pytest.fixture(scope="module")
 def main_mod() -> Generator[Any, None, None]:
-    # main.py 的 _app_root() 基于 sys.argv[0] 定位 config/，pytest 下 argv[0] 指向 pytest 自身，
-    # 需在导入前修正为项目 main.py（与 tests/test_record_failure_feedback.py 同一模式）。
-    old_argv = sys.argv[:]
-    sys.argv = [str(Path(__file__).resolve().parent.parent / "src/main.py")]
-    try:
-        from src import main
+    from src.recording import engine as main
 
-        yield main
-    finally:
-        sys.argv = old_argv
+    yield main
 
 
 @pytest.fixture
 def status_mod(main_mod: Any) -> Any:
     # 依赖 main_mod：确保 recorder_status 导入链里的 `import main` 走的是已修正 argv 的那一次
-    import src.recorder_status as recorder_status
+    import src.recording.status as recorder_status
 
     return recorder_status
 
@@ -111,8 +102,7 @@ class _FlakyStdout:
 
 
 def _install_fake_sleep(status_mod: Any, monkeypatch: pytest.MonkeyPatch, cap: int) -> list[float]:
-    # 把模块内的 _sleep 间接层换成记录器：满 cap 次后抛 _StopLoop 结束死循环。
-    # 禁止改成 patch recorder_status.time（stdlib 模块本体，会波及同进程其它线程）。
+    # 只替换被测模块的 time 引用，满 cap 次后结束显示循环。
     sleeps: list[float] = []
 
     def fake_sleep(seconds: float) -> None:
@@ -120,7 +110,9 @@ def _install_fake_sleep(status_mod: Any, monkeypatch: pytest.MonkeyPatch, cap: i
         if len(sleeps) >= cap:
             raise _StopLoop("已达到用例设定的休眠次数")
 
-    monkeypatch.setattr(status_mod, "_sleep", fake_sleep)
+    clock = types.SimpleNamespace(**vars(status_mod.time))
+    clock.sleep = fake_sleep
+    monkeypatch.setattr(status_mod, "time", clock)
     return sleeps
 
 
@@ -129,14 +121,14 @@ def test_live_network_capacity_reads_capacity_not_free_slots(
 ) -> None:
     # 未就绪回退配置值；就绪后取并发上限（capacity），而不是被占用削弱的空闲数（value）。
     # 用真实 ResizableSemaphore（被测实现本体），不在测试里重算容量。
-    monkeypatch.setattr(main_mod, "max_request", 3)
-    monkeypatch.setattr(main_mod, "scheduler", None)
+    monkeypatch.setattr(state, "max_request", 3)
+    monkeypatch.setattr(state, "scheduler", None)
     assert status_mod._live_network_capacity() == 3
 
     sem = ResizableSemaphore(4)
     assert sem.acquire(blocking=False) is True
     assert sem.value == 3  # 空闲槽已被占用削到 3
-    monkeypatch.setattr(main_mod, "scheduler", types.SimpleNamespace(network_semaphore=sem))
+    monkeypatch.setattr(state, "scheduler", types.SimpleNamespace(network_semaphore=sem))
     assert status_mod._live_network_capacity() == 4  # 控制台显示的是调度器设定的上限
 
     sem.release()
@@ -150,7 +142,7 @@ def test_display_info_body_always_raising_still_sleeps_every_iteration(
     # → 零间隔重入 → 单核跑满 + 日志洪水。修复后休眠在 try 之外，且异常按连续次数退避。
     recorder = _RecordingLogger()
     stdout = _BrokenStdout(max_attempts=8)
-    monkeypatch.setattr(main_mod, "recording", set())
+    monkeypatch.setattr(state, "recording", set())
     monkeypatch.setattr(status_mod, "logger", recorder)
     monkeypatch.setattr(status_mod, "sys", types.SimpleNamespace(stdout=stdout))
     sleeps = _install_fake_sleep(status_mod, monkeypatch, cap=5)
@@ -174,7 +166,7 @@ def test_display_info_backoff_capped(status_mod: Any, main_mod: Any, monkeypatch
     # 同时上限仍须远大于常规节拍，才能真正消除忙等。
     recorder = _RecordingLogger()
     stdout = _BrokenStdout(max_attempts=200)
-    monkeypatch.setattr(main_mod, "recording", set())
+    monkeypatch.setattr(state, "recording", set())
     monkeypatch.setattr(status_mod, "logger", recorder)
     monkeypatch.setattr(status_mod, "sys", types.SimpleNamespace(stdout=stdout))
     sleeps = _install_fake_sleep(status_mod, monkeypatch, cap=40)
@@ -193,7 +185,7 @@ def test_display_info_without_console_never_enters_try(
     # 无控制台环境（pythonw.exe / 冻结 console=False exe）：sys.stdout 就是 None，而 main.py
     # 无条件启动本线程。判空必须在 try 之前——否则每轮 AttributeError → logger.error → 忙等。
     recorder = _RecordingLogger()
-    monkeypatch.setattr(main_mod, "recording", set())
+    monkeypatch.setattr(state, "recording", set())
     monkeypatch.setattr(status_mod, "logger", recorder)
     monkeypatch.setattr(status_mod, "sys", types.SimpleNamespace(stdout=None))
     interval = status_mod._DISPLAY_INTERVAL_SECONDS
@@ -212,10 +204,10 @@ def test_display_info_backoff_resets_after_successful_cycle(
     # 一次失败 → 退避到 10s；下一轮成功后计数归零，节拍必须回到常规 5s（否则偶发一次 IO 异常
     # 会让状态面板永久变慢）。
     recorder = _RecordingLogger()
-    monkeypatch.setattr(main_mod, "recording", set())
-    monkeypatch.setattr(main_mod, "monitoring", 0)
-    monkeypatch.setattr(main_mod, "scheduler", None)
-    monkeypatch.setattr(main_mod, "max_request", 3)
+    monkeypatch.setattr(state, "recording", set())
+    monkeypatch.setattr(state, "monitoring", 0)
+    monkeypatch.setattr(state, "scheduler", None)
+    monkeypatch.setattr(state, "max_request", 3)
     monkeypatch.setattr(status_mod, "logger", recorder)
     monkeypatch.setattr(status_mod, "sys", types.SimpleNamespace(stdout=_FlakyStdout()))
     interval = status_mod._DISPLAY_INTERVAL_SECONDS
@@ -276,18 +268,18 @@ class _ExplosiveCollection:
 def pinned_main(main_mod: Any, monkeypatch: pytest.MonkeyPatch) -> Any:
     # get_status 读遍 main 的运行时全局：一次性给一套「Web 面板在跑」的取值，
     # 单个用例只覆盖自己关心的那一项，避免每个用例重复 20 行 patch。
-    monkeypatch.setattr(main_mod, "version", "9.9.9", raising=False)
-    monkeypatch.setattr(main_mod, "monitoring", 3, raising=False)
-    monkeypatch.setattr(main_mod, "error_count", 7, raising=False)
-    monkeypatch.setattr(main_mod, "recording", set(), raising=False)
-    monkeypatch.setattr(main_mod, "recording_time_list", {}, raising=False)
-    monkeypatch.setattr(main_mod, "running_list", ["https://live.douyin.com/1"], raising=False)
-    monkeypatch.setattr(main_mod, "error_window", __import__("collections").deque([1, 1, 0], maxlen=3), raising=False)
-    monkeypatch.setattr(main_mod, "default_path", "D:/downloads", raising=False)
-    monkeypatch.setattr(main_mod, "_recorder_thread", None, raising=False)
-    monkeypatch.setattr(main_mod, "process_start_time", None, raising=False)
-    monkeypatch.setattr(main_mod, "recording_enabled", True, raising=False)
-    monkeypatch.setattr(main_mod, "start_display_time", __import__("datetime").datetime.now(), raising=False)
+    monkeypatch.setattr(state, "version", "9.9.9", raising=False)
+    monkeypatch.setattr(state, "monitoring", 3, raising=False)
+    monkeypatch.setattr(state, "error_count", 7, raising=False)
+    monkeypatch.setattr(state, "recording", set(), raising=False)
+    monkeypatch.setattr(state, "recording_time_list", {}, raising=False)
+    monkeypatch.setattr(state, "running_list", ["https://live.douyin.com/1"], raising=False)
+    monkeypatch.setattr(state, "error_window", __import__("collections").deque([1, 1, 0], maxlen=3), raising=False)
+    monkeypatch.setattr(state, "default_path", "D:/downloads", raising=False)
+    monkeypatch.setattr(state, "_recorder_thread", None, raising=False)
+    monkeypatch.setattr(state, "process_start_time", None, raising=False)
+    monkeypatch.setattr(state, "recording_enabled", True, raising=False)
+    monkeypatch.setattr(state, "start_display_time", __import__("datetime").datetime.now(), raising=False)
     return main_mod
 
 
@@ -316,8 +308,8 @@ class TestGetStatus:
 
     def test_new_format_entries_expose_actual_quality(self, status_mod: Any, pinned_main: Any) -> None:
         start = __import__("datetime").datetime(2026, 9, 21, 8, 0, 0)
-        pinned_main.recording = {"房间A"}
-        pinned_main.recording_time_list = {"房间A": [start, "原画", "超清"]}
+        state.recording = {"房间A"}
+        state.recording_time_list = {"房间A": [start, "原画", "超清"]}
         entry = status_mod.get_status()["recording"][0]
         assert entry["name"] == "房间A"
         assert entry["quality"] == "原画"
@@ -327,15 +319,15 @@ class TestGetStatus:
     def test_legacy_two_field_entries_still_render(self, status_mod: Any, pinned_main: Any) -> None:
         # 兼容旧格式 [start, quality]：缺第三项时 actual_quality 为空串而不是抛 IndexError
         start = __import__("datetime").datetime(2026, 9, 21, 8, 0, 0)
-        pinned_main.recording = {"房间B"}
-        pinned_main.recording_time_list = {"房间B": [start, "标清"]}
+        state.recording = {"房间B"}
+        state.recording_time_list = {"房间B": [start, "标清"]}
         entry = status_mod.get_status()["recording"][0]
         assert entry["quality"] == "标清"
         assert entry["actual_quality"] == ""
 
     def test_missing_time_info_degrades_to_empty_strings(self, status_mod: Any, pinned_main: Any) -> None:
-        pinned_main.recording = {"房间C"}
-        pinned_main.recording_time_list = {"房间C": []}
+        state.recording = {"房间C"}
+        state.recording_time_list = {"房间C": []}
         entry = status_mod.get_status()["recording"][0]
         assert entry == {
             "name": "房间C",
@@ -346,8 +338,8 @@ class TestGetStatus:
         }
 
     def test_recording_without_time_entry_uses_defaults(self, status_mod: Any, pinned_main: Any) -> None:
-        pinned_main.recording = {"房间D"}
-        pinned_main.recording_time_list = {}
+        state.recording = {"房间D"}
+        state.recording_time_list = {}
         entry = status_mod.get_status()["recording"][0]
         assert entry["duration"] == "0:00:00"
 
@@ -356,7 +348,7 @@ class TestGetStatus:
     ) -> None:
         recorder = _RecordingLogger()
         monkeypatch.setattr(status_mod, "logger", recorder)
-        pinned_main.recording = cast(Any, _ExplosiveCollection())
+        state.recording = cast(Any, _ExplosiveCollection())
         snapshot = status_mod.get_status()
         assert snapshot["recording"] == []
         assert snapshot["recording_count"] == 0
@@ -374,8 +366,8 @@ class TestGetStatus:
         # 返回不等于已退出——不显式断言，快照里 engine_alive=True 也可能被后面的断言放过。
         dead.join(timeout=10)
         assert not dead.is_alive(), "替身线程未在 10s 内退出：dead 前提不成立，不得判绿"
-        pinned_main._recorder_thread = dead
-        pinned_main.process_start_time = __import__("datetime").datetime.now() - __import__("datetime").timedelta(
+        state._recorder_thread = dead
+        state.process_start_time = __import__("datetime").datetime.now() - __import__("datetime").timedelta(
             hours=1, minutes=2
         )
         snapshot = status_mod.get_status()
@@ -383,8 +375,8 @@ class TestGetStatus:
         assert snapshot["uptime"].startswith("1:02:")
 
     def test_snapshot_is_json_serializable(self, status_mod: Any, pinned_main: Any) -> None:
-        pinned_main.recording = {"房间A"}
-        pinned_main.recording_time_list = {"房间A": [__import__("datetime").datetime.now(), "原画", "原画"]}
+        state.recording = {"房间A"}
+        state.recording_time_list = {"房间A": [__import__("datetime").datetime.now(), "原画", "原画"]}
         _ = json.dumps(status_mod.get_status())
 
 
@@ -400,14 +392,14 @@ class TestDisplayInfoRecordingBranch:
         # 注意：只把「窗口样式探测」用的 sys.stdout 换成桩（决定要不要发 ANSI 清屏），
         # display_info 正文走的是内建 print()，因此断言文本要从 capsys 取。
         monkeypatch.setattr(status_mod, "sys", types.SimpleNamespace(stdout=stdout))
-        monkeypatch.setattr(main_mod, "scheduler", None)
-        monkeypatch.setattr(main_mod, "max_request", 3)
-        monkeypatch.setattr(main_mod, "use_proxy", False)
-        monkeypatch.setattr(main_mod, "split_video_by_time", False)
-        monkeypatch.setattr(main_mod, "create_time_file", False)
-        monkeypatch.setattr(main_mod, "video_record_quality", "原画")
-        monkeypatch.setattr(main_mod, "video_save_type", "ts")
-        monkeypatch.setattr(main_mod, "delay_default", 60)
+        monkeypatch.setattr(state, "scheduler", None)
+        monkeypatch.setattr(state, "max_request", 3)
+        monkeypatch.setattr(state, "use_proxy", False)
+        monkeypatch.setattr(state, "split_video_by_time", False)
+        monkeypatch.setattr(state, "create_time_file", False)
+        monkeypatch.setattr(state, "video_record_quality", "原画")
+        monkeypatch.setattr(state, "video_save_type", "ts")
+        monkeypatch.setattr(state, "delay_default", 60)
         return _install_fake_sleep(status_mod, monkeypatch, cap)
 
     def test_recording_rooms_are_listed_with_elapsed_time(
@@ -419,9 +411,9 @@ class TestDisplayInfoRecordingBranch:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         stdout = _NormalStdout(is_tty=True)
-        pinned_main.recording = {"房间A", "房间B"}
+        state.recording = {"房间A", "房间B"}
         now = __import__("datetime").datetime.now()
-        pinned_main.recording_time_list = {
+        state.recording_time_list = {
             "房间A": [now - __import__("datetime").timedelta(seconds=90), "原画"],
             # 房间B 故意留空条目：走 `_rt_info[0] if _rt_info else now_time` 的兜底
             "房间B": [],
@@ -436,7 +428,7 @@ class TestDisplayInfoRecordingBranch:
         assert "1:30" in written
         # isatty 为真才发 ANSI 清屏序列；无控制台/重定向时不得污染日志
         assert any("\033[2J" in chunk for chunk in stdout.buffer)
-        assert pinned_main.start_display_time is not None
+        assert state.start_display_time is not None
 
     def test_monitoring_but_nothing_recording_prints_interval_hint(
         self,
@@ -447,9 +439,9 @@ class TestDisplayInfoRecordingBranch:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         stdout = _NormalStdout()
-        pinned_main.recording = set()
-        pinned_main.recording_time_list = {}
-        monkeypatch.setattr(main_mod, "monitoring", 5)
+        state.recording = set()
+        state.recording_time_list = {}
+        monkeypatch.setattr(state, "monitoring", 5)
         # 无录制分支的顺序是「先 sleep 再打提示」，所以 cap 需 3 才能跑到提示那一行
         self._prepare(status_mod, main_mod, monkeypatch, stdout, cap=3)
         with pytest.raises(_StopLoop):
@@ -467,9 +459,9 @@ class TestDisplayInfoRecordingBranch:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         stdout = _NormalStdout()
-        pinned_main.recording = set()
-        pinned_main.recording_time_list = {}
-        monkeypatch.setattr(main_mod, "monitoring", 0)
+        state.recording = set()
+        state.recording_time_list = {}
+        monkeypatch.setattr(state, "monitoring", 0)
         self._prepare(status_mod, main_mod, monkeypatch, stdout, cap=3)
         with pytest.raises(_StopLoop):
             status_mod.display_info()
@@ -484,15 +476,15 @@ class TestDisplayInfoRecordingBranch:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         stdout = _NormalStdout()
-        pinned_main.recording = set()
-        pinned_main.recording_time_list = {}
+        state.recording = set()
+        state.recording_time_list = {}
         # 开关必须在 _prepare 之后改：_prepare 会把它们重置为关闭态
         self._prepare(status_mod, main_mod, monkeypatch, stdout, cap=3)
-        monkeypatch.setattr(main_mod, "monitoring", 0)
-        monkeypatch.setattr(main_mod, "split_video_by_time", True)
-        monkeypatch.setattr(main_mod, "split_time", 1800)
-        monkeypatch.setattr(main_mod, "create_time_file", True)
-        monkeypatch.setattr(main_mod, "use_proxy", True)
+        monkeypatch.setattr(state, "monitoring", 0)
+        monkeypatch.setattr(state, "split_video_by_time", True)
+        monkeypatch.setattr(state, "split_time", 1800)
+        monkeypatch.setattr(state, "create_time_file", True)
+        monkeypatch.setattr(state, "use_proxy", True)
         with pytest.raises(_StopLoop):
             status_mod.display_info()
         written = capsys.readouterr().out
@@ -509,8 +501,8 @@ class TestDisplayInfoRecordingBranch:
         capsys: pytest.CaptureFixture[str],
     ) -> None:
         stdout = _NormalStdout()
-        pinned_main.recording = {"幽灵房间"}
-        pinned_main.recording_time_list = {}
+        state.recording = {"幽灵房间"}
+        state.recording_time_list = {}
         self._prepare(status_mod, main_mod, monkeypatch, stdout, cap=2)
         with pytest.raises(_StopLoop):
             status_mod.display_info()
@@ -522,7 +514,7 @@ class TestDisplayInfoRecordingBranch:
         recorder = _RecordingLogger()
         monkeypatch.setattr(status_mod, "logger", recorder)
         stdout = _NormalStdout()
-        pinned_main.recording = cast(Any, _ExplosiveCollection())
+        state.recording = cast(Any, _ExplosiveCollection())
         sleeps = self._prepare(status_mod, main_mod, monkeypatch, stdout, cap=3)
         with pytest.raises(_StopLoop):
             status_mod.display_info()

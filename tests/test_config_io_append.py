@@ -2,19 +2,20 @@
 #
 # 覆盖：BOM/CRLF 保留、末行无换行、重复启用/禁用状态、非法地址、原子写失败。
 # 不打桩真实 DNS；所有路径都在 tmp_path 内，绝不碰仓库里的运行期配置。
-
 from pathlib import Path
 
 import pytest
 
-import src.main as main
-from src import config_io, web_config
+from src.api import config as web_config
+from src.config import io as config_io
+from src.network import targets
+from src.recording import state
 
 
 @pytest.fixture(autouse=True)
 def _stub_public_dns(monkeypatch: pytest.MonkeyPatch) -> None:
     # web_config 的房间地址校验会解析 host；固定成公网地址，离线可复跑。
-    monkeypatch.setattr(web_config, "_resolve_host_ips", lambda _host: ["114.114.114.114"])
+    monkeypatch.setattr(targets, "resolve_host_ips", lambda _host: ["114.114.114.114"])
 
 
 # 统一按 utf-8-sig + newline="" 读：既验证 BOM 只有一个，也验证 CRLF 没被翻译。
@@ -30,7 +31,7 @@ def test_add_to_new_file_writes_bom_and_line(tmp_path: Path) -> None:
     raw = path.read_bytes()
     assert raw.startswith(b"\xef\xbb\xbf")
     assert _read(path) == "https://live.douyin.com/123,主播: 测试主播\n"
-    assert main.ini_URL_content == _read(path)
+    assert state.ini_URL_content == _read(path)
 
 
 # 已启用的重复地址：返回 exists 且文件字节完全不变（不刷新 mtime）。

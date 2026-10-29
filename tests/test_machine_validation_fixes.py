@@ -2,13 +2,12 @@
 # 真机验证 4 项保守实施回归。
 #
 # 4 项原始变更详情见 CODE_WIKI v4.1.0-dev：
-# ① spider.py：_safe_loads / _is_safe_http_url 保护 JSON 解析与 URL scheme 校验
-# ② ws_client.py：心跳回调 wait_for 兜底 + 超时主动关连接
+# ① spider.py：_safe_loads / is_http_url 保护 JSON 解析与 URL scheme 校验
+# ② websocket.py：心跳回调 wait_for 兜底 + 超时主动关连接
 # ③ proxy.py：ProxyInfo 接受 IPv6 主机（[::1] / ::1）
 # ④ video_postprocess.py：_run_ffmpeg_checked 超时分类型（不再被 unknown error 吞）
 
 import asyncio
-import json
 import selectors
 import subprocess
 import types
@@ -23,7 +22,7 @@ import pytest
 
 
 def test_spider_safe_loads_returns_none_on_bad_json() -> None:
-    from src.spider import _safe_loads
+    from src.streams.spider import _safe_loads
 
     # 合法 JSON 但非 dict（如数组）：应返回 None（供调用方按业务判空）
     assert _safe_loads("[1,2,3]") is None
@@ -33,24 +32,24 @@ def test_spider_safe_loads_returns_none_on_bad_json() -> None:
     assert _safe_loads("{a: 1") is None
 
 
-def test_spider_is_safe_http_url_whitelist() -> None:
-    from src.spider import _is_safe_http_url
+def test_is_http_url_whitelist() -> None:
+    from src.network.urls import is_http_url
 
     # 允许的协议
-    assert _is_safe_http_url("https://live.douyin.com/123")
-    assert _is_safe_http_url("http://example.com")
-    assert _is_safe_http_url("wss://danmuproxy.douyu.com:8506")
-    assert _is_safe_http_url("ws://example.com/ws")
+    assert is_http_url("https://live.douyin.com/123")
+    assert is_http_url("http://example.com")
+    assert not is_http_url("wss://danmuproxy.douyu.com:8506")
+    assert not is_http_url("ws://example.com/ws")
     # 拒绝的协议（SSRF 风险面）
-    assert not _is_safe_http_url("file:///etc/passwd")
-    assert not _is_safe_http_url("gopher://internal/secret")
-    assert not _is_safe_http_url("ftp://internal/data")
+    assert not is_http_url("file:///etc/passwd")
+    assert not is_http_url("gopher://internal/secret")
+    assert not is_http_url("ftp://internal/data")
     # 缺 scheme 的相对路径也应拒绝
-    assert not _is_safe_http_url("//example.com/path")
+    assert not is_http_url("//example.com/path")
 
 
 # ======================================================================
-# ② ws_client 心跳超时
+# ② websocket 心跳超时
 # ======================================================================
 
 
@@ -133,15 +132,15 @@ def test_ws_heartbeat_timeout_closes_connection(monkeypatch: pytest.MonkeyPatch)
 
     from loguru import logger
 
-    from src import ws_client
+    from src.network import websocket
 
     # M-29（CODE_REVIEW_2026-09-29_2）假绿修复。旧用例只断 `len(close_called) >= 1`，而**用例自己**
     # 末尾那句无条件 `await client.close()` 本身就会产生一次 ws.close()：把生产侧
-    # src/ws_client.py::_heartbeat_loop 的 wait_for 超时分支整块删掉，外部关闭也「恰好」满足断言，
+    # src/network/websocket.py::_heartbeat_loop 的 wait_for 超时分支整块删掉，外部关闭也「恰好」满足断言，
     # 于是超时特性有无 = 全绿。现按三条正交通道归因，全部只观察生产代码自身的行为、不复制心跳逻辑：
-    #   ① 来源：沿调用栈取「最近一个位于 ws_client.py 内的调用帧」的协程名——超时分支从
-    #      _heartbeat_loop 里 await close()，外部停止从 WsClient.close() 里 await，是两条不同代码；
-    #   ② 生产自带的判别位 client._stopped：WsClient.close() 先置 True 再关连接，超时分支不置位；
+    #   ① 来源：沿调用栈取「最近一个位于 websocket.py 内的调用帧」的协程名——超时分支从
+    #      _heartbeat_loop 里 await close()，外部停止从 WebSocketClient.close() 里 await，是两条不同代码；
+    #   ② 生产自带的判别位 client._stopped：WebSocketClient.close() 先置 True 再关连接，超时分支不置位；
     #   ③ 时刻：第一次 close 必须落在超时点上（≥ 超时阈值下界）且**早于**用例发起外部停止的那一刻。
     # 另加 ④ 生产侧「心跳回调超时」warning 文本 + 其发出时刻，防止「留着 close、删掉告警」的半吊子改动。
     closes: list[dict[str, Any]] = []
@@ -153,7 +152,7 @@ def test_ws_heartbeat_timeout_closes_connection(monkeypatch: pytest.MonkeyPatch)
     # 调 i18n.set_language）都会在**用例运行中**把 i18n._tr 从恒等映射重绑成真目录，于是
     # 「按简中模板断言日志文本」当场失效——2026-09-29 本机实测同文件
     # test_video_postprocess_timeout_logged_as_timeout 正是这样红的。用例内再钉一次恒等。
-    from src import i18n
+    from src.support import i18n
 
     monkeypatch.setattr(i18n, "_tr", lambda text: text)
 
@@ -186,13 +185,13 @@ def test_ws_heartbeat_timeout_closes_connection(monkeypatch: pytest.MonkeyPatch)
 
         async def close(self) -> None:
             # 归因①：谁 await 了这次 close()。假 ws 自身的帧往上一格就是 await 它的生产协程，
-            # 再向上找第一个落在 ws_client.py 里的帧即可（比只取 f_back 更耐重构：生产侧若把
+            # 再向上找第一个落在 websocket.py 里的帧即可（比只取 f_back 更耐重构：生产侧若把
             # 关闭动作下沉一层私有 helper，归因仍指向那条代码路径）。
             source = "unknown"
             frame = inspect.currentframe()
             caller = frame.f_back if frame is not None else None
             while caller is not None:
-                if caller.f_code.co_filename.replace("\\", "/").endswith("src/ws_client.py"):
+                if caller.f_code.co_filename.replace("\\", "/").endswith("src/network/websocket.py"):
                     source = caller.f_code.co_name
                     break
                 caller = caller.f_back
@@ -229,7 +228,7 @@ def test_ws_heartbeat_timeout_closes_connection(monkeypatch: pytest.MonkeyPatch)
         # 心跳 hang 远超 max(1.0, heartbeat_interval+1.0) 阈值，必然触发超时分支
         await asyncio.sleep(_HEARTBEAT_HANG_SECONDS)
 
-    client = ws_client.WsClient(
+    client = websocket.WebSocketClient(
         url="ws://example.invalid",
         on_message=lambda _d: None,
         on_heartbeat=slow_heartbeat,
@@ -237,11 +236,11 @@ def test_ws_heartbeat_timeout_closes_connection(monkeypatch: pytest.MonkeyPatch)
     )
     # 超时阈值是 _heartbeat_loop 内的局部变量、无法 monkeypatch，靠 hang 时长大于默认 1.05s 触发。
     # MID-66：websockets 是三方模块本体，setattr 到它上面等于全进程
-    # 换掉 connect——同会话其它用例的连接都会吃到假实现；正确写法是浅拷贝替身，只替换 ws_client
+    # 换掉 connect——同会话其它用例的连接都会吃到假实现；正确写法是浅拷贝替身，只替换 websocket
     # 命名空间里的全局名。
-    _ws_shim = types.SimpleNamespace(**vars(ws_client.websockets))
+    _ws_shim = types.SimpleNamespace(**vars(websocket.websockets))
     _ws_shim.connect = fake_connect
-    monkeypatch.setattr(ws_client, "websockets", _ws_shim)
+    monkeypatch.setattr(websocket, "websockets", _ws_shim)
 
     logged: list[tuple[float, str]] = []
     # MT-08：告警发出时刻同样取虚拟时钟（loguru 的 callable sink 在发出线程内同步执行，
@@ -305,32 +304,6 @@ def test_ws_heartbeat_timeout_closes_connection(monkeypatch: pytest.MonkeyPatch)
 # ======================================================================
 
 
-def test_proxy_info_accepts_ipv6_with_brackets() -> None:
-    from src.proxy import ProxyInfo
-
-    # [::1]:8080 形如 Windows 注册表 ProxyServer 的 IPv6 字面量
-    info = ProxyInfo("[::1]", "8080")
-    assert info.ip == "[::1]"
-    assert info.port == "8080"
-
-
-def test_proxy_info_accepts_bare_ipv6() -> None:
-    from src.proxy import ProxyInfo
-
-    # 不带方括号的裸 IPv6（少见但兜底）
-    info = ProxyInfo("::1", "8080")
-    assert info.ip == "::1"
-    assert info.port == "8080"
-
-
-def test_proxy_info_rejects_invalid_ip() -> None:
-    from src.proxy import ProxyInfo
-
-    # 端口合法但 IP 既非 IPv4/IPv6/域名：必须抛 ValueError
-    with pytest.raises(ValueError):
-        ProxyInfo("not a host!@#", "8080")
-
-
 # ======================================================================
 # ④ video_postprocess 超时分类型
 # ======================================================================
@@ -343,16 +316,14 @@ def test_video_postprocess_timeout_logged_as_timeout(tmp_path: Path, monkeypatch
 
     from loguru import logger
 
+    from src.recording import postprocess as video_postprocess
+
     # 断言与语言解耦用 i18n._tr 恒等映射（手法与口径同 tests/conftest.py::_pin_identity_translation），
     # 钉死动作见下方 import 之后的 monkeypatch.setattr。
     # 必须先 import main，让 video_postprocess 的循环依赖（notify → video_postprocess）
     # 在「先 main 后 video_postprocess」顺序下完成解析；否则 pytest 在子测试里 import
-    # src.video_postprocess 会撞上 notify 内部的延迟导入失败。
-    from src import (
-        i18n,
-        main,  # noqa: F401
-        video_postprocess,
-    )
+    # src.recording.postprocess 会撞上 notify 内部的延迟导入失败。
+    from src.support import i18n
 
     # 恒等映射必须打在 `import main` **之后**：main.py 模块级会调 i18n.set_language(language)，把
     # i18n._tr 重绑成真目录（宿主中文 Windows 上探测出 en_US），「按简中模板断言日志文本」当场失效
@@ -381,7 +352,7 @@ def test_video_postprocess_timeout_logged_as_timeout(tmp_path: Path, monkeypatch
         assert text.count("超时") >= 3, f"超时未被分类: {text}"
         # M-29 同族收紧：上面只数「超时」出现几次——某个入口真退化成 unknown error 时，另两个入口
         # 照样把计数顶起来，聚合计数对「哪一条丢了」全盲。现按三个入口各自的专属文案逐条归因
-        # （锚点与 src/video_postprocess.py 里三个 except subprocess.TimeoutExpired 分支一一对应：
+        # （锚点与 src/recording/postprocess.py 里三个 except subprocess.TimeoutExpired 分支一一对应：
         # segment_video / converts_mp4 / converts_m4a），并反向钉死三次调用没有任何一次落到
         # unknown error 兜底分支。改生产文案须同步改这三条锚点。
         assert "ffmpeg 转封装/转码超时" in text, f"segment_video 的超时分支未被单独归因: {text}"

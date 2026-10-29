@@ -13,7 +13,7 @@ from pathlib import Path
 
 import pytest
 
-from src import runtime_install as runtime
+from src.runtime import installer as runtime
 
 
 @pytest.fixture(autouse=True)

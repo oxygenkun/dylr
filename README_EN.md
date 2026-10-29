@@ -145,7 +145,7 @@ Automatic downloads use fixed hashes or signatures from the resource manifest. T
 
 **Huya link formats (mobile share domain and desktop link share one recording pipeline)**: `https://www.huya.com/30764624` | `https://hy.fan/30764624` (mobile share domain, a purely numeric path segment is the room id; trailing slashes, query strings and the `http://` scheme are all accepted). Alphanumeric short codes (e.g. `https://hy.fan/JbmwoV`) are resolved to the real room id by following the 301 redirect (results are cached in-process, no repeated requests) and normalised to the desktop link before pulling the stream; a landing page that is not a Huya live room, or a link with no room id / an invalid one, produces an explicit error message (links are masked before they reach the logs).
 
-> Total of **51** platforms (marketed as 60+, including platforms being added). Platform data-fetching functions are in `src/spider.py`, and stream-URL parsing is in `src/stream.py`.
+> Total of **51** platforms (marketed as 60+, including platforms being added). Platform data-fetching functions are in `src/streams/spider.py`, and stream-URL parsing is in `src/streams/stream.py`.
 
 **Danmaku recording support (5 platforms)**: Douyin Live | Douyu Live | Huya Live | Bilibili Live | TwitchTV
 
@@ -153,99 +153,52 @@ Automatic downloads use fixed hashes or signatures from the resource manifest. T
 
 ## 📁 Project Structure
 
-```
+Runtime code is grouped by responsibility under `src/`. Source runs start at `src/main.py` (CLI) or `src/web.py` (Web); both use the engine in `src/recording/engine.py`.
+
+```text
 DouyinLiveRecorder/
-├── config/                     # config file directory
-│   ├── config.ini             # main config file
-│   └── URL_config.ini         # live room URL list
-├── src/                        # core source package
-│   ├── main.py                     # CLI entry
-│   ├── web.py                      # Web management panel entry
-│   ├── msg_push.py                 # message push module
-│   ├── i18n.py                     # i18n implementation
-│   ├── __init__.py             # package init + Node.js env config + danmaku platform registry/factory
-│   ├── spider.py              # live stream URL parsing (60+ platforms, danmaku logic extracted)
-│   ├── stream.py              # live stream recording orchestration (ffmpeg commands/segmentation/format)
-│   ├── stream_select.py       # stream source selection / reachability check / probe backoff
-│   ├── scheduler.py           # concurrency scheduler hub (adaptive capacity + per-platform circuit breaker)
-│   ├── room.py                # live room info parsing
-│   ├── utils.py               # utility function library
-│   ├── logger.py              # Loguru logging config
-│   ├── proxy.py               # proxy detection
-│   ├── ttwid.py               # Douyin visitor ttwid fetch/cache
-│   ├── runtime_install.py # Shared direct FFmpeg / Node.js download and integrity checks
-│   ├── node_install.py        # Node.js auto-install/init
-│   ├── ffmpeg_install.py      # FFmpeg install script
-│   ├── ffmpeg_proc.py         # ffmpeg subprocess management (extracted from main.py)
-│   ├── video_postprocess.py   # post-recording processing (remux/transcode)
-│   ├── notify.py              # live-status message push (extracted from main.py)
-│   ├── recorder_status.py     # recording status tracking (extracted from main.py)
-│   ├── config_io.py           # config read/write / value conversion / backup (extracted from main.py)
-│   ├── config_bool.py         # boolean config parsing (是/否 equals true/false/1/0/yes/no; dependency-free)
-│   ├── config_read.py         # tolerant config read (a duplicated key folds to the last value and is reported)
-│   ├── cookie_cache.py        # visitor Cookie process-level shared cache
-│   ├── log_archive.py         # runtime log archiving (on recording stop: four logs renamed with timestamp)
-│   ├── http_config.py          # HTTP client shared config (SSL verify toggle)
-│   ├── async_http.py          # async HTTP client (httpx)
-│   ├── sync_http.py           # sync HTTP client
-│   ├── web_api.py             # Web management panel Starlette app
-│   ├── web_config.py          # Web panel config read/write
-│   ├── base.py               # danmaku collector base class (DanmakuBase / DanmakuMessage)
-│   ├── collector.py           # danmaku collector (thread bridge to main flow)
-│   ├── danmaku_monitor.py     # danmaku monitor hub (DanmakuMonitorHub)
-│   ├── srt_writer.py         # danmaku time subtitle (SRT) writer
-│   ├── ws_client.py          # WebSocket transport layer (danmaku direct connect, proxy=None)
-│   ├── platforms/            # danmaku platform implementations (factory-registered by platform id)
-│   │   ├── douyin.py         # Douyin danmaku (protobuf + _tars heartbeat)
-│   │   ├── douyu.py          # Douyu danmaku (STT protocol)
-│   │   ├── huya.py           # Huya danmaku (WSP protocol)
-│   │   ├── bilibili.py       # Bilibili danmaku (WebSocket)
-│   │   ├── twitch.py         # Twitch danmaku (IRC/WS)
-│   │   ├── _tars.py          # TARS private protocol codec
-│   │   └── _xbogus.py        # X-Bogus signature
-│   ├── proto/                # Douyin danmaku protobuf definitions
-│   │   ├── douyin.proto      # protoc source definition
-│   │   ├── douyin_pb2.py      # protoc-generated (DO NOT EDIT)
-│   │   └── douyin_pb2.pyi     # type stub
-│   └── javascript/            # JavaScript signature scripts
-│       ├── crypto-js.min.js
-│       ├── x-bogus.js
-│       ├── haixiu.js
-│       ├── liveme.js
-│       └── migu.js
-├── web/                        # Web management panel frontend
-│   ├── index.html              # SPA entry
-│   ├── app.js                  # frontend logic (API, SSE, rendering)
-│   └── style.css               # stylesheet (theme, responsive)
-├── typings/                    # third-party lib type stubs (for static checks)
-│   └── execjs/                 # PyExecJS stub
-├── tool/                    # engineering helper scripts
-│   ├── build_exe.py                # PyInstaller packaging script (CLI/Web two entries)
-│   ├── smoke_test.py           # generic Web/API smoke test (zero-dep, config-driven)
-│   ├── smoke_web.json          # smoke test sample cases (probe Web panel)
-│   ├── check_coverage.py       # per-module coverage gate (used by CI)
-├── downloads/                  # recording output dir (generated at runtime)
-├── logs/                       # log dir (generated at runtime, includes danmaku_monitor.jsonl)
-├── i18n/                       # English translations (Chinese uses source text)
-│   └── en_US.json              # English (US) (JSON catalog)
-├── ffmpeg/                     # FFmpeg dir (Windows)
-├── node/                       # Node.js dir (Windows)
-├── index.html                  # M3U8 video player (standalone tool page)
-├── requirements.txt            # Python dependencies
-├── pyproject.toml             # Python project config
-├── Dockerfile                  # Docker build file (multi-stage)
-├── docker-compose.yaml         # Docker Compose (recorder/web two services)
-├── .dockerignore               # Docker build-context exclude
-├── .gitignore                  # Git exclude
-├── CODE_WIKI.md                # project architecture doc
-└── README.md                   # project README doc
+├── src/
+│   ├── __init__.py                # Explicit Node initialization and danmaku factories
+│   ├── main.py / web.py           # CLI / Web entries
+│   ├── app/                       # Startup cleanup, shutdown and log archiving
+│   ├── config/                    # INI parsing, read/write, booleans and backups
+│   ├── recording/                 # Engine, sessions, state, scheduling, processes and postprocessing
+│   ├── streams/                   # Platform dispatch, live data, stream URLs, quality, selection and signing
+│   ├── danmaku/                   # Danmaku capture, subtitles, monitoring, decompression and platforms/ protocols
+│   ├── monitors/                  # Account follow and direct-message monitoring
+│   ├── notifications/             # Push channels, recording feedback and custom scripts
+│   ├── network/                   # HTTP, WebSocket, proxies, credential caches and target validation
+│   ├── runtime/                   # FFmpeg/Node installation, resource verification and JS execution
+│   ├── api/                       # Web routes, request models and panel configuration
+│   ├── support/                   # Logging, localization, console and generic helpers
+│   ├── proto/                     # Douyin protocol definitions, generated code and stubs
+│   ├── javascript/                # Platform signing assets
+│   └── external_resources.json    # External download and integrity metadata
+├── web/                       # Web panel static assets
+├── i18n/en_US.json            # English translations; Chinese uses source text
+├── tests/                     # Python regressions, live collectors and frontend/ checks
+├── tool/                      # Build, coverage, translation, smoke and standalone tools
+├── typings/                   # Third-party type stubs
+├── docs/                      # Architecture references, changelog archives and past reviews
+├── .agents/skills/            # Versioned project skills
+├── .github/                   # CI, release, image workflows and collaboration templates
+├── pyproject.toml             # Version, dependencies and tool settings
+├── uv.lock                    # Locked dependencies
+├── requirements.txt           # pip-compatible base dependencies
+├── Dockerfile                 # Multi-stage image build
+├── docker-compose.yaml        # CLI / Web services
+└── index.html                 # Standalone M3U8 player
 ```
+
+Runtime directories are created as needed: `config/` holds `config.ini` and `URL_config.ini`; `downloads/`, `logs/` and `backup_config/` hold recordings, logs and backups; `ffmpeg/` and `node/` hold local runtimes. The root `config/` directory contains user data; `src/config/` contains Python code.
+
+See the [file and responsibility map](docs/agent-reference/project-structure.md) for the detailed tree, [architecture guide](CODE_WIKI_EN.md#core-module-details) for implementation details, and [AGENTS.md](AGENTS.md) for engineering conventions.
 
 ## ⚙️ Configuration
 
 ### Basic config (config/config.ini)
 
-> A duplicated key inside one section no longer voids the whole file: it reads as the last value written and logs one warning naming section / key / line (via the `src/config_read.py` tolerant-read layer, since 2026-10-17).
+> A duplicated key inside one section no longer voids the whole file: it reads as the last value written and logs one warning naming section / key / line (via the `src/config/reader.py` tolerant-read layer, since 2026-10-17).
 
 ```ini
 [录制设置]
@@ -386,7 +339,7 @@ pushplus推送token =
 # Required for recording Douyin: fill in a valid cookie copied from the browser at live.douyin.com (must at least include ttwid)
 # Leaving it empty will auto-attempt to fetch a visitor ttwid (may trigger risk control; filling it in is recommended)
 抖音cookie =
-# Specify Douyin ttwid separately (left empty, it is fetched and process-level cached by src/ttwid.py)
+# Specify Douyin ttwid separately (left empty, it is fetched and process-level cached by src/streams/ttwid.py)
 ttwid =
 快手cookie =
 tiktok_cookie =
@@ -404,7 +357,7 @@ bigo_cookie =
 # ... a total of 51 platform cookie keys; see config.ini for the rest
 ```
 
-> Visitor-type cookies (Douyin ttwid, Kuaishou did, etc.) are process-level shared-cached by `src/cookie_cache.py` keyed by "normalized URL + proxy" (default 30-minute TTL), so concurrent rooms do not repeatedly fetch and trigger risk control.
+> Visitor-type cookies (Douyin ttwid, Kuaishou did, etc.) are process-level shared-cached by `src/network/credentials.py` keyed by "normalized URL + proxy" (default 30-minute TTL), so concurrent rooms do not repeatedly fetch and trigger risk control.
 
 ### Authorization config (config/config.ini)
 
@@ -759,24 +712,27 @@ uv sync --locked --extra dev
 
 ```bash
 # Format code (line-length = 120)
-ruff format .
+uv run --locked --extra dev ruff format .
 
-# Sort imports
-ruff check --fix .
+# Static checks (add --fix to sort imports)
+uv run --locked --extra dev ruff check .
 
-# Run tests
-pytest
+# Collect and check coverage when preparing a commit
+uv run --locked --extra dev python -m pytest --cov=src
+uv run --locked --extra dev python tool/check_coverage.py
 ```
 
 > **Comment convention**: see the code style rules in [AGENTS.md](AGENTS.md).
 
-> **Quality gates**: Ruff formats code and sorts imports; pytest requires zero warnings. There is no permanent type-checker gate. The authoritative command list is in AGENTS.md.
+> **Quality gates**: Ruff formats code and sorts imports; pytest requires zero warnings. There is no permanent type-checker gate. Check timing and commands follow AGENTS.md; routine edits do not automatically run pytest or coverage.
 
 > **Test note**: `tests/test_web_api.py`'s symlink-related cases (`TestListFiles::test_broken_symlink_skipped` / `test_symlink_outside_skipped`) auto-`pytest.skip` in environments where real symlinks cannot be created (Windows without Developer Mode, some sandboxes) — this is normal and does not indicate a code defect.
 
 ### Project documentation
 
-- [CODE_WIKI.md](CODE_WIKI.md) - project architecture doc (detailed module descriptions, dependencies, design patterns)
+- [Directory and responsibility map](docs/agent-reference/project-structure.md) - full source tree, tools, tests, docs and runtime directories
+- [CODE_WIKI_EN.md](CODE_WIKI_EN.md) - module descriptions, dependencies and design patterns
+- [AGENTS.md](AGENTS.md) - engineering conventions and check commands
 
 ### Web/API smoke testing
 
@@ -793,26 +749,26 @@ python tool/smoke_test.py -c tool/smoke_web.json -r smoke_report.html -f html
 - Config-driven (JSON): `url` / `method` / `expected_status` / `timeout` / request headers / request body / response text that should be included / expected JSON fields
 - Supports `base_url` prefix concatenation; console / JSON / HTML report formats; non-zero exit code on failure (can be wired into CI)
 - Unlike `tool/build_exe.py --smoke` (packaging-artifact smoke test), this tool probes **running HTTP interfaces** for liveness — the two complement each other
-- The default case `tool/smoke_web.json` probes the Web panel `/` (home page 200) and `/health` (`{"status": "ok"}`, a public liveness endpoint provided by `src/web_api.py`, not gated by `web_auth_enable`)
+- The default case `tool/smoke_web.json` probes the Web panel `/` (home page 200) and `/health` (`{"status": "ok"}`, a public liveness endpoint provided by `src/api/routes.py`, not gated by `web_auth_enable`)
 - **Wired into CI**: the `test` job in `.github/workflows/ci.yml` starts `python -m src.web` in a controlled way after pytest, then runs the `tool/smoke_web.json` smoke test once it is ready (network flakiness handled via `.github/actions/retry`; on failure it keeps the `logs/web-smoke-*` artifacts and turns the job red), covering the "can the panel process really bind and respond" path that TestClient cannot
 
 ### Add a new platform
 
 **Video recording platform:**
 
-1. Add a platform stream-URL parsing function in `src/spider.py` (refer to existing platform implementations)
-2. Add a stream-URL parsing function in `src/stream.py`, with the return value containing `actual_quality` and `available_qualities` fields
-3. Add platform identification logic in `main.py` (the `PLATFORM_HOST` list and the recording branch)
+1. Add a platform data-fetching function in `src/streams/spider.py` (refer to existing platform implementations)
+2. Add a stream-URL parsing function in `src/streams/stream.py`, with the return value containing `actual_quality` and `available_qualities` fields
+3. Register URL admission, the platform resolver and room context in `src/streams/dispatch.py`
 4. Update `README.md` and `CODE_WIKI.md`
 
 **Danmaku recording platform (if danmaku support is needed):**
 
-1. Create `<platform>.py` under `src/platforms/`, inheriting `DanmakuBase` from `src/base.py`, implementing connect/auth/message parsing
-2. Register it in the danmaku platform registry in `src/__init__.py` (platform name must match the `platform` id in `main.py`); decoupled creation via the `get_danmaku_class` / `get_danmaku_collector` factory
-3. Add the platform branch at the danmaku-recording wiring in `main.py` (construct `record_danmaku_args` and pass it to `check_subprocess`)
+1. Create `<platform>.py` under `src/danmaku/platforms/`, inheriting `DanmakuBase` from `src/danmaku/base.py`, implementing connect/auth/message parsing
+2. Register it in the danmaku platform registry in `src/__init__.py` (platform name must match the `platform` id in `src/streams/dispatch.py`); decoupled creation via the `get_danmaku_class` / `get_danmaku_collector` factory
+3. Populate danmaku arguments in the resolver in `src/streams/dispatch.py`; `src/recording/session.py` uses the shared collector lifecycle
 4. Update `README.md` and `CODE_WIKI.md`
 
-> Note: the danmaku subsystem and `src/spider.py` (video stream-URL parsing) are two parallel, decoupled abstractions; `spider.py` does not import `src/platforms`.
+> Note: the danmaku subsystem and `src/streams/spider.py` (video stream-URL parsing) are two parallel, decoupled abstractions; `spider.py` does not import `src/danmaku/platforms/`.
 
 ## ❓ FAQ
 
@@ -924,21 +880,21 @@ This project is open-sourced under the [MIT License](LICENSE). Stars and Forks a
 
 ### v4.5.0 (2026-10-02 ~ 2026-10-17) — GUI window layer migrated to PySide6 (Qt6) and UI modernization phases 4-6 closed out / mobile and short-link platforms added (b23.tv / m.douyu.com / hy.fan / Xiaohongshu normalization) / Linux arm64 ffmpeg plus multi-arch GHCR images / startup bytecode-cache purge and the release-chain online pin-source layer / tolerant config.ini duplicate-key reader and three rounds of i18n machine checks / full-workspace code review and two metadata reconciliation passes
 
-> This release (v4.5.0, 2026-10-02 ~ 10-17) is a "full GUI modernization + platform onboarding" cycle: ① **the window layer moved from tkinter/ttk to PySide6 (Qt6)** - new `src/gui_qt/`, tokens and QSS as a single source of truth, the controller layer testable offscreen, and Qt dead weight pruned via `QT_BLOAT_FILES`; ② **UI modernization phases 4-6 are closed out** (CTk -> ttk, `customtkinter` removed, type scale / zoom / motion); ③ **platform onboarding** (three mobile short links plus Xiaohongshu's four link shapes normalized, Linux arm64 and multi-arch GHCR filled in); ④ **a duplicated option inside one config.ini section no longer voids the whole file** (new `src/config_read.py`). **There are breaking changes (GUI implementation and dependency surface)** - see the dedicated section below. Full root-cause analysis and verification are in [CODE_WIKI.md](CODE_WIKI.md).
+> This release (v4.5.0, 2026-10-02 ~ 10-17) is a "full GUI modernization + platform onboarding" cycle: ① **the window layer moved from tkinter/ttk to PySide6 (Qt6)** - new `src/gui_qt/`, tokens and QSS as a single source of truth, the controller layer testable offscreen, and Qt dead weight pruned via `QT_BLOAT_FILES`; ② **UI modernization phases 4-6 are closed out** (CTk -> ttk, `customtkinter` removed, type scale / zoom / motion); ③ **platform onboarding** (three mobile short links plus Xiaohongshu's four link shapes normalized, Linux arm64 and multi-arch GHCR filled in); ④ **a duplicated option inside one config.ini section no longer voids the whole file** (new `src/config/reader.py`). **There are breaking changes (GUI implementation and dependency surface)** - see the dedicated section below. Full root-cause analysis and verification are in [CODE_WIKI.md](CODE_WIKI.md).
 
 **✨ New Features / Improvements**
 - **GUI window layer migrated to PySide6 (Qt6)**: new `src/gui_qt/` (16 files, 4,189 lines, including the five `pages/`); `gui.py:main()` delegates to `src.gui_qt.app.main()` (the tkinter implementation is kept as `_legacy_main()`). Tokens and QSS live in `theme.py`, and the threading model moved to Qt Signal/Slot plus `QTimer`; the controller layer carries no Qt layout code, so `QT_QPA_PLATFORM=offscreen` is enough for unit tests.
 - **UI modernization phase 6 (type scale / zoom / motion)**: new `src/ui_scale.py` (semantic type tokens in seven steps, caption 10 -> display 28, spacing grid, zoom steps, automatic down-step on small screens) and `src/ui_motion.py` (off/subtle/full, with the system "reduce motion" switch taking priority). Zoom changes only type and spacing; point sizes use a gentle `factor ** 0.6` gain (monospace gets another 0.9).
 - **GUI visual language restyle (brand blue -> warm terracotta)**: 16 slots swapped in `src/ui_theme.py`'s light/dark tables, with `gui.py`'s `Colors` changed in the same pass; the primary is `#B5573A` (4.78 against white text; the prototype's `#C96442` measured 3.90 and fails AA) and dark-theme hover goes to `#A8502F`. The `high_contrast` theme, `TERMINAL_*` and the semantic slots were left alone.
 - **Selectable GUI font**: new `src/ui_fonts.py` (SFNT name-table parsing + GDI private font registration; woff2 is rejected); switching families completes in one `configure` without rebuilding the widget tree. Usability is judged by having Tk resolve the name once and comparing against a deliberately-missing family - `AddFontResourceExW(FR_PRIVATE)` succeeds yet `tkfont.families()` never lists a private font.
-- **GUI static labels wired into i18n**: new `src/ui_i18n.py` (`T()` + `retranslate_all` + `apply_title`), with 54 static-label sites and about 60 runtime strings wired; a language switch refills the window in place instead of rebuilding it. 27 presentational texts in `src/web_api.py` now render through `tr()` (the stable machine-code details stay untranslated).
+- **GUI static labels wired into i18n**: new `src/ui_i18n.py` (`T()` + `retranslate_all` + `apply_title`), with 54 static-label sites and about 60 runtime strings wired; a language switch refills the window in place instead of rebuilding it. 27 presentational texts in `src/api/routes.py` now render through `tr()` (the stable machine-code details stay untranslated).
 - **Mobile and short-link platforms onboarded**: Bilibili `b23.tv` (pure-numeric path taken directly; alphabetic short codes followed through a 302), Douyu `m.douyu.com` (whitelist + room-id normalization), Huya `hy.fan` (new resolver + 301 short-code resolution), and Xiaohongshu `parse_xhs_live_url` (four shapes: `/livestream/<room ID>` / dynamic path / `xhslink` / share parameters). All reuse the existing stream-fetch chain after normalization, and `record_host` keeps the short-link domain so circuit-breaker buckets count separately.
 - **Linux arm64 (aarch64) ffmpeg in three parts**: the release matrix gains `ubuntu-24.04-arm` (four platforms x lite/full = 8 zips); new `src/ffmpeg_linux_download.py` (official digest first, TOFU downgrade, two-pass install) as the no-root fallback; new `docker-publish.yml`, one architecture layer per native runner, composed into a manifest by digest (`v*` tags only).
-- **Stale bytecode-cache purge at startup**: new `src/startup_cleanup.py` - whitelisted scan roots, baseline `sha256(relative path + file bytes)` plus the version, persisted in `logs/.pyc_stamp`; it purges once, only when sources or the version actually changed (on by default, switchable).
+- **Stale bytecode-cache purge at startup**: new `src/app/startup_cleanup.py` - whitelisted scan roots, baseline `sha256(relative path + file bytes)` plus the version, persisted in `logs/.pyc_stamp`; it purges once, only when sources or the version actually changed (on by default, switchable).
 - **Release-chain runtime pinning gains an "online source layer"**: `tool/build_exe.py` gains the three-state switch `DLR_RUNTIME_PIN_SOURCE` (off/verify/adopt; off by default, no network request at all). `adopt` opens only for "the manifest has independent authentication" (`trust=signed` and the manifest verifies), and online values must pass a 64-character lowercase-hex shape check. `_PINNED_RUNTIME_SHA256` is unchanged, so default behavior is identical to before.
 
 **🐛 Fixes**
-- **A duplicated option inside one config.ini section voided the whole file**: with the same key on two lines inside `[录制设置]`, `RawConfigParser()` (strict defaults to True) raises `DuplicateOptionError` and not one key survives the read (`import main` dies on the spot, the GUI reports a read failure every 10 s). New `src/config_read.py` (`tolerant_config_parser` / `find_duplicate_options` / `warn_duplicate_options`) wired into 10 read sites, with missing-key write-back kept idempotent.
+- **A duplicated option inside one config.ini section voided the whole file**: with the same key on two lines inside `[录制设置]`, `RawConfigParser()` (strict defaults to True) raises `DuplicateOptionError` and not one key survives the read (`import main` dies on the spot, the GUI reports a read failure every 10 s). New `src/config/reader.py` (`tolerant_config_parser` / `find_duplicate_options` / `warn_duplicate_options`) wired into 10 read sites, with missing-key write-back kept idempotent.
 - **Qt monospace family-name warnings**: `QFont`'s family slot accepts a single family only, so on a machine without Consolas `QFont("Consolas, Menlo, Courier New, monospace")` falls back via `styleHint=Monospace` (measured enum value 7) into `Terminal`, emitting `CreateFontFaceFromHDC() failed` and `setPointSize(-1)`. New `fixed_font()` picks the first candidate family present on the host.
 - **Two `src/ui_fonts.py` defects**: ① copy failures were swallowed by `except Exception: return None` with no log line - it now emits a warning carrying `{type_name}` and `{err}`; ② `_safe_filename` did not handle Windows reserved device names (`CON`/`PRN`/`AUX`/`NUL`/`COM1-9`/`LPT1-9`) - the base segment before the first dot is compared case-insensitively and gets a `_` prefix on a hit.
 - **GUI right-border clipping**: three long hint labels start with `wraplength=0`, pushing `winfo_reqwidth()` to 1248 against a geometry of 1120, and Tk's grid clips (rather than shrinks) any slave whose requested width exceeds its allocation. Three stages: raise the first-window geometry to kill the first-frame deficit, squeeze to the step's minimum width to read the content's "shrink floor" and raise `minsize` only to that floor, then clamp every dimension to `SCREEN_FILL_CEILING`.
@@ -970,7 +926,7 @@ This project is open-sourced under the [MIT License](LICENSE). Stars and Forks a
 
 **🧪 Tests & Verification**
 - Full `pytest` **4365 passed / 14 skipped / 0 failed with an empty warnings summary**; `run_gates.py` **10/10 green, rc=0** (black 246 files, pathless mypy over 245 files plus the linux/win32 re-runs).
-- Coverage **83.10%** overall, `check_coverage.py` **all 69 modules meet threshold** (`src/config_read.py` 98%); basedpyright and a bare `pyright` run both 0 errors / 0 warnings.
+- Coverage **83.10%** overall, `check_coverage.py` **all 69 modules meet threshold** (`src/config/reader.py` 98%); basedpyright and a bare `pyright` run both 0 errors / 0 warnings.
 - Bundle size **153.21MB / 359 files**; `QT_BLOAT_FILES` (11 entries / 39.25MB) pruned by filename after COLLECT, since excludes cannot reach hook-collected DLLs. The frozen GUI exe survived a 9-second real run.
 - Live: Huya 660000 (2 messages / 206 B), Bilibili 545068 (33 / 2,642 B) and b23.tv 22747736 (18 / 1,402 B) all PASS; `hy.fan/JbmwoV` resolved through a real 301 to `www.huya.com/30764624` (live, WARN because no danmaku in that window); Xiaohongshu 570480456678837366 parsed OK (`liveStatus=end`); Douyu `m.douyu.com/5526219` returned `flv_url` / `m3u8_url` / `record_url` through the full chain.
 - Real-window: themes x4 / zoom x5 / motion x4 / all five pages / dialogs / advanced settings all `ALL_OK`, with screenshots reviewed at the 85% / 100% / 150% steps (the "button padding not following", "sidebar bottom overflow" and "page disappearing after slide-in" defects were found here).
@@ -982,7 +938,7 @@ This project is open-sourced under the [MIT License](LICENSE). Stars and Forks a
 **✨ New Features / Improvements**
 - **GUI theme layer (phase 3)**: new `src/ui_theme.py` (zero display dependencies, safe to import headlessly) — 13 semantic token slots × three themes (light / dark / high contrast), a sidebar theme menu that switches at runtime and persists to `config.ini [GUI] gui_theme`; WCAG contrast checks (body text 4.5 / non-text & disabled 3.0) continuously enforced by `tests/test_ui_theme.py` (34 tests).
 - **Web frontend motion layer (phase 1)**: new `web/motion.js` (zero-dependency IIFE exposing `window.__dlrMotion`) — scroll-in reveals (IntersectionObserver with stagger) / parallax particles (count adapts to viewport, halved on low-core devices) / full `prefers-reduced-motion` degradation / pause while the page is hidden / `destroy()` leaves no timers behind; wired via `web/index.html` + `web/style.css`; `tests/frontend/test_motion.mjs` 5 tests (node:test sandbox, zero npm dependencies).
-- **Self-built Web adapter layer** (added with the migration): `src/web_models.py` (9 pure-stdlib dataclass request models replacing pydantic) + the `_route` adapter in `src/web_api.py` (JSON body parsing / Query clamping / threadpool dispatch for sync endpoints / JSONResponse wrapping), with the bodies of all 24 route handlers untouched.
+- **Self-built Web adapter layer** (added with the migration): `src/api/models.py` (9 pure-stdlib dataclass request models replacing pydantic) + the `_route` adapter in `src/api/routes.py` (JSON body parsing / Query clamping / threadpool dispatch for sync endpoints / JSONResponse wrapping), with the bodies of all 24 route handlers untouched.
 - **The `retry` composite action gains a `fail_fast_codes` input (exit-code tiering)**: with it omitted, the behavior of all 16 existing call sites is byte-identical; the web smoke call site passes `"2"` so configuration-class errors fail immediately without entering backoff — never rewritten to 0 or downgraded to a warning just to make the pipeline green.
 - **Two new test defenses**: R7, an AST gate over the real-device collector script template (`__main__` guard / zero collection-time side effects / two-step argv guard / platform-prefixed cleanup, with all 5 live_collector scripts hardened in the same batch); R8, a repo-wide scan for leftover `MUTATION-` markers (a mutation not reverted turns the gate red, with the three hard rules written back into AGENTS.md).
 - **New dynamic route-contract lock** `tests/test_web_api_routes.py` (exact set of 24 method/path pairs + the `/web` mount), replacing the static baseline JSON that the secret-scanning gate blocked.
@@ -1025,7 +981,7 @@ This project is open-sourced under the [MIT License](LICENSE). Stars and Forks a
 
 **🐛 Fixes**
 - **P0: 100% recording failure on ffmpeg master builds**: `-thread_queue_size` was narrowed upstream to a muxer-only option; placed before `-i`, ffmpeg exits with `Option thread_queue_size … cannot be applied to input url … Error opening input files: Invalid argument` (return code -22). Unrelated to room / platform / CDN — on that build *every* recording fails.
-- **P0: boolean config parsing unified**: the scattered parsers (previously `!= "否"`, `== "是"`, and the front-end `=== '是'`) are unified into `src/config_bool.py::parse_config_bool`; as a result `global_proxy` is no longer wrongly forced to False, restoring resolution for TikTok / SOOP / PandaTV / WinkTV / Flextv / PopkonTV / Twitch / LiveMe / Faceit and other overseas platforms.
+- **P0: boolean config parsing unified**: the scattered parsers (previously `!= "否"`, `== "是"`, and the front-end `=== '是'`) are unified into `src/config/booleans.py::parse_config_bool`; as a result `global_proxy` is no longer wrongly forced to False, restoring resolution for TikTok / SOOP / PandaTV / WinkTV / Flextv / PopkonTV / Twitch / LiveMe / Faceit and other overseas platforms.
 - **Full code review, 62 items (09-19)**: GUI silent hang on empty config; one extra comma in a config line permanently skipping every room after it; missing bounds checks in Tars decoding causing a danmaku-thread livelock; Douyu danmaku silently filtered out (regression of an earlier fix); a hung ffmpeg permanently holding a concurrency slot; zero-byte output judged as success and cancelling circuit-breaker backoff; `config.ini` (with credentials) copied in plaintext into `backup_config/`; the Web panel being take-over-able or lockable through its own API; zero protocol validation on room URLs → blind SSRF; the masking blacklist missing every "credential embedded in the value" URL-type key; zero integrity verification in the install/packaging chain.
 - **`CODE_REVIEW_2026-09-20` landed in full, 106 items (09-21)**: the concurrency semaphore treating "available permits" as capacity (the network concurrency cap effectively out of control); `PUT /api/rooms` bypassing room-entry validation; intranet blocking via a string-prefix blacklist (5 of 7 probe addresses passed); panel auth being hot-disabled by a single write request, with case variants bypassing the password hash / self-lock guard / token revocation; deleting a room on CRLF configs failing permanently while still reporting `{"ok": true}`; Shopee site-suffix parsing producing an illegal domain; fallback decorators mismatched with return contracts (failures disguised as "not live"); the recording watchdog using the wrong baseline for its "stalled" verdict (the real tolerance window was only 30 seconds); the `only_flv` branch missing `flv_url`, causing the time-subtitle thread to spin and write to disk in a loop; an empty runtime-binary hash pinning table in the release chain.
 - **Release chain & supply chain**: macOS arm64 full packages **silently shipped without ffmpeg** (no such artifact upstream — the download point is fixed); the Windows runtime ffmpeg primary source verified healthy by measurement (gyan.dev ships a `.sha256` document that cross-confirms the release-time pin); official SHA256 pins backfilled for 6 of 10 slots.
@@ -1035,7 +991,7 @@ This project is open-sourced under the [MIT License](LICENSE). Stars and Forks a
 - **Metadata second-copy drift (09-27)**: `DouyinLiveRecorder.egg-info/PKG-INFO` still carried `Requires-Dist: h2` at the old floor `>=4.3.0` (the manifests had been raised to `>=4.4.1` but never propagated into the metadata), and its embedded README lacked the whole v4.3.0 changelog section; rebuilt and corrected.
 
 **✨ New Features / Improvements**
-- **Per-room log correlation field `extra[room]`**: `src/logger.py` gains `ROOM_FIELD` / `set_room_context()` / `get_room_context()` (internal `ContextVar` + patcher), so interleaved multi-room logs can be sliced per room.
+- **Per-room log correlation field `extra[room]`**: `src/support/logger.py` gains `ROOM_FIELD` / `set_room_context()` / `get_room_context()` (internal `ContextVar` + patcher), so interleaved multi-room logs can be sliced per room.
 - **Web panel `/health` probe endpoint**: `GET /health` returns `{"status": "ok", "version": …}`, and the built-in smoke tool `tool/smoke_test.py` is wired into CI as a real HTTP probe.
 - **W6: Apple Silicon ffmpeg PATH yield policy**: on darwin + arm64 with another native ffmpeg already on `PATH`, the bundled x86_64 build (which only runs through Rosetta translation) is no longer unconditionally prepended; yielding requires all five criteria to hold. Other platforms are unchanged, byte for byte.
 - **Runtime binary integrity**: `tool/build_exe.py` gains the `_PINNED_RUNTIME_SHA256` table plus `--require-pinned`, backed by `tool/check_runtime_pins.py` (structure mode in the local gate / `--strict` in the release prepare job / `--emit-env` for CI injection); first-time runtime installs now prefer officially published hashes, and release builds add GPG verification plus a full-package self-check.
