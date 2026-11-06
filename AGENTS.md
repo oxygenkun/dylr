@@ -9,7 +9,9 @@
 
 ## 项目结构
 
-[目录与文件职责参考](docs/agent-reference/project-structure.md)。`src/` 根层保留入口、包初始化与资源；运行时代码按职责放入子包：support 共用支撑、app 生命周期、config 配置、network 网络、recording 录制、streams 视频取流、danmaku 弹幕、monitors 账号监控、notifications 通知、runtime 外部程序与 JS 执行、api Web 后端。维护与构建工具统一在 `tool/`，前端静态资源在 `web/`；根目录 `config/` 是运行期数据，区别于源码包 `src/config/`。CLI / Web 入口分别为 `src.main:main`、`src.web:main`，从项目根目录使用 `python -m src.main` / `python -m src.web` 启动。
+[目录与文件职责参考](docs/agent-reference/project-structure.md)。`src/` 根层保留入口、包初始化与资源；运行时代码按职责放入子包：support 共用支撑、app 生命周期、config 配置、network 网络、recording 录制、streams 视频取流、danmaku 弹幕、monitors 账号监控、notifications 通知、runtime 外部程序与 JS 执行、api Web 后端。维护与构建工具统一在 `tool/`，前端静态资源在 `web/`；根目录 `config/` 是运行期数据，区别于源码包 `src/config/`。唯一入口为 `src.main:main`（`python -m src.main`），是否同时启动 Web 面板由 `[Web] web_enable` 决定；`src.web` 只是面板实现模块，不提供启动入口。
+
+README.md / README_EN.md 面向使用与部署；开发指南、常见问题（Q & A）和更新记录放在 `docs/` 独立文档中，README 仅保留入口链接。
 
 ## 项目级 Skill
 
@@ -26,8 +28,8 @@
 ## 依赖管理
 
 - 项目按源码运行，`[tool.uv] package = false`，不构建或安装项目自身。`pyproject.toml` 声明依赖、`uv.lock` 锁定；CI / Docker 用 `--locked`。基础安装 `uv sync --locked`，开发加 `--extra dev`，打包再加 `--extra build`；不以 `--dev` 替代现有 dev extra。
-- `requirements.txt` 是基础依赖的 pip 兼容清单，与 project.dependencies 同步。比对时去行内注释、归一包名与规格集合；dev / build 依赖不放回基础清单。
-- 安全下限以依赖声明和审计为准；新增或抬升依赖下限跑 `deps-audit`，不随意加漏洞忽略项。pip-audit 属审计工具，不进运行时依赖。
+- Python 依赖只在 `pyproject.toml` 声明并由 `uv.lock` 锁定，不维护 requirements 清单或 pip 安装入口；增删依赖使用 `uv add` / `uv remove`，dev / build 使用 `--optional dev` / `--optional build`。
+- 安全下限以依赖声明和审计为准；新增或抬升依赖下限跑 `deps-audit`，不随意加漏洞忽略项。pip-audit 放在 dev extra，不进运行时依赖；CI 从 uv.lock 临时导出基础与 dev/build 依赖用于审计，并复核直接依赖与 uv 约束中的安全下限，不维护第二份清单。
 - protobuf 上限放宽前先用兼容的 protoc 重新生成，禁止手改 `douyin_pb2.py`；引用的动态消息字段与现有 `.pyi` 同步。
 - 收集期 ModuleNotFoundError 先核对 venv 与锁文件，不改业务代码掩盖缺包；运行 pytest 需要基础依赖及 dev extra。
 
@@ -68,7 +70,7 @@ uv run --locked --extra build python tool/build_exe.py --dual
 
 ### 打包与冒烟测试语义（tool/build_exe.py）
 
-- CLI / Web 两入口共享 `_internal/`；config、ffmpeg、node 与 exe 同级。JS 签名资源按模块路径打入 `_internal/`。
+- 单入口产物共享 `_internal/`；config、ffmpeg、node 与 exe 同级。JS 签名资源按模块路径打入 `_internal/`。
 - 冒烟结果按 `FATAL_MARKERS` 与进程状态判定；headless 特定良性报错只允许精确豁免，不宽泛吞异常。
 - zip 名整体拼接，不能用 with_suffix 截断带点版本；拒绝路径分隔符，双产物须名称互异且均存在。`--dual` / `--no-zip` 互斥；陈旧发行 zip 的清理由构建入口自身负责。
 
@@ -95,14 +97,14 @@ uv run --locked --extra dev python -m pytest --cov=src
 uv run --locked --extra dev python tool/check_coverage.py
 ```
 
-- 静态检查按需直接运行 Ruff 与翻译同步检查；pre-commit 与 CI 保留各自的提交检查入口。Windows 检查使用 `PYTHONUTF8=1`。
+- 静态检查按需直接运行 Ruff 与翻译同步检查；prek 与 CI 保留各自的提交检查入口。Windows 检查使用 `PYTHONUTF8=1`。
 
 ## 完成定义（Definition of Done）
 
 1. 完成授权范围，报告实际检查及未执行项；仅在需要 commit 时运行 pytest（0 warnings）与覆盖率检查，不把编辑前的结果当作编辑后的证据。
 2. 录制/选源/ffmpeg/平台解析改动在有条件时对受影响平台做增量真机验证，报告脚本、脱敏 URL、PASS/WARN/FAIL 和适用读数；无外网或无活房间则明确未验证范围及用户复验方法，不声称真机已通过。
 3. 保留受影响的回归用例；缺少必要覆盖时补测试，按提交时机运行。
-4. 用户可见行为、配置/依赖、架构或长期约定变化更新相应文档；重大变化追加中英 CODE_WIKI 日志。小修、测试、注释不强制多处登记，长期规则只在本文维护。
+4. 用户可见行为、配置/依赖、架构或长期约定变化更新相应文档；重大变化追加 CODE_WIKI 更新日志。小修、测试、注释不强制多处登记，长期规则只在本文维护。
 5. 按清理节核对本次临时产物和 git diff，不动用户已有变更。
 6. 最终回复说明改动、验证和实质限制；不强制写工具私有记忆、每日流水账或固定回滚模板。
 

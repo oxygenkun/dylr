@@ -1,6 +1,6 @@
 # README Changelog Archive (English)
 
-> Moved out of the "Changelog" section of `README_EN.md` on 2026-09-28; entry bodies are verbatim. The root document keeps only the current release window plus a pointer here.
+> Moved out of the "Changelog" section of `README_EN.md` on 2026-09-28; entry bodies are verbatim. Current release notes are in [release-notes-en.md](release-notes-en.md).
 > 18 entries, 2024-07-13 ~ 2026-09-03.
 > On restoration: an earlier doc-size pass had cut some sentences short at a trailing `…`. This volume restores them by **per-line prefix match** against the `.workbuddy/docold` baseline (2026-09-25): 113 lines restored, 0 left as-is for a missing match, 0 left as-is as ambiguous.
 > Deliberately NOT done: previously deleted bullets are not resurrected, and file inventories already externalized to `docs/agent-reference/changelog-file-inventories.md` are not re-inlined - wholesale restoration would undo those intentional edits.

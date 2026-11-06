@@ -1,7 +1,5 @@
 # DouyinLiveRecorder 项目架构文档
 
-简体中文  |  [**English**](CODE_WIKI_EN.md)
-
 ## 目录
 
 - [文档统计与索引](#文档统计与索引)
@@ -33,10 +31,11 @@
 
 | 分类 | 路径 | 维护方式 |
 | --- | --- | --- |
-| 项目根文档（事实来源） | `AGENTS.md` + 中英成对的 `README` / `CODE_WIKI` | 手工维护，工程约定以 `AGENTS.md` 为准 |
+| 项目根文档（事实来源） | `AGENTS.md` + 中英成对的 `README` + 中文 `CODE_WIKI` | 手工维护，工程约定以 `AGENTS.md` 为准 |
+| 使用与开发文档 | `docs/development*.md`、`docs/faq*.md` | 中英文开发指南与常见问题 |
 | 架构参考子文档 | `docs/agent-reference/` | 维护目录树、实测依据与共享经验 |
 | 一次性审查报告 | `docs/worklog/` | 保留历史审查、诊断与提案 |
-| 变更日志归档 | `docs/changelog/` | 按发布周期滚动归档历史条目 |
+| 发布说明与日志归档 | `docs/changelog/` | 维护发布说明，按发布周期滚动归档历史条目 |
 | CI 附带说明 | `.github/` | 随工作流与模板维护 |
 
 ### 根文档索引
@@ -44,12 +43,19 @@
 | 文件 | 角色 | 主要内容 |
 | --- | --- | --- |
 | `AGENTS.md` | 编码代理约定 | 版本号单一事实源（`pyproject.toml`）、代码风格（Ruff）、项目结构、依赖/测试/构建命令、关键约定 |
-| `README.md` | 用户/开发者说明 | 功能特性、已支持平台（51 个）、快速开始、配置说明、使用说明、Docker 部署、开发指南、FAQ、更新日志 |
+| `README.md` | 用户使用说明 | 功能特性、已支持平台（51 个）、快速开始、配置说明、使用说明、Docker 部署与独立文档入口 |
 | `CODE_WIKI.md` | 项目架构文档（本文档） | 模块详解、依赖关系、设计模式、常见问题排查、贡献指南、更新日志 |
-| `README_EN.md` | 用户/开发者说明（英文） | `README.md` 的英文对应版（2026-08-24 新增，与中文版结构对齐） |
-| `CODE_WIKI_EN.md` | 项目架构文档（英文） | 本文档的英文对应版（2026-08-24 新增，条目与中文版一一对应） |
+| `README_EN.md` | 用户使用说明（英文） | `README.md` 的英文对应版（2026-08-24 新增，与中文版结构对齐） |
 
-> 五份文档职责互补：改动平台支持/配置项时须同步更新 `README.md` 与本文档；工程约定以 `AGENTS.md` 为准；`README_EN.md` / `CODE_WIKI_EN.md` 随对应中文版同步更新。
+> 四份文档职责互补：改动平台支持/配置项时须同步更新 `README.md` 与本文档；工程约定以 `AGENTS.md` 为准；`README_EN.md` 随中文版同步更新（架构文档只保留中文版）。
+
+### 使用与开发文档索引
+
+| 文档 | 简体中文 | English |
+| --- | --- | --- |
+| 开发指南 | [development.md](docs/development.md) | [development-en.md](docs/development-en.md) |
+| 常见问题 | [faq.md](docs/faq.md) | [faq-en.md](docs/faq-en.md) |
+| 更新日志 | [release-notes-zh.md](docs/changelog/release-notes-zh.md) | [release-notes-en.md](docs/changelog/release-notes-en.md) |
 
 ### 参考子文档索引（`docs/agent-reference/`）
 
@@ -62,20 +68,19 @@
 | `session-learnings.md` | 项目共享经验参考 | 历次开发与审查经验 |
 | `lock-classification.md` | 锁的可重入性分类口径 | `AGENTS.md`「已知坑」 |
 | `changelog-file-inventories.md` | **2026-09-27 新增**：本文档更新日志里 41 个「涉及文件（按模块分类）」清单块的逐字原文；原处保留小节标题 + 一行指针 | 本文档更新日志 |
-| `changelog-file-inventories-en.md` | 同上条目的英文对应版（32 个清单块），对应 `CODE_WIKI_EN.md` | `CODE_WIKI_EN.md` 更新日志 |
 
-### 变更日志归档索引（`docs/changelog/`）
+### 更新日志与归档索引（`docs/changelog/`）
 
-> **2026-09-28 新增，与上一节的分工不同**：`docs/agent-reference/` 放「从根文档抽走的参考长段」，本目录放「按发布周期滚走的完整历史条目」。
-> 滚动规则：根文档只保留**当前发布周期**（本文档）或**最近三个正式发布**（`README`）的条目，其余整卷迁入归档；新条目写入根文档后，超出窗口的最旧条目随即追加到对应归档卷尾部。
+> `docs/agent-reference/` 放参考长段，本目录维护独立发布说明及按发布周期归档的完整历史条目。
+> 滚动规则：本文档保留**当前发布周期**，独立发布说明保留**最近三个正式发布**；更早条目追加到对应归档卷尾部。
 > 归档卷**只增不改**：条目正文逐字保留，仅对上一轮粗剪留下的行尾 `…` / 句中截断按整理前快照基线做逐行前缀回补（各卷卷首写明口径）。
 
 | 文件 | 内容 | 迁出自 |
 | --- | --- | --- |
 | `code-wiki-history-zh.md` | 本文档更新日志的 193 条历史条目（2026-05-17 ~ 2026-10-17；2026-10-18 再迁入 v4.4.0 20 条 + v4.3.0-dev 9 条） | `CODE_WIKI.md`「更新日志」 |
-| `code-wiki-history-en.md` | 同上条目的英文对应版（193 条，与中文版一一对应） | `CODE_WIKI_EN.md`「Changelog」 |
-| `release-notes-history-zh.md` | `README.md` 的 17 条早期发布说明（v4.0.0 ~ v4.0.9.4，2024-07-13 ~ 2026-09-06） | `README.md`「更新日志」 |
-| `release-notes-history-en.md` | 同上条目的英文对应版（17 条） | `README_EN.md`「Changelog」 |
+| `release-notes-zh.md` / `release-notes-en.md` | 中英文最近三个正式发布说明（v4.5.0 / v4.4.0 / v4.3.0） | `README.md` / `README_EN.md`「更新日志」 |
+| `release-notes-history-zh.md` | 19 条早期发布说明（v4.0.0 ~ v4.2.0，2024-07-13 ~ 2026-10-15） | `README.md`「更新日志」 |
+| `release-notes-history-en.md` | 同上条目的英文对应版（19 条） | `README_EN.md`「Changelog」 |
 
 ## 项目概述
 
@@ -150,8 +155,8 @@
 
 ```mermaid
 flowchart TD
-    CLI["src/main.py"] --> Engine["recording/engine.py"]
-    Web["src/web.py"] --> Engine
+    Entry["src/main.py（统一入口）"] --> Engine["recording/engine.py"]
+    Entry -->|web_enable| Web["src/web.py"]
     Web --> API["api/routes.py + web/"]
     Engine --> Session["recording/session.py"]
     Engine --> Monitors["monitors/registry.py"]
@@ -164,7 +169,7 @@ flowchart TD
     Session --> Danmaku["src/__init__.py → danmaku/collector.py"]
 ```
 
-两个入口共用录制引擎与状态。`support/`、`app/`、`config/`、`network/` 和 `runtime/` 分别提供日志、生命周期、配置、传输和外部程序/脚本能力。图中仅列主要调用与依赖，省略共用支撑连线。
+入口共用录制引擎与状态。`support/`、`app/`、`config/`、`network/` 和 `runtime/` 分别提供日志、生命周期、配置、传输和外部程序/脚本能力。图中仅列主要调用与依赖，省略共用支撑连线。
 
 ### 工作流程
 
@@ -197,7 +202,7 @@ flowchart TD
 ```text
 src/
 ├── __init__.py                # 显式 Node 初始化与弹幕工厂
-├── main.py / web.py           # CLI / Web 入口
+├── main.py / web.py           # 统一入口 / 面板实现
 ├── app/                       # 启动清理、退出协调与日志归档
 ├── config/                    # INI 解析、读写、布尔值与配置备份
 ├── recording/                 # 录制引擎、房间会话、状态、调度、进程与后处理
@@ -222,8 +227,8 @@ src/
 
 | 模块 | 职责 |
 | --- | --- |
-| `src/main.py` | CLI 入口：先设置终端编码，再显式初始化和启动引擎 |
-| `src/web.py` | Web 入口：校验监听配置、设置控制台模式，再初始化引擎并启动守护线程 |
+| `src/main.py` | 统一入口：设置终端编码、确保配置迁移，再按 `[Web] web_enable` 分流到纯录制或面板模式 |
+| `src/web.py` | 面板实现：校验监听与认证配置、设置控制台模式，启动引擎守护线程与 uvicorn（非启动入口） |
 | `src/recording/engine.py` | 进程启动与退出、配置热加载、磁盘检查和房间线程调度 |
 | `src/recording/session.py` | 单房间录制、直下、FFmpeg 输入输出命令、看门狗及录后处理接线 |
 | `src/streams/dispatch.py` | URL 准入、平台分发表、平台上下文、短链归一与解析路由 |
@@ -231,7 +236,7 @@ src/
 | `src/monitors/registry.py` | 账号级关注与私信监控实例及新增房间回调 |
 | `src/support/console.py` | 终端编码设置与颜色输出 |
 
-CLI 仍通过 `python -m src.main` 启动，Web 仍通过 `python -m src.web` 启动。源码资源路径以项目根目录为准；冻结运行以 exe 所在目录为准。
+统一通过 `python -m src.main` 启动，面板由 `[Web] web_enable` 决定；不存在第二个启动入口或环境变量覆盖。源码资源路径以项目根目录为准；冻结运行以 exe 所在目录为准。
 
 业务模块直接依赖 `state`，不导入入口或反向导入引擎。配置写入统一使用 `state.file_update_lock`；Web API 直接调用 `src/config/io.py` 和 `src/recording/status.py`。主循环的临时解析变量只保留在函数内。
 
@@ -424,7 +429,7 @@ NETEASE_QUALITY_MAP = {"blueray": "OD", "ultra": "UHD", "high": "HD", "standard"
 - `tr(template, **kwargs)` 先查译文再替换占位符，供业务提示和日志调用。
 - `translated_print` 翻译项目源码的 print 参数；由 `recording.engine.initialize_process()` 显式安装，不在导入 CLI 入口时安装。
 - `set_language()` 热切换进程内译文，Web 的 `GET/PUT /api/language` 和引擎配置热加载共用该能力。
-- 源码与冻结资源路径分别支持项目根目录和 `_internal/`；翻译资源随两个入口共享打包。
+- 源码与冻结资源路径分别支持项目根目录和 `_internal/`；翻译资源随入口打包。
 
 翻译文案分布在 `recording/`、`streams/`、`danmaku/`、`network/`、`notifications/`、`runtime/`、`config/` 和 Web 入口。直接编辑英文 JSON 目录，无需 gettext 编译；`tool/extract_i18n_strings.py` 提取并比对缺失文案，相关回归用例在 `tests/test_i18n*.py`。
 
@@ -456,13 +461,13 @@ NETEASE_QUALITY_MAP = {"blueray": "OD", "ultra": "UHD", "high": "HD", "standard"
 
 DNS 检查与传输层实际解析是两次操作，仍存在重绑定时间窗口；本实现不声称固定了最终连接 IP。独立录制工具保留自己的 HTTP/HTTPS urllib 白名单与重定向前检查。
 
-### 12. Web 管理面板 (`src/web.py` + `src/api/routes.py` + `src/api/config.py` + `web/`)
+### 12. Web 管理面板 (`src/main.py` 面板分支 + `src/web.py` + `src/api/routes.py` + `src/api/config.py` + `web/`)
 
 **职责**: 提供 Web 界面远程管理录制器，包括仪表盘、直播间管理、配置编辑、日志查看
 
 **架构**:
 
-- `src/web.py` - 入口：守护线程运行 `src.recording.engine.main(non_interactive=True)`，主线程运行 uvicorn；支持后台隐藏运行模式
+- `src/web.py` - 面板实现：守护线程运行 `src.recording.engine.main(non_interactive=True)`，主线程运行 uvicorn；支持后台隐藏运行模式，由 `src/main.py` 按 `web_enable` 调用
 - `src/api/routes.py` - Starlette 应用：认证（Token）、REST API 路由、SSE 推送、静态资源挂载
 - `src/api/config.py` - 配置读写（不依赖 Web 框架，便于单测）
 - `web/` - 前端静态资源（单页应用）
@@ -653,11 +658,12 @@ def host_of(url: str) -> str: ...
 
 ## 依赖关系
 
-### Python 依赖 (`requirements.txt`，与 `pyproject.toml [project.dependencies]` 保持一致)
+### Python 依赖 (`pyproject.toml [project.dependencies]`，由 `uv.lock` 锁定)
 
 | 包名 | 版本要求 | 用途 |
 | --- | --- | --- |
 | httpx[http2] | >=0.28.1 | 异步 HTTP 客户端（含 HTTP/2，`src/network/http.py` 并发抓取流地址） |
+| certifi | >=2026.10.19 | HTTP 客户端 CA 证书包；排除受影响 emSign 根证书 |
 | h2 | >=4.4.1 | httpx `http2=True` 的运行期依赖（`Client.__init__` 内 `import h2`） |
 | socksio | >=1.0.0 | httpx SOCKS 代理（socks5/socks5h）的运行期依赖（传输层内 `import socksio`） |
 | loguru | >=0.7.3 | 结构化日志（`src/support/logger.py` 统一封装） |
@@ -668,7 +674,7 @@ def host_of(url: str) -> str: ...
 | uvicorn[standard] | >=0.51.0 | ASGI 服务器 |
 | websockets | >=14.0 | 弹幕 WebSocket 客户端（`src/network/websocket.py`；`additional_headers` 为 14.0+ API） |
 | protobuf | >=6.33.5,<8 | 抖音弹幕协议解码（`src/proto/douyin_pb2.py`；上限 <8 为 gencode 兼容护栏） |
-| brotli | >=1.2.0 | B站弹幕解压（protover=3） |
+| brotli | >=1.2.1 | B站弹幕解压（protover=3）；排除受影响的解码器版本 |
 
 > 注 1：[历史注] 旧版此处记录「Weverse 平台认证由 `src/weverse_auth.py` 实现、不再依赖 pip 上的 `weverse` 包」。
 > 该模块（连同 `tests/test_weverse_auth.py`）已于 2026-09-23 整体删除，结论仅作备查：pip 上的 `weverse`
@@ -791,10 +797,11 @@ network/http.py / streams/selection.py / api/config.py → network/targets.py
 
 #### [Web] 节
 
-Web 管理面板配置（`src/web.py` 模式专用）
+Web 管理面板配置（统一入口的面板分支）
 
 | 配置项 | 说明 | 默认值 |
 | --- | --- | --- |
+| web_enable | 是否随统一入口启动面板（纯录制 = false） | false |
 | web_host | 监听地址（Docker 内需设为 0.0.0.0） | 127.0.0.1 |
 | web_port | 监听端口 | 8000 |
 | web_auth_enable | 是否启用密码认证。关闭时 API 禁止改写 [Recorder]/[Push] 危险配置（如自定义脚本），但仍允许修改 [Web] 设置 | false |
@@ -851,24 +858,15 @@ https://live.douyin.com/745964462470
 #### 安装依赖
 
 ```bash
-# 使用 uv（推荐）
-uv sync
-
-# 或使用 pip
-pip install -r requirements.txt
+uv sync --locked
 ```
 
-#### 命令行模式
+#### 统一入口
 
 ```bash
-python -m src.main
-```
-
-#### Web 管理面板模式
-
-```bash
-python -m src.web
-# 默认监听 http://localhost:8000
+uv run --locked python -m src.main
+# 纯录制：config.toml [Web] web_enable = false（默认）
+# 面板 + 录制：web_enable = true，默认监听 http://localhost:8000
 ```
 
 ### 方式 2: Docker 运行
@@ -885,16 +883,15 @@ python -m src.web
 
 #### 使用 docker compose (推荐)
 
-仓库根目录的 `docker-compose.yaml` 已定义两个服务（共享同一镜像，通过 YAML 锚点复用配置）：
+仓库根目录的 `docker-compose.yaml` 只定义一个服务、唯一入口，面板由 `config.toml` 的 `[Web] web_enable` 决定：
 
 | 服务 | 入口 | 启动命令 | 端口 |
 | --- | --- | --- | --- |
-| `recorder`（默认） | `python -m src.main` | `docker compose up -d` | 无（纯 CLI） |
-| `web`（profile） | `python -m src.web` | `docker compose --profile web up -d` | `127.0.0.1:8000:8000` |
+| `recorder` | `python -m src.main` | `docker compose up -d` | `127.0.0.1:8000:8000`（仅 `web_enable = true` 时实际监听） |
 
 统一挂载卷：`./config`、`./downloads`、`./logs`、`./backup_config`。
 
-> ⚠️ **Web 模式必读**：`src/web.py` 默认监听 `127.0.0.1:8000`，容器内必须在
+> ⚠️ **Web 模式必读**：面板默认监听 `127.0.0.1:8000`，容器内必须在
 >
 > `config/config.ini` 的 `[Web]` 节设置 `web_host = 0.0.0.0`，宿主机端口映射才能访问；
 >
@@ -902,16 +899,15 @@ python -m src.web
 
 ## 打包与发布
 
-本项目提供一键式可执行文件打包（`tool/build_exe.py`）与跨平台自动构建发布（`GitHub Actions`），将 **CLI / Web 两个入口**统一构建为可分发的发布目录。
+本项目提供一键式可执行文件打包（`tool/build_exe.py`）与跨平台自动构建发布（`GitHub Actions`），把 **统一入口（纯录制 / 面板）**构建为单一可执行文件。
 
 ### 1. 打包脚本 `tool/build_exe.py`
 
-PyInstaller 使用 `onedir` 与 `contents_directory='_internal'`，两个 `Analysis` / `EXE` 共用一个 `COLLECT`，共享 Python 依赖与资源。
+PyInstaller 使用 `onedir` 与 `contents_directory='_internal'`，一个 `Analysis` / `EXE` 配一个 `COLLECT`。
 
 | 产物 | 源码入口 | 模式 |
 | --- | --- | --- |
-| `DouyinLiveRecorder(.exe)` | `src/main.py` | CLI |
-| `DouyinLiveRecorder-Web(.exe)` | `src/web.py` | Web，监听地址来自配置 |
+| `DouyinLiveRecorder(.exe)` | `src/main.py` | 唯一入口（`web_enable` 决定是否带面板） |
 
 ```bash
 uv sync --locked --extra build
@@ -978,12 +974,12 @@ dist/DouyinLiveRecorder/
 
 - `setup` job 集中声明**共享常量**（Python 版本矩阵 / Node 版本）并执行路径过滤，常量输出至 job outputs 供各 job 与 `strategy.matrix` 引用（matrix 无法引用 env 上下文），是全工作流的单一事实源；
 - **actions 大版本统一 v7**（`checkout` / `setup-python` / `setup-node` / `upload-artifact`），与 build-release.yml 完全一致；
-- **网络安装重试统一经 `.github/actions/retry` 复合动作**（线性退避 ×3；`command` / `label` / `attempts` / `backoff` 可参数化）——pip / apt 安装共 9 处调用，重试策略只在 action.yml 一处维护，禁止 job 内重新内联重试循环；
+- **网络安装重试统一经 `.github/actions/retry` 复合动作**（线性退避 ×3；`command` / `label` / `attempts` / `backoff` 可参数化）——uv / apt 安装共 9 处调用，重试策略只在 action.yml 一处维护，禁止 job 内重新内联重试循环；
 - **apt 强化参数**（对齐 build-release.yml 的 Linux 构建）：`DEBIAN_FRONTEND=noninteractive` + `Acquire::Retries=3` + `--no-install-recommends`；
 - 每个 job 显式 `timeout-minutes`；同分支/PR 新推送 `cancel-in-progress: true` 取消旧运行（快速反馈，与发布流的不可取消策略有意区分）；
-- pip 缓存统一以 `hash(requirements.txt + pyproject.toml)` 为 key（仓库无 lock 文件参与安装）。
+- setup-uv 缓存以 `uv.lock` 为 key；Python 依赖统一使用 `uv sync --locked` 安装。
 
-**路径过滤**：`setup` job 使用 `dorny/paths-filter@v4` 检测变更文件类别，命中即运行全部下游 job。触发清单：Python 源码（`src/**`、根目录入口 `src/main.py`/`src/web.py`/`src/support/i18n.py`/`src/notifications/msg_push.py`/`tool/build_exe.py`）、`tests/**`、`tool/**`、依赖清单（`requirements.txt` / `pyproject.toml` / `.coveragerc-concurrency`）、**`i18n/**`**、**`web/**`**、**`Dockerfile` / `docker-compose.yaml`**、工作流与复合动作（**`.github/workflows/**` / `.github/actions/**`**）。仅**纯文档（`*.md`）变更不触发**。**`i18n/**` 是触发条件**——纯翻译变更同样会跑 static job 的 compile_po --check 同步检查；**`web/**` 亦是触发条件**（2026-09-20 补齐）——`web/app.js` 的 `parseConfigBool + CONFIG_*_TOKENS` 与 `src/config/booleans.py` 是跨语言布尔口径不变量（AGENTS.md「布尔配置项统一解析口径」），改任一侧都须由 test job 跑 `tests/frontend/test_quality_ui.mjs` 回归锁（旧口径「纯前端 web/ 不触发」已被证伪，详见更新日志对应条目）。
+**依赖安装与审计**：基础依赖、dev / build extra 均在 `pyproject.toml` 声明并由 `uv.lock` 锁定。`deps-audit` 从锁文件临时导出运行时及全部 dev/build 依赖闭包供 pip-audit 审计，并复核直接依赖与 uv 约束下限；审计工具本身也在 dev extra 中锁定。
 
 **并行 jobs**（均 `needs: setup` 条件门控）：
 
@@ -994,7 +990,7 @@ dist/DouyinLiveRecorder/
 | `test` | py3.14 | `pytest --cov=src --cov-report=term-missing`（全局 `fail_under=50` 检查，`fail-fast: false`）+ `tool/check_coverage.py` 逐模块检查 + coverage.xml 上传 + 可选 Codecov |
 | `concurrency-test` | py3.14 | 并发专项：`COVERAGE_RCFILE=.coveragerc-concurrency` 下跑 `test_concurrency_rate_limit.py` + `test_concurrency.py` + `test_async_http_lock.py`（专用配置不设全局阈值） |
 | `integration-verify` | py3.14 + Node 24 | apt 装 ffmpeg；验证 ffmpeg/node 二进制可发现，并调 `check_ffmpeg_installed()` / `check_nodejs_installed()` 验证探测逻辑 |
-| `build-verify` | py3.14 打包解释器 | `tool/build_exe.py --smoke --no-runtime --no-zip`（lite 打包 + CLI/Web 两入口冒烟）；发布级完整打包留给 build-release.yml |
+| `build-verify` | py3.14 打包解释器 | `tool/build_exe.py --smoke --no-runtime --no-zip`（lite 打包 + 单入口冒烟，冒烟内含面板探活）；发布级完整打包留给 build-release.yml |
 | `ci-summary` | — | 唯一 required check：汇总上游全部 job 结果（skipped 视为通过——路径过滤跳过不会让分支保护永久 pending） |
 
 ### 6. GitHub Actions 自动构建与发布（`build-release.yml`）
@@ -1012,7 +1008,7 @@ dist/DouyinLiveRecorder/
 
 1. `prepare` job：用 tomllib 从 pyproject.toml 提取版本号并校验 tag 一致（打错 tag 直接失败）。
 2. `release-create` job：发版路径下**预创建** Release 记录（单例 job，消除多平台 build 并发创建同一 Release 的竞态；不传 files）；手动发版路径在此补建轻量 tag（Release 必须挂在 tag 上）。
-3. build job（矩阵）：各平台以系统包管理器装 ffmpeg 供冒烟——Windows `choco`、Linux `apt`、macOS `brew`（`brew trust aws/tap` 为独立幂等步骤，`HOMEBREW_*` 变量在命令内 export）；**全部网络安装命令经 `.github/actions/retry` 复合动作包装**（线性退避 ×3，系统包管理器退避 15s、pip 10s）；依赖统一通过 `uv sync --locked --extra build` 安装。
+3. build job（矩阵）：各平台以系统包管理器装 ffmpeg 供冒烟——Windows `choco`、Linux `apt`、macOS `brew`（`brew trust aws/tap` 为独立幂等步骤，`HOMEBREW_*` 变量在命令内 export）；**全部网络安装命令经 `.github/actions/retry` 复合动作包装**（线性退避 ×3，系统包管理器退避 15s、uv 10s）；依赖统一通过 `uv sync --locked --extra build` 安装。
 5. 产物发布：发版路径（tag / 手动勾选 create_release）由 build job 经 `softprops/action-gh-release@v3` 把 zip **直传 Release**（显式 `tag_name` 与 release-create 指向同一 Release，GitHub 支持同 Release 并发上传不同 asset）；仅构建路径走 `upload-artifact@v7`（`compression-level: 0` 跳过二次压缩，留存 30 天供人工取回）。
 6. `release` job（发版路径）：`gh release download` 拉回已发布附件校验齐全（4 平台 ×（lite+full）= 8 个 zip，缺失即失败不发布残缺 Release），生成 `SHA256SUMS.txt`，最后经 `softprops/action-gh-release@v3` 补传校验和并写发版说明（`generate_release_notes: true`）。
 
@@ -1021,9 +1017,9 @@ dist/DouyinLiveRecorder/
 ### 7. 本地打包步骤
 
 ```bash
-pip install pyinstaller          # 安装打包器
-python tool/build_exe.py --smoke      # 打包 + 冒烟测试
-python tool/build_exe.py --smoke --dual  # 与 CI 一致：lite + full 双产物
+uv sync --locked --extra build          # 安装打包器
+uv run --locked --extra build python tool/build_exe.py --smoke      # 打包 + 冒烟测试
+uv run --locked --extra build python tool/build_exe.py --smoke --dual  # 与 CI 一致：lite + full 双产物
 # 产物：dist/DouyinLiveRecorder/ 发布目录 + dist/DouyinLiveRecorder-vX.Y.Z-*.zip
 ```
 
@@ -1204,7 +1200,7 @@ uv run --locked --extra dev python tool/check_coverage.py
 - `base_url` 前缀拼接，无需每个接口写完整地址
 - 三种输出：控制台（带颜色）、JSON 报告、HTML 报告
 - 任一检查失败退出码非 0，便于接入 CI
-- **已接入 CI**：默认用例 `tool/smoke_web.json` 探活 Web 面板 `/` 与 `/health`（后者为 `src/api/routes.py` 提供的公开探活端点）；`.github/workflows/ci.yml` 的 `test` job 在 pytest 之后受控启动 `python -m src.web`，经 `tool/_ci_web_smoke.sh` 做就绪等待 + 断言（走 `.github/actions/retry`），失败保留 `logs/web-smoke-*` 工件并使 job 变红——补齐 TestClient 覆盖不到的「面板进程能否真正监听并应答」链路
+- **已接入 CI**：默认用例 `tool/smoke_web.json` 探活 Web 面板 `/` 与 `/health`（后者为 `src/api/routes.py` 提供的公开探活端点）；`.github/workflows/ci.yml` 的 `test` job 在 pytest 之后把 `config/config.toml` 的 `web_enable` 置 true 并以 `python -m src.main` 受控启动面板，经 `tool/_ci_web_smoke.sh` 做就绪等待 + 断言（走 `.github/actions/retry`），失败保留 `logs/web-smoke-*` 工件并使 job 变红——补齐 TestClient 覆盖不到的「面板进程能否真正监听并应答」链路
 
 用法：
 
@@ -1305,6 +1301,39 @@ python tool/smoke_test.py -c tool/smoke_web.json -r smoke_report.html -f html
 - **修改内容** · `docs/agent-reference/project-structure.md`、`docs/agent-reference/session-learnings.md` — 目录树同步新增模块与测试文件；经验条目追加（ADS 夹具、保留设备名实测、用例数增量归因、offscreen 探针的退出形态、先测后改的冗余度量、锚点优于行号、`strict=True` 下的重复键）
 - **新增功能** · `CODE_WIKI.md`、`CODE_WIKI_EN.md` — 本「按模块分类的改动总览」章节（中英同结构、同条目数、逐条对应），以及逐批更新日志条目随改动追加并保持双语一一对应
 ## 更新日志
+
+### 2026-11-06 — 统一启动入口（Web 面板由 `[Web] web_enable` 控制）并只保留中文架构文档
+
+- `src/main.py` 成为唯一入口：先设置终端编码、确保配置迁移，再按 `[Web] web_enable` 分流——关闭时执行 `recording.engine.initialize_process(cli=True)` + `engine.main()`；开启时调用 `src/web.py::run()`，由其校验监听与认证配置后在守护线程运行引擎、主线程运行 uvicorn。`src/web.py` 的启动函数改名 `run` 并删除脚本入口与别名，`python -m src.web` 不再是启动方式。
+- 新增 `[Web] web_enable`（默认 false，即纯命令行录制）作为唯一开关，不提供环境变量覆盖。Docker 收敛为单服务、单一入口：删除 web profile 与 `DOUYIN_WEB_ENABLE` 注入，8000 端口恒定映射；PyInstaller 收敛为单一 exe（面板依赖并入同一 Analysis），冒烟通过临时置 `web_enable = true` 验证面板。systemd 单元、compose、CI 面板冒烟与中英 README、开发指南同步。
+- 文档只保留中文架构文档：删除 `CODE_WIKI_EN.md` 及其英文归档 `docs/changelog/code-wiki-history-en.md`、`docs/agent-reference/changelog-file-inventories-en.md`；README_EN / development-en / 根文档索引改指 `CODE_WIKI.md`，AGENTS.md 的完成定义改为「追加 CODE_WIKI 更新日志」。
+- 验证：`ruff check` 与 `compileall` 通过；systemd 分别以 `web_enable=false` / `true` 重启实测——前者无面板端口监听、只跑录制主循环，后者单进程 `python -m src.main`（面板 18083）、`/` 返回 200、86 个房间监听与关注/私信监控正常、日志无重复归档。按仓库约定未在本次交付运行 pytest/覆盖率与打包冒烟，待提交时执行；未做真实开播录制复验（当前无开播房间）。
+
+### 2026-11-03 — 配置迁移到 TOML（pydantic 校验 + 热加载）与录制输入修正
+
+- 主配置由 `config/config.ini` 迁到 `config/config.toml`：新增 `src/config/store.py`，用 pydantic 做结构与类型校验（兼容「是/否」与 true/false），按内容摘要热加载；旧 INI 首启自动迁移并改名为 `config.ini.migrated`，备份仍为脱敏副本。Web 面板读写、日志开关、ttwid/spider 直读与备份脱敏同步切换；`config/config.toml` 进入 `.gitignore`/`.dockerignore`，发布工具将其列入凭据文件清单。
+- 全部 httpx 客户端统一 `trust_env=False`：只认程序显式配置的代理，避免 `NO_PROXY` 含 `[::1]` 时在构造客户端阶段抛 `InvalidURL`，也避免环境代理绕过「是否使用代理ip = 否」。
+- FFmpeg 直播输入移除 `-re`：时间戳节流会在 HLS 断点/回跳时让进程空等（2026-11-03 真机 50s 上限只落 34.6s，视频包止于 27.7s）；移除后同一房间 50s 上限产出 64.4s 连续媒体（开头补读播放列表积压）。
+- 验证：完整 pytest **3071 passed / 10 skipped**，无 warnings summary；真机 3 次（TOML 配置全链路、弹幕 SRT、无 `-re` 复验）通过；新增 `tests/test_config_store.py` 及 `trust_env`、`-re` 回归用例。
+- 未覆盖：未在全部 51 个平台复验 `-re` 移除；发布包仍随包提供脱敏 INI 模板，由首启迁移转 TOML。
+
+### 2026-10-30 — 提交钩子迁移到 prek
+
+- dev extra 使用 prek 替换 pre-commit，移除 virtualenv 约束和失去引用的间接依赖；由 uv.lock 锁定工具版本。
+- 保留 `.pre-commit-config.yaml`，YAML、TOML 和文件大小检查改用 prek 内置钩子，Ruff 继续由 uv 执行；更新安装命令和中英文开发指南。
+
+### 2026-10-29 — 修复运行时与工具链依赖漏洞
+
+- Brotli 下限抬至 1.2.1，修复解码器越界写漏洞；certifi 显式声明安全下限 2026.10.19，排除包含受影响 emSign 根证书的版本。修复依据：[Brotli 1.2.1](https://github.com/google/brotli/releases/tag/v1.2.1)、[certifi 安全公告](https://osv.dev/vulnerability/PYSEC-2026-4320)。
+- uv.lock 更新 brotli 1.2.0 → 1.2.1、certifi 2026.7.22 → 2026.10.23。开发与构建工具的间接依赖 filelock 4.0.8 → 4.2.4、setuptools 84.0.0 → 84.2.1、virtualenv 21.14.2 → 21.15.1；其余已锁定版本保持不变。
+- `[tool.uv].constraint-dependencies` 记录 filelock>=4.2.1、setuptools>=84.1.0、virtualenv>=21.14.10，不将工具依赖装入基础运行环境。CI 审计扩展到全部 extras，并复核直接依赖及 uv 约束下限。修复依据：[filelock](https://github.com/tox-dev/filelock/releases/tag/4.2.1)、[setuptools](https://github.com/pypa/setuptools/security/advisories/GHSA-xmj3-9gf7-h52w)、[virtualenv](https://virtualenv.pypa.io/en/21.14.9/changelog.html)。
+
+- 验证：运行时及全部 dev/build 审计、16 项安全下限审计、含其他平台包在内的 75 项锁定包审计均未发现已知漏洞；Brotli 增量解码、118 项 CA 证书加载与受影响根排除、HTTP/2 客户端初始化、virtualenv / PyInstaller 启动及锁文件检查通过。未运行 pytest、覆盖率或完整打包。
+
+### 2026-10-29 — 统一使用 uv 管理 Python 依赖
+
+- 删除 requirements.txt；基础依赖、开发与构建工具只在 pyproject.toml 声明，由 uv.lock 锁定。pip-audit 纳入 dev extra，CI 按锁文件安装并临时导出运行时审计输入，保留声明下限审计。
+- 更新中英文安装与打包说明、缺依赖提示及英文翻译；protobuf 回归用例改读 pyproject.toml。已有依赖的锁定版本保持不变。
 
 ### 测试失败分类与修复（2026-10-29）
 
@@ -1471,7 +1500,7 @@ python tool/smoke_test.py -c tool/smoke_web.json -r smoke_report.html -f html
 
 > **真机验证留存约定**（与 `AGENTS.md`「完成定义」第 2 步同源）：涉及录制链路 / 选源 / ffmpeg 参数 /
 > 平台解析的改动，真机验证结论写在本文件对应版本条目的「验证」子节，中英同步。
-> **滚动归档**：本节只保留当前发布周期的条目，更早条目整卷存于 [`docs/changelog/code-wiki-history-zh.md`](docs/changelog/code-wiki-history-zh.md)（口径见上方「变更日志归档索引」）。
+> **滚动归档**：本节只保留当前发布周期的条目，更早条目整卷存于 [`docs/changelog/code-wiki-history-zh.md`](docs/changelog/code-wiki-history-zh.md)（口径见上方「更新日志与归档索引」）。
 > 格式：`[YYYY-MM-DD] 平台 | 脱敏 URL | 脚本 | 结果 | 消息数`。
 > 无法执行时结果列写 `SKIP(原因)`（如 `SKIP(无外网)` / `SKIP(房间未开播)`），
 > 并补「交回用户」动作（如「请用户有活房间时手动跑」）；此情形不得宣布完成定义第 1→6 步完成。

@@ -14,18 +14,19 @@
 | `tests/fixtures/`、`tests/golden/` | 测试辅助程序与 FFmpeg 命令基线 |
 | `tool/` | 构建、覆盖率、翻译提取、冒烟与独立录制工具 |
 | `typings/execjs/` | PyExecJS 类型存根 |
+| `docs/development.md`、`docs/development-en.md` | 中英文开发指南 |
+| `docs/faq.md`、`docs/faq-en.md` | 中英文常见问题（Q & A） |
 | `docs/agent-reference/` | 目录、已知坑、实测依据和共享经验参考 |
-| `docs/changelog/` | 中英文架构日志与发布说明归档 |
+| `docs/changelog/` | 中英文发布说明与历史架构日志、发布说明归档 |
 | `docs/worklog/` | 历史审查、诊断与提案 |
 | `.agents/skills/` | 入库的项目技能，清单见 AGENTS.md |
 | `.github/` | Issue / PR 模板、共用重试动作、CI、发布与镜像审计工作流 |
 | `pyproject.toml`、`uv.lock` | 项目元数据、唯一版本声明、依赖与开发工具配置、依赖锁定 |
-| `requirements.txt` | 基础依赖的 pip 兼容清单 |
 | `Dockerfile`、`docker-compose.yaml` | CLI / Web 镜像构建与服务编排 |
 | `.gitignore`、`.dockerignore` | 仓库与镜像构建上下文排除项 |
-| `.pre-commit-config.yaml`、`.coveragerc-concurrency` | 提交检查与并发专项覆盖率配置 |
-| `README.md`、`README_EN.md` | 中英文用户与开发指南 |
-| `CODE_WIKI.md`、`CODE_WIKI_EN.md` | 中英文架构与实现说明 |
+| `.pre-commit-config.yaml`、`.coveragerc-concurrency` | prek 提交检查与并发专项覆盖率配置 |
+| `README.md`、`README_EN.md` | 中英文使用、部署指南与独立文档入口 |
+| `CODE_WIKI.md` | 架构与实现说明（中文） |
 | `AGENTS.md` | 工程约定、检查时机与完成定义 |
 | `index.html` | 独立 M3U8 播放器，与 `web/` 面板入口分开 |
 | `LICENSE` | MIT 许可证 |
@@ -37,16 +38,17 @@
 ```text
 src/
 ├── __init__.py                  # 显式 Node 初始化、弹幕平台注册表与工厂
-├── main.py                      # CLI 入口
-├── web.py                       # Web 入口、引擎线程与 uvicorn 生命周期
+├── main.py                      # 唯一入口：按 [Web] web_enable 选择纯录制或面板 + 录制
+├── web.py                       # 面板实现（引擎线程与 uvicorn 生命周期），非启动入口
 ├── app/                         # 应用生命周期
 │   ├── startup_cleanup.py       # 启动时的陈旧字节码清理
 │   ├── graceful_shutdown.py     # 退出协调与线程登记
 │   └── log_archive.py           # 停止后的运行日志归档
 ├── config/                      # 配置处理，与根目录 config/ 数据分开
 │   ├── booleans.py              # 布尔 token 解析与格式化
-│   ├── reader.py                # 容错 INI 解析与重复键诊断
-│   ├── files.py                 # INI 值读写、URL 替换与行去重
+│   ├── store.py                 # TOML 存储、pydantic 类型校验、按内容摘要热加载与旧 INI 迁移
+│   ├── reader.py                # 旧 INI 的容错解析与重复键诊断（仅迁移路径使用）
+│   ├── files.py                 # TOML 读写、URL_config.ini 替换与行去重
 │   └── io.py                    # 配置缺省值写回、房间编辑与脱敏备份
 ├── recording/                   # 录制业务
 │   ├── engine.py                # 进程初始化、配置热加载与房间线程调度
@@ -124,7 +126,7 @@ src/
 
 ## 主要调用关系与边界
 
-1. CLI 的 `src/main.py` 设置终端编码，再调用 `recording.engine.initialize_process(cli=True)` 和 `recording.engine.main()`。Web 的 `src/web.py` 校验监听与认证配置，完成初始化后在守护线程运行引擎，主线程运行 uvicorn 与 `api.routes.create_app()` 创建的应用。
+1. `src/main.py` 设置终端编码并确保配置已迁移，再按 `[Web] web_enable` 分流：关闭时调用 `recording.engine.initialize_process(cli=True)` 和 `recording.engine.main()`；开启时交给 `src/web.py` 的 `run()`，后者校验监听与认证配置，在守护线程运行引擎，主线程运行 uvicorn 与 `api.routes.create_app()` 创建的应用。`src/web.py` 只是面板实现，不是启动入口。
 2. `recording/engine.py` 读取配置、热加载房间并启动各房间的 `recording.session.start_record()`。每房间独立线程，异步平台请求由各自的 `asyncio.run()` 驱动；没有进程级共享事件循环。
 3. `recording/session.py` 调用 `streams/dispatch.py` 分派平台，平台实现经 `spider.py` 获取数据、`stream.py` 解析地址和画质，再由 `selection.py` 选源。FFmpeg 命令和运行监控在 session，进程清理在 process，转码等后处理在 postprocess。
 4. 弹幕参数由平台分派写入房间上下文，session 经 `src/__init__.py` 工厂启动 `danmaku/collector.py`。字幕、实时弹幕监控和账号关注/私信监控分别归属 `danmaku/srt_writer.py`、`danmaku/monitor.py`、`monitors/`。
@@ -136,7 +138,7 @@ src/
 
 | 工具 | 用途 |
 | --- | --- |
-| `tool/build_exe.py` | CLI / Web 双入口打包、发行归档与打包产物冒烟 |
+| `tool/build_exe.py` | 统一入口（含可选面板）打包、发行归档与打包产物冒烟 |
 | `tool/check_coverage.py` | 提交前逐模块覆盖率检查；阈值以脚本的 `MODULE_THRESHOLDS` 为准 |
 | `tool/extract_i18n_strings.py` | 从源码提取文案并比对英文目录 |
 | `tool/smoke_test.py`、`tool/smoke_web.json` | 对运行中的 Web / HTTP 接口做冒烟检查 |
@@ -149,8 +151,7 @@ src/
 ```bash
 uv sync --locked
 uv run --locked python -m src.main
-# Web 管理面板
-uv run --locked python -m src.web
+# 面板由 config/config.toml 的 [Web] web_enable 控制（false = 纯录制）
 ```
 
-根目录的 `config/` 保存 `config.ini` 和 `URL_config.ini`；`downloads/`、`logs/`、`backup_config/` 分别保存录制文件、运行日志和配置备份。`ffmpeg/`、`node/` 是本地运行时目录；这些路径按需创建，不要求首次检出时存在。冻结运行时以可执行文件所在目录定位用户数据，两个入口共享 `_internal/` 中的打包资源。
+根目录的 `config/` 保存 `config.toml` 和 `URL_config.ini`；`downloads/`、`logs/`、`backup_config/` 分别保存录制文件、运行日志和配置备份。`ffmpeg/`、`node/` 是本地运行时目录；这些路径按需创建，不要求首次检出时存在。冻结运行时以可执行文件所在目录定位用户数据，两种运行形态共享 `_internal/` 中的打包资源。

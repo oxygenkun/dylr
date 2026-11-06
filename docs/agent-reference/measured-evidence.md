@@ -153,7 +153,7 @@ Flextv/PopkonTV/Twitch/LiveMe/Faceit 共 9 个海外平台的解析分支全部�
 
 ## 性能优化与修复变更记录
 
-近期性能优化与修复的完整变更记录见 `CODE_WIKI.md` / `CODE_WIKI_EN.md` 的「更新日志 / Changelog」。2026-08-28/29 的 P1~P5 性能优化（探针客户端复用 / `requests.Session` 线程级复用 / 主循环 set 去重 / 调度器增量计数 / 正则提常量）、探针退避窗口对齐主循环、录制成功清除退避、虎牙 FLV-first、Web 模式 loguru 控制台 sink 重建，均已逐条落地为 AGENTS.md 约定与「录制结果反馈约定」「并发与线程模型」章节。
+近期性能优化与修复的完整变更记录见 `CODE_WIKI.md` 的「更新日志」。2026-08-28/29 的 P1~P5 性能优化（探针客户端复用 / `requests.Session` 线程级复用 / 主循环 set 去重 / 调度器增量计数 / 正则提常量）、探针退避窗口对齐主循环、录制成功清除退避、虎牙 FLV-first、Web 模式 loguru 控制台 sink 重建，均已逐条落地为 AGENTS.md 约定与「录制结果反馈约定」「并发与线程模型」章节。
 
 ## 本机全量 pytest 偶发段错误
 
