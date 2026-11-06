@@ -1,7 +1,7 @@
 # CR-04 跨层默认值回归锁：only_fans 的「None = 不覆盖」契约。
 #
 # 三层链条（任一层改回硬默认值都会让上一层的修复静默失效）：
-#   ① src/__init__.py::get_danmaku_collector(only_fans=None)
+#   ① src/danmaku/factory.py::get_danmaku_collector(only_fans=None)
 #   ② src/danmaku/collector.py::DanmakuCollector.__init__(only_fans=None)，且 _run 内只在
 #      `self._only_fans is not None` 时才覆盖实例属性；
 #   ③ src/danmaku/platforms/douyu.py::DouyuDanmaku.__init__(only_fans=False)——刻意关掉「只保留粉丝弹幕」
@@ -18,8 +18,8 @@ from typing import Any
 
 import pytest
 
-from src import get_danmaku_collector
 from src.danmaku.collector import DanmakuCollector
+from src.danmaku.factory import get_danmaku_collector
 from src.danmaku.platforms.douyu import DouyuDanmaku
 from src.danmaku.platforms.huya import HuyaDanmaku
 

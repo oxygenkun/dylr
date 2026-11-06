@@ -14,7 +14,6 @@ import uuid
 
 from loguru import logger
 
-from src import initialize_runtime
 from src.api.config import update_config_line
 from src.app.graceful_shutdown import shutdown_manager
 from src.app.log_archive import archive_runtime_logs
@@ -47,6 +46,7 @@ from src.recording.session import (
 )
 from src.recording.status import display_info
 from src.runtime.ffmpeg import check_ffmpeg, ffmpeg_path, should_prepend_bundled_ffmpeg_dir
+from src.runtime.node import initialize_node_runtime
 from src.streams import spider
 from src.streams.dispatch import CLEAN_URL_HOST_LIST, PLATFORM_HOST, _stream_path_suffix
 from src.streams.selection import contains_url
@@ -80,7 +80,7 @@ def safe_exit(_signum: int, _frame: types.FrameType | None) -> None:
 def initialize_process(*, cli: bool = False) -> None:
     """初始化外部运行时和退出钩子；CLI 另行安装信号处理器。"""
     global language, skip_proxy_check, _last_ssl_disable_platforms_raw
-    initialize_runtime()
+    initialize_node_runtime()
     if cli:
         signal.signal(signal.SIGINT, safe_exit)
         signal.signal(signal.SIGTERM, safe_exit)

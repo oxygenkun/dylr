@@ -15,9 +15,9 @@ from typing import Any, cast
 import httpx
 from loguru import logger
 
-from src import get_danmaku_collector
 from src.app.graceful_shutdown import shutdown_manager
 from src.config.io import update_anchor_name
+from src.danmaku.factory import get_danmaku_collector
 from src.danmaku.monitor import get_hub
 from src.monitors.registry import follow_monitor
 from src.network import policy

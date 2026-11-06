@@ -129,7 +129,7 @@ excludes_bloat = {bloat_excludes}
 datas = [
     ('pyproject.toml', '.'),                # CLI / Web 从源码配置读取版本，冻结后同样可用
     ('src/external_resources.json', 'src'),
-    ('src/javascript', 'src/javascript'),   # JS 签名脚本（src/__init__.py 经 __file__ 定位 → _internal/src/javascript）
+    ('src/javascript', 'src/javascript'),   # JS 签名脚本（src/runtime/resources.py 经 __file__ 定位 → _internal/src/javascript）
     *{i18n_datas},   # JSON 翻译目录（由 build_exe.i18n_datas_entries() 生成）
     ('web', 'web'),                         # Web 面板静态资源（src/api/routes.py 经 __file__ 定位 → _internal/web）
 ]

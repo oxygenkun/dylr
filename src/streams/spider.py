@@ -18,7 +18,6 @@ import httpx
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import pad
 
-from src import JS_SCRIPT_PATH
 from src.config import files as config_files
 from src.config.booleans import parse_config_bool
 from src.network import http, policy, targets
@@ -28,6 +27,7 @@ from src.network.credentials import credential_cache, fetch_cookies
 from src.recording import state
 from src.runtime import javascript
 from src.runtime.javascript import ProgramError
+from src.runtime.resources import JS_SCRIPT_PATH
 from src.streams.errors import trace_error_decorator, trace_error_decorator_or_none
 from src.streams.room import UnsupportedUrlError, get_sec_user_id, get_unique_id, is_user_homepage_url
 from src.streams.ttwid import get_ttwid

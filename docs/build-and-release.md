@@ -48,7 +48,7 @@ dist/dylr/
 
 - [state.py](../src/recording/state.py) 定位配置、录制及备份，[logger.py](../src/support/logger.py) 定位日志。
 - [ffmpeg.py](../src/runtime/ffmpeg.py) / [node.py](../src/runtime/node.py) 定位外部程序，[resources.py](../src/runtime/resources.py) 读取统一下载清单。
-- [i18n.py](../src/support/i18n.py) / [routes.py](../src/api/routes.py) 定位翻译 / Web 资源；JS 路径由 [包初始化模块](../src/__init__.py) 的 `JS_SCRIPT_PATH` 提供。
+- [i18n.py](../src/support/i18n.py) / [routes.py](../src/api/routes.py) 定位翻译 / Web 资源；JS 路径由 [resources.py](../src/runtime/resources.py) 的 `JS_SCRIPT_PATH` 提供。
 
 ## 打包产物冒烟
 

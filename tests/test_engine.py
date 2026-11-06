@@ -188,13 +188,13 @@ def test_process_initialization_registers_hooks_without_running_workers(
     monkeypatch.setattr(engine, "atexit", exit_shim)
     monkeypatch.setattr(engine, "threading", threading_shim)
     monkeypatch.setattr(engine, "builtins", builtin_shim)
-    monkeypatch.setattr(engine, "initialize_runtime", Mock())
+    monkeypatch.setattr(engine, "initialize_node_runtime", Mock())
     monkeypatch.setattr(engine, "detect_system_proxy", Mock(return_value=None))
     monkeypatch.setattr(engine, "ffmpeg_path", str(tmp_path / "ffmpeg"))
     monkeypatch.setattr(engine, "should_prepend_bundled_ffmpeg_dir", Mock(return_value=True))
     monkeypatch.setenv("PATH", "/usr/bin")
     engine.initialize_process(cli=cli)
-    engine.initialize_runtime.assert_called_once()
+    engine.initialize_node_runtime.assert_called_once()
     assert signal_shim.signal.call_count == (2 + hasattr(signal_shim, "SIGBREAK") if cli else 0)
     assert exit_shim.register.call_count == 4
     assert builtin_shim.print is engine.translated_print

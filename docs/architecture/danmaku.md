@@ -6,15 +6,15 @@
 
 **职责与架构总览**: `src/danmaku/` 管理弹幕协议、采集线程、实时监控和 SRT 分片。WebSocket 传输与凭据缓存分别复用 `src/network/websocket.py`、`src/network/credentials.py`；抖音协议定义在 `src/proto/`。弹幕可随视频录制，也可仅监控而不写字幕。
 
-**与流解析解耦**: 弹幕子系统与 `src/streams/spider.py`（视频流地址解析）是**平行的两套抽象**。`spider.py` 负责解析视频流地址，弹幕客户端经 `src/__init__.py` 的注册表/工厂解耦；`spider.py` 不 import `src/danmaku/platforms/`。仅 B站弹幕在 AUTH 被拒时会懒加载回调 `spider.invalidate_bili_buvid_cache()`。
+**与流解析解耦**: 弹幕子系统与 `src/streams/spider.py`（视频流地址解析）是**平行的两套抽象**。`spider.py` 负责解析视频流地址，弹幕客户端经 `src/danmaku/factory.py` 的注册表/工厂解耦；`spider.py` 不 import `src/danmaku/platforms/`。仅 B站弹幕在 AUTH 被拒时会懒加载回调 `spider.invalidate_bili_buvid_cache()`。
 
 **生命周期接线**（与录制同起同停）:
 
 - `streams/dispatch.py` 将平台弹幕参数写入房间上下文。
-- `recording/session.py` 将参数传入 `check_subprocess()`，经 `src/__init__.py` 的 `get_danmaku_collector()` 工厂创建采集器；平台不支持或参数为空时返回 `None`。
+- `recording/session.py` 将参数传入 `check_subprocess()`，经 `src/danmaku/factory.py` 的 `get_danmaku_collector()` 工厂创建采集器；平台不支持或参数为空时返回 `None`。
 - `DanmakuCollector` 共用启动与停止流程，`stop()` 支持重复调用。
 
-**平台注册表**（`src/__init__.py:get_danmaku_class`，平台名与 `src/streams/dispatch.py` 标识一致）:
+**平台注册表**（`src/danmaku/factory.py:get_danmaku_class`，平台名与 `src/streams/dispatch.py` 标识一致）:
 
 | 平台标识 | 弹幕类（`src/danmaku/platforms/`） |
 | --- | --- |

@@ -317,7 +317,7 @@ def test_collector_forwards_all_types_and_lifecycle(tmp_path: Path) -> None:
 
 def test_factory_passthrough_room_name_and_write_srt(tmp_path: Path) -> None:
     # 工厂透传：write_srt=False 采集器不创建 SrtWriter；平台不支持返回 None。
-    from src import get_danmaku_collector
+    from src.danmaku.factory import get_danmaku_collector
 
     collector = get_danmaku_collector(
         platform="抖音直播",

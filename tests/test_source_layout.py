@@ -8,7 +8,6 @@ from pathlib import Path
 
 import pytest
 
-import src
 import src.recording
 from src.runtime import node as node_install
 from src.support import logger as logger_module
@@ -43,7 +42,7 @@ def test_source_and_frozen_entries_keep_resources_at_app_root(monkeypatch: pytes
     assert Path(logger_module._app_root()) == ROOT
 
 
-@pytest.mark.parametrize("skip, expected_calls", [("1", []), ("", [True])])
+@pytest.mark.parametrize("skip, expected_calls", [("1", []), ("on", []), ("", [True])])
 def test_runtime_initialization_respects_skip_and_bundled_node(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, skip: str, expected_calls: list[bool]
 ) -> None:
@@ -54,7 +53,7 @@ def test_runtime_initialization_respects_skip_and_bundled_node(
     monkeypatch.setattr(node_install, "check_node", lambda: calls.append(True))
     monkeypatch.setenv("DOUYIN_SKIP_RUNTIME_CHECK", skip)
     monkeypatch.setenv("PATH", str(node_dir))
-    src.initialize_runtime()
+    node_install.initialize_node_runtime()
     assert calls == expected_calls
     assert os.environ["PATH"] == str(node_dir)
 

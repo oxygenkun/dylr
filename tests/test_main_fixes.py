@@ -1,5 +1,5 @@
 # main.py 并发 / 配置 / 录制路径回归。
-# 注意：import main 放到 fixture 中延迟执行——收集阶段会因 src/__init__ 的 node 检查 spawn 子进程
+# 注意：import main 放到 fixture 中延迟执行——收集阶段会因 src/runtime/node.py 的 node 检查 spawn 子进程
 # 而偶发 WinError 6/50，用例执行阶段则稳定。
 import subprocess
 import threading

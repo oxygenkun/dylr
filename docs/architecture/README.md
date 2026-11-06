@@ -32,7 +32,7 @@ flowchart TD
     Dispatch --> Parsers["streams/spider.py + stream.py"]
     Session --> Selection["streams/selection.py"]
     Session --> Process["recording/process.py + postprocess.py"]
-    Session --> Danmaku["src/__init__.py → danmaku/collector.py"]
+    Session --> Danmaku["danmaku/factory.py → danmaku/collector.py"]
 ```
 
 纯录制与面板模式共用录制引擎和状态。图中省略日志、配置、网络及外部运行时等公共支撑连线。

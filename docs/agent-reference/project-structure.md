@@ -42,7 +42,7 @@
 
 ```text
 src/
-├── __init__.py                  # 显式 Node 初始化、弹幕平台注册表与工厂
+├── __init__.py                  # 包初始化；运行时代码按职责放在子包
 ├── main.py                      # 唯一入口：按 [Web] web_enable 选择纯录制或面板 + 录制
 ├── web.py                       # 面板实现（引擎线程与 uvicorn 生命周期），非启动入口
 ├── app/                         # 应用生命周期
@@ -75,6 +75,7 @@ src/
 ├── danmaku/                     # 弹幕业务
 │   ├── base.py                  # 弹幕客户端接口与消息数据结构
 │   ├── collector.py             # 线程化采集、视频时间轴与字幕接线
+│   ├── factory.py               # 弹幕平台注册表与采集器工厂
 │   ├── monitor.py               # 实时监控枢纽与 JSONL 输出
 │   ├── srt_writer.py            # SRT 字幕分片写入
 │   ├── compression.py           # 共用 gzip/zlib 有界解压
@@ -102,7 +103,7 @@ src/
 │   ├── websocket.py             # WebSocket 连接、发送、心跳与重连
 │   └── urls.py                  # URL、代理、Cookie、JSONP 与查询参数格式处理
 ├── runtime/                     # 外部运行时与签名脚本执行
-│   ├── resources.py             # 读取统一外部资源清单
+│   ├── resources.py             # 读取统一外部资源清单与 JS 资源目录
 │   ├── installer.py             # 共用直接下载、校验、解包与安装
 │   ├── ffmpeg.py                # FFmpeg 可用性检查、安装与 PATH 优先级
 │   ├── node.py                  # Node.js 可用性检查与安装

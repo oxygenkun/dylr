@@ -6,10 +6,10 @@ from typing import cast
 
 import httpx
 
-from src import JS_SCRIPT_PATH
 from src.network import policy
 from src.network import urls as network_urls
 from src.runtime import javascript
+from src.runtime.resources import JS_SCRIPT_PATH
 from src.streams.ttwid import get_ttwid
 from src.support import i18n, utils
 from src.support.logger import logger

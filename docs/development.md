@@ -102,7 +102,7 @@ python tool/smoke_test.py -c tool/smoke_web.json -r smoke_report.html -f html
 **弹幕录制平台（如需支持弹幕）：**
 
 1. 在 `src/danmaku/platforms/` 下新建 `<平台>.py`，继承 `src/danmaku/base.py` 的 `DanmakuBase`，实现连接/鉴权/消息解析
-2. 在 `src/__init__.py` 的弹幕平台注册表中登记（平台名与 `src/streams/dispatch.py` 的 platform 标识一致），由 `get_danmaku_class` / `get_danmaku_collector` 工厂解耦创建
+2. 在 `src/danmaku/factory.py` 的弹幕平台注册表中登记（平台名与 `src/streams/dispatch.py` 的 platform 标识一致），由 `get_danmaku_class` / `get_danmaku_collector` 工厂解耦创建
 3. 在 `src/streams/dispatch.py` 的 resolver 中填充弹幕参数；`src/recording/session.py` 沿用公共采集器生命周期
 4. 补充 `tests/` 回归用例，同步使用文档与 [平台架构说明](architecture/platforms.md)；文档入口见 [架构索引](architecture/README.md)
 
