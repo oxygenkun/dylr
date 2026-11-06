@@ -198,8 +198,10 @@ def test_tolerant_parser_disables_interpolation(tmp_path: Path) -> None:
     assert parser.get("录制设置", "自定义脚本执行命令") == "echo 100%%done"
 
 
-def test_main_module_level_parser_is_duplicate_tolerant() -> None:
-    # 接线锁：main.py 的模块级 config 必须是容错解析器。configparser 只把 strict 存成私有字段
-    # _strict（默认解析器为 True、strict=False 构造的为 False），没有公开读回入口；该字段若随
-    # CPython 改名，本条以 AttributeError 当场失败而不会静默放行（三参 getattr 绕过 mypy）。
-    assert getattr(recorder.config, "_strict", None) is False, "src/main.py 的模块级 config 必须是容错解析器"
+def test_main_module_level_config_is_toml_store() -> None:
+    # 接线锁：录制核心的模块级 config 必须是 TOML 存储，且指向 config.toml；
+    # INI 仅在首启迁移时读取，绝不能再被运行时当作主配置。
+    from src.config.store import ConfigStore
+
+    assert isinstance(recorder.config, ConfigStore)
+    assert Path(recorder.config.path).name == "config.toml"

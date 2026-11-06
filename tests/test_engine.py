@@ -9,6 +9,7 @@ from unittest.mock import Mock
 
 import pytest
 
+from src.config.store import ConfigStore
 from src.network import policy
 from src.recording import engine, state
 
@@ -25,7 +26,7 @@ def isolated_engine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
                 value = value.copy()
             monkeypatch.setattr(state, name, value)
     state.script_path = str(tmp_path)
-    state.config_file = str(tmp_path / "config.ini")
+    state.config_file = str(tmp_path / "config.toml")
     state.url_config_file = str(tmp_path / "URL_config.ini")
     state.default_path = str(tmp_path / "downloads")
     state.backup_dir = str(tmp_path / "backup_config")
@@ -40,10 +41,10 @@ def isolated_engine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     state.create_var = {}
     state.need_update_line_list = []
     state.not_record_list = []
-    Path(state.config_file).write_text("[录制设置]\nlanguage = zh_CN\n", encoding="utf-8-sig")
+    Path(state.config_file).write_text('["录制设置"]\nlanguage = "zh_CN"\n', encoding="utf-8")
     Path(state.url_config_file).write_text("https://live.douyin.com/123\n", encoding="utf-8-sig")
-    monkeypatch.setattr(engine, "config", engine.tolerant_config_parser())
-    engine.config.read(state.config_file, encoding=state.text_encoding)
+    monkeypatch.setattr(engine, "config", ConfigStore(state.config_file))
+    engine.config.read()
     monkeypatch.setattr(engine, "language", "zh_CN")
     monkeypatch.setattr(engine, "_last_ssl_disable_platforms_raw", "")
     monkeypatch.setattr(engine, "follow_monitor", Mock())
@@ -69,16 +70,16 @@ def isolated_engine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_main_applies_configuration_and_room_entries() -> None:
     Path(state.config_file).write_text(
-        "[录制设置]\n"
-        "同一时间访问网络的线程数 = 7\n"
-        "最大同时录制数(0为不限制) = 2\n"
-        "循环时间(秒) = 1\n"
-        "视频保存格式ts|mkv|flv|mp4|mp3音频|m4a音频 = mp4\n"
-        "视频分段时间(秒) = -1\n"
-        "单次录制时长上限(秒,0为不限制) = -1\n"
-        "HLS采集排除平台(逗号分隔) = 虎牙直播，B站直播\n"
-        "是否使用代理ip(是/否) = 否\n",
-        encoding="utf-8-sig",
+        '["录制设置"]\n'
+        '"同一时间访问网络的线程数" = 7\n'
+        '"最大同时录制数(0为不限制)" = 2\n'
+        '"循环时间(秒)" = 1\n'
+        '"视频保存格式ts|mkv|flv|mp4|mp3音频|m4a音频" = "mp4"\n'
+        '"视频分段时间(秒)" = -1\n'
+        '"单次录制时长上限(秒,0为不限制)" = -1\n'
+        '"HLS采集排除平台(逗号分隔)" = "虎牙直播，B站直播"\n'
+        '"是否使用代理ip(是/否)" = false\n',
+        encoding="utf-8",
     )
     active = "https://live.douyin.com/123"
     commented = "https://www.huya.com/456"
@@ -86,7 +87,7 @@ def test_main_applies_configuration_and_room_entries() -> None:
         f"{active}\n#{commented}\n高清，https://live.bilibili.com/789，主播: 测试\nhttps://unknown.example/123\n",
         encoding="utf-8-sig",
     )
-    engine.config.read(state.config_file, encoding=state.text_encoding)
+    engine.config.read()
     with pytest.raises(CycleEnded):
         engine.main(non_interactive=True)
     assert state.video_save_type == "MP4"
@@ -108,15 +109,15 @@ def test_main_applies_configuration_and_room_entries() -> None:
 
 def test_main_hot_reload_replaces_previous_values(monkeypatch: pytest.MonkeyPatch) -> None:
     config_file = Path(state.config_file)
-    config_file.write_text("[录制设置]\n同一时间访问网络的线程数 = 5\n", encoding="utf-8-sig")
-    engine.config.read(state.config_file, encoding=state.text_encoding)
+    config_file.write_text('["录制设置"]\n"同一时间访问网络的线程数" = 5\n', encoding="utf-8")
+    engine.config.read()
     capacities: list[int] = []
 
     def next_cycle(seconds: float) -> None:
         assert state.scheduler is not None
         capacities.append(state.scheduler.network_semaphore.capacity)
         if len(capacities) == 1:
-            config_file.write_text("[录制设置]\n同一时间访问网络的线程数 = 9\n", encoding="utf-8-sig")
+            config_file.write_text('["录制设置"]\n"同一时间访问网络的线程数" = 9\n', encoding="utf-8")
         else:
             raise CycleEnded
 

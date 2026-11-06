@@ -203,8 +203,10 @@ cython_debug/
 
 # ---------------- DouyinLiveRecorder 项目专用配置 ----------------
 # 配置文件（含敏感信息：录制账号 Cookie / 代理 / Web 密码等，禁止提交真实值）
-# config/config.ini 当前以脱敏基线模板形式被跟踪；本规则不隐藏其已跟踪改动，只阻止删除后或新增副本误入库。
+# 运行期配置含凭据：config.toml 一律不入库；旧 INI 模板若被迁移改名，也不再跟踪新增副本。
+config/config.toml
 config/config.ini
+config/config.ini.migrated
 config/URL_config.ini
 
 # FFmpeg 二进制文件（Windows 分发用；容器内改用 apt 安装，故忽略宿主机二进制）
@@ -215,6 +217,8 @@ ffmpeg/ffprobe
 
 # 录制的音视频与弹幕产物（视频 .ts/.mp4/.flv 与弹幕 .srt 均落盘于此，禁止入库）
 downloads/
+# downloads 改为指向外部存储的符号链接时同样不入库
+/downloads
 recordings/
 
 backup_config/

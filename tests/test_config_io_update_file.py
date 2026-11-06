@@ -502,12 +502,16 @@ class TestParserHelpers:
         assert config_io._safe_float("oops", 0.5) == 0.5
         assert config_io._safe_float(None, 0.5) == 0.5
 
-    def test_read_config_bool_uses_string_default_as_writeback(self, tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
-        monkeypatch.setattr(state, "config_file", str(tmp_path / "config.ini"))
-        monkeypatch.setattr(state, "file_update_lock", threading.Lock())
-        monkeypatch.setattr(config_io, "_atomic_write_text", lambda *_a, **_k: True)
-        parser = configparser.RawConfigParser()
-        assert config_io.read_config_bool(parser, "录制设置", "只开启粉丝弹幕", default=True) is True
-        parser2 = configparser.RawConfigParser()
-        parser2.read_string("[录制设置]\n只开启粉丝弹幕 = 否\n")
-        assert config_io.read_config_bool(parser2, "录制设置", "只开启粉丝弹幕") is False
+    def test_read_config_bool_writes_typed_default(self, tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
+        from src.config.store import ConfigStore
+
+        target = tmp_path / "config.toml"
+        target.write_text('["录制设置"]\n', encoding="utf-8")
+        monkeypatch.setattr(state, "config_file", str(target))
+        store = ConfigStore(target)
+        store.read()
+        assert config_io.read_config_bool(store, "录制设置", "只开启粉丝弹幕", default=True) is True
+        reloaded = ConfigStore(target)
+        reloaded.read()
+        assert reloaded.native("录制设置", "只开启粉丝弹幕") is True
+        assert config_io.read_config_bool(reloaded, "录制设置", "只开启粉丝弹幕") is True

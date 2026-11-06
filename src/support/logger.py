@@ -1,12 +1,9 @@
-import configparser
 import os
 import sys
 from contextvars import ContextVar
 from typing import TYPE_CHECKING
 
 from loguru import logger
-
-from src.config.booleans import parse_config_bool
 
 if TYPE_CHECKING:
     from loguru import Record
@@ -172,13 +169,28 @@ def add_file_sinks() -> None:
 
 _log_to_file: bool = True
 try:
-    _cfg_parser = configparser.RawConfigParser()
-    _files_read = _cfg_parser.read(f"{script_path}/config/config.ini", encoding="utf-8-sig")
-    _log_to_file = parse_config_bool(_cfg_parser.get("录制设置", "是否启用日志文件(是/否)"), True)
-except configparser.NoSectionError, configparser.NoOptionError:
-    pass
+    import tomllib
+
+    from src.config.booleans import parse_config_bool
+
+    with open(f"{script_path}/config/config.toml", "rb") as _cfg_fp:
+        _log_flag = tomllib.load(_cfg_fp).get("录制设置", {}).get("是否启用日志文件(是/否)")
+    if _log_flag is not None:
+        _log_to_file = parse_config_bool(_log_flag, True)
 except Exception:
+    # 首次启动（尚未迁移出 config.toml）或文件损坏时保持默认开启，交由录制引擎按配置再校正。
     pass
+
+
+def set_file_logging(enabled: bool) -> None:
+    """按配置启停录制日志文件 sink；重复调用幂等。"""
+    global _log_to_file
+    _log_to_file = enabled
+    if enabled:
+        add_file_sinks()
+    else:
+        remove_file_sinks()
+
 
 if _log_to_file:
     _register_recording_sinks()

@@ -154,55 +154,53 @@ class TestDeleteLineWriteContract:
 
 
 class TestMissingKeyWritebackIdempotency:
-    # 「缺键补写必须幂等」（AGENTS 已知坑，2026-10-17 事故）：同一份文件连续两轮「读取 + 缺键补写」，
-    # 该键出现次数必须仍为 1——落出两行同名键后，strict=True 的解析器在下一次读取即抛
-    # DuplicateOptionError，整份配置失效、录制核心 import 即崩（现场：同名键在第 5 与第 44 行）。
+    # 「缺键补写必须幂等」：同一份 TOML 连续两轮「读取 + 缺键补写」，该键只能出现一次；
+    # TOML 本身禁止重复键，重复写入会让整份配置解析失败。
     _KEY = "是否启动时清理陈旧字节码缓存(是/否)"
 
-    def _assert_strict_readable(self, target: Path) -> None:
-        # 写回产物必须仍能被默认 strict=True 的解析器整份读出：容错读取是兜底，不是把损坏形态
-        # 留给按 strict 判的外部程序。变异验证实测：只数「该键出现几次」挡不住「整节被重复追加」
-        # （补写改成追加式写盘时键计数仍为 1），整份严格解析才是那条形态的判据。
-        import configparser
+    def _assert_readable(self, target: Path) -> None:
+        from src.config.store import ConfigStore
 
-        strict = configparser.ConfigParser(interpolation=None)
-        strict.read(str(target), encoding=state.text_encoding)
-        assert strict.get("录制设置", self._KEY) in ("是", "否")
+        store = ConfigStore(target)
+        store.read()
+        assert store.native("录制设置", self._KEY) in (True, False)
 
     def test_two_rounds_of_bool_writeback_leave_exactly_one_line(
         self, tmp_path: Path, monkeypatch: MonkeyPatch
     ) -> None:
-        target = tmp_path / "config.ini"
-        _write_lines(target, ["[录制设置]\n", "循环时间(秒) = 60\n"])
+        from src.config.store import ConfigStore
+
+        target = tmp_path / "config.toml"
+        target.write_text('["录制设置"]\n"循环时间(秒)" = 60\n', encoding="utf-8")
         monkeypatch.setattr(state, "config_file", str(target))
-        parser = tolerant_config_parser()
-        parser.read(str(target), encoding=state.text_encoding)
+        store = ConfigStore(target)
+        store.read()
 
         for _ in range(2):
-            assert config_io.read_config_bool(parser, "录制设置", self._KEY, True) is True
+            assert config_io.read_config_bool(store, "录制设置", self._KEY, True) is True
 
-        written = target.read_text(encoding="utf-8-sig")
+        written = target.read_text(encoding="utf-8")
         assert written.count(self._KEY) == 1, written
-        # 补写后的文件必须能被下一次读取原样解析——那才是当时真正的崩口
-        self._assert_strict_readable(target)
-        again = tolerant_config_parser()
-        again.read(str(target), encoding=state.text_encoding)
-        assert again.get("录制设置", self._KEY) == "是"
+        self._assert_readable(target)
+        again = ConfigStore(target)
+        again.read()
+        assert again.native("录制设置", self._KEY) is True
 
     def test_existing_key_is_never_appended_again(self, tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
-        # 键已存在时只读取、不得再补写（补写的唯一判据是 NoOptionError），
-        # 用户显式写的「否」也不能被默认值覆盖。
-        target = tmp_path / "config.ini"
-        _write_lines(target, ["[录制设置]\n", f"{self._KEY} = 否\n"])
+        # 键已存在时只读取、不得再补写；用户显式写的 false 也不能被默认值覆盖。
+        from src.config.store import ConfigStore
+
+        target = tmp_path / "config.toml"
+        target.write_text(f'["录制设置"]\n"{self._KEY}" = false\n', encoding="utf-8")
         monkeypatch.setattr(state, "config_file", str(target))
-        parser = tolerant_config_parser()
-        parser.read(str(target), encoding=state.text_encoding)
+        store = ConfigStore(target)
+        store.read()
 
         for _ in range(2):
-            assert config_io.read_config_bool(parser, "录制设置", self._KEY, True) is False
+            assert config_io.read_config_bool(store, "录制设置", self._KEY, True) is False
 
-        assert target.read_text(encoding="utf-8-sig").count(self._KEY) == 1
-        self._assert_strict_readable(target)
+        assert target.read_text(encoding="utf-8").count(self._KEY) == 1
+        self._assert_readable(target)
 
 
 if __name__ == "__main__":  # pragma: no cover - 仅手工单文件调试入口

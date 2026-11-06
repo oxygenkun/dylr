@@ -121,13 +121,13 @@ class TestReadConfigValue:
     # 存在的 section/key 须返回原始字符串值
     def test_read_existing_key(self, tmp_path: Path) -> None:
         config_file = tmp_path / "config.ini"
-        config_file.write_text("[section1]\nkey1 = value1\n", encoding="utf-8-sig")
+        config_file.write_text('["section1"]\nkey1 = "value1"\n', encoding="utf-8")
         result = read_ini_value(config_file, "section1", "key1")
         assert result == "value1"
 
     def test_read_missing_key(self, tmp_path: Path, log_capture: list[str]) -> None:
         config_file = tmp_path / "config.ini"
-        config_file.write_text("[section1]\nkey1 = value1\n", encoding="utf-8-sig")
+        config_file.write_text('["section1"]\nkey1 = "value1"\n', encoding="utf-8")
         result = read_ini_value(config_file, "section1", "missing_key")
         assert result is None
         assert any("does not exist" in m for m in log_capture)
@@ -135,7 +135,7 @@ class TestReadConfigValue:
     # 缺失 section 须返回 None 并提示，与缺失 key 同处理
     def test_read_missing_section(self, tmp_path: Path, log_capture: list[str]) -> None:
         config_file = tmp_path / "config.ini"
-        config_file.write_text("[section1]\nkey1 = value1\n", encoding="utf-8-sig")
+        config_file.write_text('["section1"]\nkey1 = "value1"\n', encoding="utf-8")
         result = read_ini_value(config_file, "missing_section", "key1")
         assert result is None
         assert any("does not exist" in m for m in log_capture)
@@ -144,12 +144,12 @@ class TestReadConfigValue:
     def test_percent_value_readable(self, tmp_path: Path) -> None:
         # % 在 ini 默认插值中是特殊字符（BasicInterpolation 会解析 %(x)s），关闭后含 % 的 cookie/URL 才能原样读出
         cfg = tmp_path / "c.ini"
-        cfg.write_text("[s]\nk = 100%x\n", encoding="utf-8")
+        cfg.write_text('["s"]\nk = "100%x"\n', encoding="utf-8")
         assert read_ini_value(cfg, "s", "k") == "100%x"
 
     def test_missing_key_returns_none(self, tmp_path: Path, log_capture: list[str]) -> None:
         cfg = tmp_path / "c.ini"
-        cfg.write_text("[s]\nk = v\n", encoding="utf-8")
+        cfg.write_text('["s"]\nk = "v"\n', encoding="utf-8")
         assert read_ini_value(cfg, "s", "nope") is None
         _ = log_capture  # 仅为建立 sink，吞掉提示输出
 
@@ -157,7 +157,7 @@ class TestReadConfigValue:
 class TestUpdateConfig:
     def test_update_existing_key(self, tmp_path: Path, log_capture: list[str]) -> None:
         config_file = tmp_path / "config.ini"
-        config_file.write_text("[section1]\nkey1 = old_value\n", encoding="utf-8-sig")
+        config_file.write_text('["section1"]\nkey1 = "old_value"\n', encoding="utf-8")
         update_config(config_file, "section1", "key1", "new_value")
         result = read_ini_value(config_file, "section1", "key1")
         assert result == "new_value"
@@ -165,7 +165,7 @@ class TestUpdateConfig:
 
     def test_update_missing_section(self, tmp_path: Path, log_capture: list[str]) -> None:
         config_file = tmp_path / "config.ini"
-        config_file.write_text("[section1]\nkey1 = value1\n", encoding="utf-8-sig")
+        config_file.write_text('["section1"]\nkey1 = "value1"\n', encoding="utf-8")
         update_config(config_file, "missing_section", "key1", "new_value")
         assert any("does not exist" in m for m in log_capture)
 
@@ -191,41 +191,14 @@ class TestDuplicateKeyWriteback:
         with pytest.raises(configparser.DuplicateOptionError):
             strict.read(str(cfg), encoding="utf-8-sig")
 
-    def test_update_config_writes_back_under_duplicate_key(self, tmp_path: Path) -> None:
-        cfg = tmp_path / "config.ini"
-        cfg.write_text(self._DUP_TEXT, encoding="utf-8-sig")
-        update_config(cfg, "Cookie", "bili_cookie", "refreshed-value")
-        assert read_ini_value(cfg, "Cookie", "bili_cookie") == "refreshed-value"
-
-    def test_writeback_product_is_strict_readable(self, tmp_path: Path) -> None:
-        # 判据②：容错读进来、按内存态写出去后，同节重复键被折叠成一行，产物必须仍能被
-        # strict 解析器**整份**读出（逐节取值而不是「读一次不抛错」，防止只测一半）。
-        cfg = tmp_path / "config.ini"
-        cfg.write_text(self._DUP_TEXT, encoding="utf-8-sig")
-        update_config(cfg, "Cookie", "bili_cookie", "refreshed-value")
-        strict = configparser.ConfigParser(interpolation=None)
-        strict.read(str(cfg), encoding="utf-8-sig")
-        assert strict.get("Cookie", "bili_cookie") == "refreshed-value"
-        assert strict.get("录制设置", "language") == "zh_CN"
-        written = cfg.read_text(encoding="utf-8-sig")
-        assert written.count("bili_cookie") == 1, written
-
     def test_key_matching_stays_case_insensitive(self, tmp_path: Path) -> None:
-        # 判据③：大小写口径与改前一致——入参大写、文件小写仍要能命中（configparser 的
-        # optionxform 转小写行为），preserve_case 若被误开，这里会退化成「找不到键」。
-        cfg = tmp_path / "config.ini"
-        cfg.write_text("[section1]\nkey1 = v1\n", encoding="utf-8-sig")
+        # 大小写口径与 INI 时代一致：入参大写、文件小写仍要能命中（TOML 键保留大小写，
+        # 查找侧按 casefold 归一）。
+        cfg = tmp_path / "config.toml"
+        cfg.write_text('["section1"]\nkey1 = "v1"\n', encoding="utf-8")
         assert read_ini_value(cfg, "section1", "KEY1") == "v1"
         update_config(cfg, "section1", "KEY1", "v2")
         assert read_ini_value(cfg, "section1", "key1") == "v2"
-
-    def test_read_ini_value_keeps_last_value_with_duplicate_key(self, tmp_path: Path, log_capture: list[str]) -> None:
-        # 读侧同病同治：strict 形态下这份文件读不出任何键（返回 None + 一条「读取异常」warning），
-        # 容错后按「最后一次取值」返回，与 tolerant_config_parser 的语义一致。
-        cfg = tmp_path / "config.ini"
-        cfg.write_text("[s]\nk = first\nk = second\n", encoding="utf-8-sig")
-        assert read_ini_value(cfg, "s", "k") == "second"
-        assert not any("Error occurred while reading" in m for m in log_capture), log_capture
 
     def test_update_config_does_not_import_config_read_at_module_level(self) -> None:
         # 结构锁：utils 位于依赖链最底层，而 src/config_read → src/web_config → src/utils 是既有链，

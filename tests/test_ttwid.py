@@ -60,8 +60,8 @@ class TestReadConfigTtwid:
     def test_with_config_ttwid(self, tmp_path: Path) -> None:
         config_dir = tmp_path / "config"
         config_dir.mkdir()
-        config_file = config_dir / "config.ini"
-        config_file.write_text("[Cookie]\nttwid = abc123\n", encoding="utf-8-sig")
+        config_file = config_dir / "config.toml"
+        config_file.write_text('[Cookie]\nttwid = "abc123"\n', encoding="utf-8")
         with patch("src.streams.ttwid._app_root", return_value=str(tmp_path)):
             result = _read_config_ttwid()
             assert result == "ttwid=abc123"
@@ -70,8 +70,8 @@ class TestReadConfigTtwid:
         # 配置已带 ttwid= 前缀时不得重复拼接，否则会变成 "ttwid=ttwid=xyz789"
         config_dir = tmp_path / "config"
         config_dir.mkdir()
-        config_file = config_dir / "config.ini"
-        config_file.write_text("[Cookie]\nttwid = ttwid=xyz789\n", encoding="utf-8-sig")
+        config_file = config_dir / "config.toml"
+        config_file.write_text('[Cookie]\nttwid = "ttwid=xyz789"\n', encoding="utf-8")
         with patch("src.streams.ttwid._app_root", return_value=str(tmp_path)):
             result = _read_config_ttwid()
             assert result == "ttwid=xyz789"
@@ -80,8 +80,8 @@ class TestReadConfigTtwid:
         # ttwid 值为空（占位未填）必须返回空串，避免写出 "ttwid=" 空值被当成有效 cookie
         config_dir = tmp_path / "config"
         config_dir.mkdir()
-        config_file = config_dir / "config.ini"
-        config_file.write_text("[Cookie]\nttwid = \n", encoding="utf-8-sig")
+        config_file = config_dir / "config.toml"
+        config_file.write_text('[Cookie]\nttwid = ""\n', encoding="utf-8")
         with patch("src.streams.ttwid._app_root", return_value=str(tmp_path)):
             result = _read_config_ttwid()
             assert result == ""
@@ -192,14 +192,10 @@ class TestAppRootFrozen:
 class TestReadConfigTtwidBroadExcept:
     # _read_config_ttwid 的兜底 broad except：捕获非 configparser 的意外异常并返回 ""。
     def test_unexpected_exception_returns_empty(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        class _BoomParser:
-            def read(self, *args: object, **kwargs: object) -> list[str]:
-                return []
+        def _boom(*_args: object, **_kwargs: object) -> str:
+            raise ValueError("unexpected")
 
-            def get(self, *args: object, **kwargs: object) -> str:
-                raise ValueError("unexpected")
-
-        monkeypatch.setattr(ttwid_module.configparser, "RawConfigParser", _BoomParser)
+        monkeypatch.setattr(ttwid_module, "read_config_entry", _boom)
         with patch("src.streams.ttwid._app_root", return_value="/nonexistent"):
             assert _read_config_ttwid() == ""
 

@@ -309,7 +309,10 @@ class TestLoggerFileSinkOps:
     def _write_config(tmp_path: Path, enabled: str) -> None:
         config_dir = tmp_path / "config"
         config_dir.mkdir(exist_ok=True)
-        (config_dir / "config.ini").write_text(f"[录制设置]\n是否启用日志文件(是/否) = {enabled}\n", encoding="utf-8")
+        value = "true" if enabled == "是" else "false"
+        (config_dir / "config.toml").write_text(
+            f'["录制设置"]\n"是否启用日志文件(是/否)" = {value}\n', encoding="utf-8"
+        )
 
     def test_remove_then_add_roundtrip_and_idempotent(
         self, reload_logger: Path, monkeypatch: pytest.MonkeyPatch

@@ -11,6 +11,7 @@ from loguru import logger
 
 from src.config import files as config_files
 from src.config.booleans import format_config_bool, parse_config_bool
+from src.config.store import ConfigError, ConfigStore, format_value
 from src.recording import state
 from src.recording.process import _get_error_line
 from src.support import i18n, utils
@@ -192,50 +193,37 @@ def delete_line(file_path: str, del_line: str, delete_all: bool = False) -> bool
 
 
 def read_config_value(
-    config_parser: configparser.RawConfigParser, section: str, option: str, default_value: str | int | float | bool = ""
+    store: ConfigStore, section: str, option: str, default_value: str | int | float | bool = ""
 ) -> str:
-    """从 config_parser 读取 section/option 的值；缺节或缺键时把 default_value 补写回配置文件。"""
-    try:
-        if "录制设置" not in config_parser.sections():
-            config_parser.add_section("录制设置")
-        if "推送配置" not in config_parser.sections():
-            config_parser.add_section("推送配置")
-        if "Cookie" not in config_parser.sections():
-            config_parser.add_section("Cookie")
-        if "Authorization" not in config_parser.sections():
-            config_parser.add_section("Authorization")
-        if "账号密码" not in config_parser.sections():
-            config_parser.add_section("账号密码")
-        return config_parser.get(section, option)
-    except configparser.NoSectionError, configparser.NoOptionError:
-        with state.file_update_lock:
-            if section not in config_parser.sections():
-                config_parser.add_section(section)
-            config_parser.set(section, option, str(default_value))
-            try:
-                buffer = io.StringIO()
-                config_parser.write(buffer)
-                if not _atomic_write_text(state.config_file, buffer.getvalue()):
-                    _ = config_parser.remove_option(section, option)
-            except (OSError, configparser.Error) as e:
-                logger.warning(
-                    i18n.tr(
-                        "配置项 {section}/{option} 缺省值写回失败（已忽略）: {type_name}: {e}",
-                        section=section,
-                        option=option,
-                        type_name=type(e).__name__,
-                        e=e,
-                    )
+    """从 TOML 配置读取 section/option 的值；缺键时把 default_value 校验后补写回文件。"""
+    if store.has_option(section, option):
+        return store.get(section, option)
+    default_text = format_value(default_value) if isinstance(default_value, bool) else str(default_value)
+    with state.file_update_lock:
+        if store.has_option(section, option):
+            return store.get(section, option)
+        try:
+            store.set(section, option, default_value)
+            if not store.write():
+                raise OSError("atomic write failed")
+            return store.get(section, option)
+        except (OSError, ConfigError) as e:
+            logger.warning(
+                i18n.tr(
+                    "配置项 {section}/{option} 缺省值写回失败（已忽略）: {type_name}: {e}",
+                    section=section,
+                    option=option,
+                    type_name=type(e).__name__,
+                    e=e,
                 )
-                _ = config_parser.remove_option(section, option)
-        return str(default_value)
+            )
+            _ = store.remove_option(section, option)
+    return default_text
 
 
-def read_config_bool(
-    config_parser: configparser.RawConfigParser, section: str, option: str, default: bool = False
-) -> bool:
+def read_config_bool(store: ConfigStore, section: str, option: str, default: bool = False) -> bool:
     """读取布尔型配置项（全仓统一入口）：语义 = read_config_value + parse_config_bool。"""
-    raw = read_config_value(config_parser, section, option, format_config_bool(default))
+    raw = read_config_value(store, section, option, default)
     return parse_config_bool(raw, default)
 
 
@@ -280,7 +268,7 @@ def _redact_ini_secrets(text: str) -> str:
         return text
     parser = tolerant_config_parser()
     try:
-        parser.read_string(text)
+        parser.read_string(text.lstrip("\ufeff"))
     except configparser.Error as e:
         logger.warning(
             i18n.tr(
@@ -301,6 +289,37 @@ def _redact_ini_secrets(text: str) -> str:
     return out.getvalue()
 
 
+def _redact_toml_secrets(text: str) -> str:
+    """TOML 备份的凭据脱敏：判据与 INI 版一致，保留节/键结构。"""
+    try:
+        import tomlkit
+        from tomlkit.items import Table
+
+        from src.api.config import _looks_like_secret_value, is_sensitive_item
+    except ImportError:
+        return text
+    try:
+        doc = tomlkit.parse(text)
+    except Exception as e:
+        logger.warning(
+            i18n.tr(
+                "配置备份未能脱敏（解析失败：{e}），本次副本可能包含明文凭据，请勿外传",
+                e=type(e).__name__,
+            )
+        )
+        return text
+    for section, table in doc.items():
+        if not isinstance(table, Table):
+            continue
+        for key in list(table):
+            value = table[key]
+            if not isinstance(value, (bool, int, float, str)):
+                continue
+            if str(value).strip() and (is_sensitive_item(section, key) or _looks_like_secret_value(str(value))):
+                table[key] = "***"
+    return tomlkit.dumps(doc)
+
+
 def _harden_permissions(path: str) -> None:
     """收紧文件权限为「仅属主可读写」（best-effort）。"""
     try:
@@ -318,11 +337,13 @@ def backup_file(file_path: str, backup_dir_path: str, limit_counts: int = 6) -> 
         timestamp = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
         backup_file_name = os.path.basename(file_path) + "_" + timestamp
         backup_file_path = os.path.join(backup_dir_path, backup_file_name).replace("\\", "/")
-        if _backup_mask_secrets():
+        name = os.path.basename(file_path)
+        if _backup_mask_secrets() and name in ("config.ini", "config.toml"):
             try:
                 with open(file_path, "r", encoding=state.text_encoding, errors="replace") as src_f:
                     content = src_f.read()
-                if not _atomic_write_text(backup_file_path, _redact_ini_secrets(content)):
+                redacted = _redact_toml_secrets(content) if name == "config.toml" else _redact_ini_secrets(content)
+                if not _atomic_write_text(backup_file_path, redacted):
                     raise OSError(f"atomic write failed: {backup_file_path}")
             except OSError:
                 _ = shutil.copy2(file_path, backup_file_path)
@@ -362,7 +383,7 @@ def backup_file(file_path: str, backup_dir_path: str, limit_counts: int = 6) -> 
 
 
 def backup_file_start() -> None:
-    """守护线程主体：每 10 分钟比对 config.ini / URL_config.ini 的 MD5，仅在内容变化时备份。"""
+    """守护线程主体：每 10 分钟比对 config.toml / URL_config.ini 的 MD5，仅在内容变化时备份。"""
     config_md5 = ""
     url_config_md5 = ""
 

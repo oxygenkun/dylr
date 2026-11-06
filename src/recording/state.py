@@ -82,7 +82,8 @@ def _app_root() -> str:
 
 
 script_path: str = _app_root()  # 脚本所在目录（冻结后为 exe 同级目录）
-config_file: str = f"{script_path}/config/config.ini"  # 主配置文件路径
+config_file: str = f"{script_path}/config/config.toml"  # 主配置文件路径（TOML）
+legacy_config_file: str = f"{script_path}/config/config.ini"  # 旧 INI；仅用于首启自动迁移
 url_config_file: str = f"{script_path}/config/URL_config.ini"  # URL 配置文件路径
 backup_dir: str = f"{script_path}/backup_config"  # 配置备份目录
 text_encoding: str = TEXT_ENCODING  # 文本文件编码（兼容 BOM）

@@ -31,7 +31,7 @@ from starlette.testclient import TestClient
 _BASE_URL = "http://127.0.0.1:8000"
 # 与 src/api/routes.py 里 raise HTTPException(400, ...) 的原文逐字一致：文案是契约的一部分，
 # 面板把它当 detail 直接 toast 给用户（前端用例同样按子串断言），改一个字两处都会红。
-_BLANK_SENSITIVE_DETAIL = "敏感配置项不得清空：如需移除请显式填写占位值并手工编辑 config.ini"
+_BLANK_SENSITIVE_DETAIL = "敏感配置项不得清空：如需移除请显式填写占位值并手工编辑 config.toml"
 
 
 @pytest.fixture
@@ -58,25 +58,25 @@ def client(tmp_path: Path, fake_main: types.ModuleType) -> Generator[TestClient,
     # 每个用例一份独立 config.ini：断言「未被覆盖」时必须看到写入前的原文。
     from src.api import routes as wa
 
-    cfg = tmp_path / "config.ini"
+    cfg = tmp_path / "config.toml"
     cfg.write_text(
         "\n".join(
             [
                 "[Web]",
-                "web_host = 127.0.0.1",
+                'web_host = "127.0.0.1"',
                 "web_port = 8000",
                 "web_auth_enable = false",
-                "web_password = ",
+                'web_password = ""',
                 "",
-                "[推送配置]",
-                "tgapi令牌 = REAL_TOKEN_MUST_SURVIVE",
-                "pushplus推送token = REAL_PUSH_TOKEN",
-                "钉钉推送接口链接 = https://oapi.dingtalk.com/robot/send?access_token=REAL_DING",
-                "推送开关 = 是",
+                '["推送配置"]',
+                '"tgapi令牌" = "REAL_TOKEN_MUST_SURVIVE"',
+                '"pushplus推送token" = "REAL_PUSH_TOKEN"',
+                '"钉钉推送接口链接" = "https://oapi.dingtalk.com/robot/send?access_token=REAL_DING"',
+                '"推送开关" = "是"',
                 "",
             ]
         ),
-        encoding="utf-8-sig",
+        encoding="utf-8",
     )
     # 中间件按每请求读配置缓存（MID-34），逐个用例清干净，避免串到本文件其余用例
     wa._invalidate_web_cfg_cache()
@@ -142,7 +142,7 @@ class TestBlankSensitiveValueRejected:
         # 文案是给用户看的：必须是「怎么办」而不是泛泛的校验失败
         assert resp.json()["detail"] == _BLANK_SENSITIVE_DETAIL, case
         # 真正的不变量：**没写盘**。空串静默覆盖后无从恢复（备份副本同样脱敏）
-        text = (tmp_path / "config.ini").read_text(encoding="utf-8-sig")
+        text = (tmp_path / "config.toml").read_text(encoding="utf-8")
         assert "REAL_TOKEN_MUST_SURVIVE" in text, f"{case}: 真实凭据被空值覆盖"
         assert "REAL_PUSH_TOKEN" in text, f"{case}: 真实凭据被空值覆盖"
 
@@ -150,5 +150,5 @@ class TestBlankSensitiveValueRejected:
         # 守卫不得变成「敏感键只读」：正常改值必须仍然可写，否则面板彻底没法配凭据
         resp = client.put("/api/config", json={"section": "推送配置", "key": "tgapi令牌", "value": "NEW_TOKEN_123"})
         assert resp.status_code == 200, resp.text
-        text = (tmp_path / "config.ini").read_text(encoding="utf-8-sig")
+        text = (tmp_path / "config.toml").read_text(encoding="utf-8")
         assert "NEW_TOKEN_123" in text and "REAL_TOKEN_MUST_SURVIVE" not in text

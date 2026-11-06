@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import base64
-import configparser
 import functools
 import hashlib
 import hmac
@@ -15,6 +14,7 @@ from typing import Iterable, cast
 
 from src.config.booleans import parse_config_bool
 from src.config.reader import TEXT_ENCODING
+from src.config.store import ConfigError, ConfigStore, ConfigValueError
 from src.network import targets
 from src.support.utils import atomic_write_text
 
@@ -53,6 +53,7 @@ CLEAN_URL_HOST_LIST = (
 DEFAULT_QUALITY = "原画"
 
 WEB_DEFAULTS: dict[str, str | int | bool] = {
+    "web_enable": False,
     "web_host": "127.0.0.1",
     "web_port": 8000,
     "web_auth_enable": False,
@@ -311,11 +312,10 @@ def normalize_quality_options(options: Iterable[str]) -> list[str]:
 
 def read_quality_options(config_file: str | Path) -> list[str]:
     """读取用户勾选的画质选项；键缺失/为空/全部非法时回退内置全集（首次使用行为不变）。"""
-    parser = configparser.ConfigParser(interpolation=None)
-    _ = parser.read(config_file, encoding=TEXT_ENCODING)
+    store = _load_store(config_file)
     raw = ""
-    if parser.has_section(QUALITY_OPTIONS_SECTION):
-        raw = parser.get(QUALITY_OPTIONS_SECTION, QUALITY_OPTIONS_KEY, fallback="")
+    if store is not None and store.has_option(QUALITY_OPTIONS_SECTION, QUALITY_OPTIONS_KEY):
+        raw = store.get(QUALITY_OPTIONS_SECTION, QUALITY_OPTIONS_KEY)
     return normalize_quality_options(_split_multi_value(raw))
 
 
@@ -417,14 +417,10 @@ def _atomic_write_text(path: Path, text: str) -> bool:
 
 
 def read_web_config(config_file: str | Path) -> dict[str, str | int | bool]:
-    parser = configparser.ConfigParser(interpolation=None)
-    _ = parser.read(config_file, encoding=TEXT_ENCODING)
+    store = _load_store(config_file)
     result: dict[str, str | int | bool] = {}
     for key, default in WEB_DEFAULTS.items():
-        if not parser.has_section("Web"):
-            result[key] = default
-            continue
-        raw = parser.get("Web", key, fallback=str(default))
+        raw = store.get("Web", key) if store is not None and store.has_option("Web", key) else str(default)
         if isinstance(default, bool):
             result[key] = parse_config_bool(raw, default)
         elif isinstance(default, int):
@@ -601,13 +597,32 @@ def is_sensitive_item(section: str, key: str) -> bool:
     return section.casefold() in _SENSITIVE_SECTIONS_FOLDED or is_sensitive_key(key)
 
 
+def _load_store(config_file: str | Path) -> ConfigStore | None:
+    """读取并校验 TOML；文件缺失或不可解析时返回 None。"""
+    store = ConfigStore(config_file)
+    try:
+        store.read()
+    except ConfigError:
+        return None
+    return store
+
+
+def read_raw_config_value(config_file: str | Path, section: str, key: str) -> str:
+    """读取单个配置项的原始字符串（不脱敏）；缺失时返回空串。"""
+    store = _load_store(config_file)
+    if store is None or not store.has_option(section, key):
+        return ""
+    return store.get(section, key)
+
+
 def read_config_safe(config_file: str | Path) -> dict[str, dict[str, str]]:
-    parser = configparser.ConfigParser(interpolation=None)
-    _ = parser.read(config_file, encoding=TEXT_ENCODING)
+    store = _load_store(config_file)
+    if store is None:
+        return {}
     result: dict[str, dict[str, str]] = {}
-    for section in parser.sections():
+    for section in store.sections():
         items: dict[str, str] = {}
-        for key, value in parser.items(section):
+        for key, value in store.items(section):
             if value.strip() and (is_sensitive_item(section, key) or _looks_like_secret_value(value)):
                 items[key] = SENSITIVE_MASK
             else:
@@ -616,90 +631,43 @@ def read_config_safe(config_file: str | Path) -> dict[str, dict[str, str]]:
     return result
 
 
-@functools.lru_cache(maxsize=128)
-def _key_line_pattern(key: str) -> re.Pattern[str]:
-    """按 key 缓存编译后的行匹配模式：模式串依赖 key，无法整体预编译，但同 key 反复更新时应复用。"""
-    return re.compile(r"^(\s*" + re.escape(key) + r"\s*[=:：]\s*)(.*)$", re.IGNORECASE)
-
-
 _config_write_lock = threading.RLock()
 
 
 def update_config_line(config_file: str | Path, section: str, key: str, value: str) -> bool:
+    """更新已存在的配置项；键不存在或值校验失败时返回 False（不新增键）。"""
     path = Path(config_file)
     if not path.exists():
         return False
     with _config_write_lock:
-        with path.open("r", encoding=TEXT_ENCODING, newline="") as f:
-            lines = f.readlines()
-        cur_section: str | None = None
-        in_target = False
-        replaced = False
-        key_pattern = _key_line_pattern(key)
-        new_lines: list[str] = []
-        for line in lines:
-            stripped = line.strip()
-            if stripped.startswith("[") and stripped.endswith("]"):
-                cur_section = stripped[1:-1].strip()
-                in_target = cur_section == section
-                new_lines.append(line)
-                continue
-            if in_target and not replaced:
-                m = key_pattern.match(line.rstrip("\n").rstrip("\r"))
-                if m:
-                    prefix = m.group(1)  # "key = " 部分
-                    old_tail = m.group(2)  # 原值（可能含行内注释）
-                    inline_comment = ""
-                    _stripped_tail = old_tail.lstrip()
-                    if _stripped_tail[:1] in ('"', "'"):
-                        _quote = _stripped_tail[0]
-                        _q_start = old_tail.find(_quote) + 1
-                        _q_end = old_tail.find(_quote, _q_start)
-                        if _q_end > 0:
-                            inline_comment = old_tail[_q_end + 1 :]
-                    eol = "\r\n" if line.endswith("\r\n") else ("\n" if line.endswith("\n") else "")
-                    new_lines.append(f"{prefix}{value}{inline_comment}{eol}")
-                    replaced = True
-                    continue
-            new_lines.append(line)
-        if not replaced:
+        store = _load_store(path)
+        if store is None or not store.has_option(section, key):
             return False
-        return _atomic_write_text(path, "".join(new_lines))
-    return True
+        try:
+            store.set(section, key, value)
+        except ConfigValueError as e:
+            raise ValueError(str(e)) from e
+        return store.write()
 
 
 def append_config_line(config_file: str | Path, section: str, key: str, value: str) -> bool:
+    """写入配置项，缺节/缺键时创建。"""
     path = Path(config_file)
     if not path.exists():
         return False
     with _config_write_lock:
-        with path.open("r", encoding=TEXT_ENCODING, newline="") as f:
-            lines = f.readlines()
-        insert_at: int | None = None  # 目标节内的插入点（下一节头之前）；None＝文件尾
-        in_section = False
-        for idx, line in enumerate(lines):
-            stripped = line.strip()
-            if not (stripped.startswith("[") and stripped.endswith("]")):
-                continue
-            name = stripped[1:-1].strip()
-            if in_section:
-                insert_at = idx  # 走到下一节头部即目标节结束
-                break
-            if name == section:
-                in_section = True
-        if lines and not lines[-1].endswith("\n"):
-            lines[-1] += "\n"
-        entry = f"{key} = {value}\n"
-        if in_section:
-            lines.insert(insert_at if insert_at is not None else len(lines), entry)
-        else:
-            lines.append(f"[{section}]\n{entry}")
-        _atomic_write_text(path, "".join(lines))
-    return True
+        store = _load_store(path)
+        if store is None:
+            return False
+        try:
+            store.set(section, key, value)
+        except ConfigValueError as e:
+            raise ValueError(str(e)) from e
+        return store.write()
 
 
 def update_or_append_config_line(config_file: str | Path, section: str, key: str, value: str) -> bool:
-    """行级「替换优先、缺键补建」的组合写入（2026-09-12 审查 H-6）：两步全程持同一把。"""
+    """「替换优先、缺键补建」的组合写入，两步持有同一把写锁。"""
     with _config_write_lock:
         if update_config_line(config_file, section, key, value):
             return True

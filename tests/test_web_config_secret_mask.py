@@ -102,20 +102,20 @@ def test_is_sensitive_item_covers_non_whitelisted_sections() -> None:
 def test_read_config_safe_masks_by_section_key_and_value(tmp_path: Path) -> None:
     # 端到端：三类判定（节白名单 / 键名 / 值形态）都必须把非空敏感值替换成 SENSITIVE_MASK，
     # 且**空值原样保留**（空＝未配置，掩码会让用户以为已填）。
-    cfg = tmp_path / "config.ini"
+    cfg = tmp_path / "config.toml"
     cfg.write_text(
         "[Cookie]\n"
-        "dy_cookie = ttwid=abc\n"
-        "[推送配置]\n"
-        "tgapi令牌 = 123456:ABC-DEF\n"
-        "钉钉推送接口链接 = https://oapi.dingtalk.com/robot/send?access_token=XYZ\n"
-        "webhook无凭据 = https://ntfy.sh/topic\n"
+        'dy_cookie = "ttwid=abc"\n'
+        '["推送配置"]\n'
+        '"tgapi令牌" = "123456:ABC-DEF"\n'
+        '"钉钉推送接口链接" = "https://oapi.dingtalk.com/robot/send?access_token=XYZ"\n'
+        '"webhook无凭据" = "https://ntfy.sh/topic"\n'
         "[Web]\n"
-        "web_password = hunter2\n"
+        'web_password = "hunter2"\n'
         "web_token_expiry = 86400\n"
-        "[录制设置]\n"
-        "视频保存格式 = TS\n"
-        "空凭据位 =\n",
+        '["录制设置"]\n'
+        '"视频保存格式" = "TS"\n'
+        '"空凭据位" = ""\n',
         encoding="utf-8",
     )
     result = read_config_safe(cfg)
@@ -177,10 +177,12 @@ def test_validate_room_url_target_allows_public_and_blank(url: str, monkeypatch:
 def test_written_config_round_trips_as_unmodified(tmp_path: Path) -> None:
     # read_config_safe 只读不改盘：面板 GET 一次配置后，磁盘上的凭据必须仍是原文
     # （曾因把脱敏结果回写而把真实 token 覆盖成 '***'，见 AGENTS.md 脱敏条目）。
-    cfg = tmp_path / "config.ini"
-    raw = "[Cookie]\ndy_cookie = ttwid=abc\n"
+    from src.config.store import ConfigStore
+
+    cfg = tmp_path / "config.toml"
+    raw = '[Cookie]\ndy_cookie = "ttwid=abc"\n'
     cfg.write_text(raw, encoding="utf-8")
     assert read_config_safe(cfg)["Cookie"]["dy_cookie"] == SENSITIVE_MASK
-    parser = configparser.ConfigParser(interpolation=None)
-    parser.read(cfg, encoding="utf-8")
-    assert parser["Cookie"]["dy_cookie"] == "ttwid=abc"
+    store = ConfigStore(cfg)
+    store.read()
+    assert store.get("Cookie", "dy_cookie") == "ttwid=abc"

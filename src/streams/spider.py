@@ -731,7 +731,7 @@ def _read_tiktok_guest_cookie() -> str:
     if override:
         return override
     try:
-        cfg_value = config_files.read_ini_value(f"{script_path}/config/config.ini", "Cookie", "tiktok_guest_cookie")
+        cfg_value = config_files.read_ini_value(f"{script_path}/config/config.toml", "Cookie", "tiktok_guest_cookie")
     except Exception:
         cfg_value = None
     if cfg_value and cfg_value.strip():
@@ -751,7 +751,7 @@ async def get_tiktok_stream_data(
             logger.warning(
                 i18n.tr(
                     "TikTok 解析失败，且本次使用的是内置游客 cookie（可能已过期）；"
-                    "请在 config.ini 的 [Cookie] tiktok_guest_cookie 配置有效访客 cookie（或设置环境变量 TIKTOK_GUEST_COOKIE）"
+                    "请在 config.toml 的 [Cookie] tiktok_guest_cookie 配置有效访客 cookie（或设置环境变量 TIKTOK_GUEST_COOKIE）"
                 )
             )
 
@@ -1879,7 +1879,7 @@ def _read_xhs_sid() -> str:
     if override:
         return override
     try:
-        cfg_value = config_files.read_ini_value(f"{script_path}/config/config.ini", "Cookie", "xhs_session_sid")
+        cfg_value = config_files.read_ini_value(f"{script_path}/config/config.toml", "Cookie", "xhs_session_sid")
     except Exception:
         cfg_value = None
     if cfg_value and cfg_value.strip():
@@ -1918,7 +1918,7 @@ async def get_xhs_stream_url(
             logger.warning(
                 i18n.tr(
                     "小红书解析失败，且本次使用的是内置会话 sid（可能已过期）；"
-                    "请在 config.ini 的 [Cookie] xhs_session_sid 配置有效 sid（或设置环境变量 XHS_SESSION_SID）"
+                    "请在 config.toml 的 [Cookie] xhs_session_sid 配置有效 sid（或设置环境变量 XHS_SESSION_SID）"
                 )
             )
 
@@ -2176,7 +2176,7 @@ async def login_sooplive(username: str, password: str, proxy_addr: OptionalStr =
     if len(username) < 6 or len(password) < 10:
         raise RuntimeError(
             "sooplive login failed! Please enter the correct account and password for the sooplive "
-            "platform in the config.ini file."
+            "platform in the config.toml file."
         )
 
     headers = {
@@ -2925,7 +2925,7 @@ async def get_flextv_stream_data(
             if not username or not password or len(username) < 6 or len(password) < 8:
                 raise RuntimeError(
                     i18n.tr(
-                        "TTingLive(原Flextv)登录失败！请在config.ini配置文件中填写正确的TTingLive(原Flextv)平台的账号和密码"
+                        "TTingLive(原Flextv)登录失败！请在config.toml配置文件中填写正确的TTingLive(原Flextv)平台的账号和密码"
                     )
                 )
             new_cookies = await login_flextv(username, password, proxy_addr=proxy_addr)
@@ -3112,7 +3112,7 @@ async def login_popkontv(
 
     try:
         proxy_addr = network_urls.normalize_proxy_url(proxy_addr)
-        async with httpx.AsyncClient(proxy=proxy_addr, timeout=20, verify=policy.verify_tls) as client:
+        async with httpx.AsyncClient(proxy=proxy_addr, timeout=20, verify=policy.verify_tls, trust_env=False) as client:
             response = await client.post(url, json=data, headers=headers)
             response.raise_for_status()
 
@@ -3304,7 +3304,7 @@ async def get_popkontv_stream_url(
             if not username or not password or len(username) < 4 or len(password) < 10:
                 raise RuntimeError(
                     "popkontv login failed! Please enter the correct account and password for the "
-                    "popkontv platform in the config.ini file."
+                    "popkontv platform in the config.toml file."
                 )
             logger.info("Logging into popkontv platform...")
             login_result = await login_popkontv(
@@ -4623,7 +4623,7 @@ def _read_haixiu_token_override(is_haixiu: bool) -> str:
     if override:
         return override
     try:
-        cfg_value = config_files.read_ini_value(f"{script_path}/config/config.ini", "Cookie", cfg_key)
+        cfg_value = config_files.read_ini_value(f"{script_path}/config/config.toml", "Cookie", cfg_key)
     except Exception:
         return ""
     return (cfg_value or "").strip()
@@ -5068,7 +5068,9 @@ async def get_youtube_stream_url(
     if video_details is None:
         if not json_data:
             _warn_api_abnormal(json_str, "YouTube ytInitialPlayerResponse", "videoDetails", json_data)
-        logger.error("Error: Please log in to YouTube on your device's webpage and configure cookies in the config.ini")
+        logger.error(
+            "Error: Please log in to YouTube on your device's webpage and configure cookies in the config.toml"
+        )
         return result
     result["anchor_name"] = _dig_str(video_details, "author")
     live_status = _dig(video_details, "isLive")
@@ -5174,7 +5176,7 @@ async def get_taobao_stream_url(
             try:
                 from src.recording import state
 
-                _cfg_path = f"{script_path}/config/config.ini"
+                _cfg_path = f"{script_path}/config/config.toml"
                 _old_cookie = config_files.read_ini_value(_cfg_path, "Cookie", "taobao_cookie")
                 if _old_cookie != new_cookie_str:
                     with state.file_update_lock:

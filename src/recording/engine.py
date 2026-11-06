@@ -2,7 +2,6 @@
 
 import atexit
 import builtins
-import configparser
 import os
 import re
 import signal
@@ -29,7 +28,7 @@ from src.config.io import (
     read_config_value,
     update_file,
 )
-from src.config.reader import tolerant_config_parser, warn_duplicate_options
+from src.config.store import ConfigError, ConfigStore, ensure_config_migrated
 from src.monitors.registry import douyin_dm_monitor, follow_monitor
 from src.network import policy
 from src.network.http import close_clients
@@ -53,6 +52,7 @@ from src.support import i18n, utils
 from src.support.i18n import resolve_language as _i18n_resolve
 from src.support.i18n import set_language as _i18n_set_language
 from src.support.i18n import translated_print
+from src.support.logger import set_file_logging
 
 platforms: str = (
     "\n国内站点：抖音|快手|虎牙|斗鱼|YY|B站|小红书|bigo|blued|网易CC|千度热播|猫耳FM|Look直播|TwitCasting|百度|微博|"
@@ -105,9 +105,14 @@ def initialize_process(*, cli: bool = False) -> None:
     print(i18n.tr("支持平台: {platforms}", platforms=platforms))
     print(".....................................................")
     os.makedirs(os.path.dirname(state.config_file), exist_ok=True)
-    config.read(state.config_file, encoding=state.text_encoding)
-    warn_duplicate_options(state.config_file, state.text_encoding)
+    if ensure_config_migrated(state.config_file, state.legacy_config_file):
+        print(i18n.tr("已将 config.ini 迁移为 config.toml（旧文件已改名，不再读取）"))
+    try:
+        config.read(state.config_file)
+    except ConfigError as e:
+        logger.error(i18n.tr("配置文件不可用，本轮使用默认值且不回写: {e}", e=e))
     language = read_config_value(config, "录制设置", "language", "")
+    set_file_logging(read_config_bool(config, "录制设置", "是否启用日志文件(是/否)", True))
     language = _i18n_resolve(language)
     _i18n_set_language(language)
     skip_proxy_check = read_config_bool(config, "录制设置", "是否跳过代理检测(是/否)", False)
@@ -155,28 +160,19 @@ def check_ffmpeg_existence() -> bool:
     return check_ffmpeg()
 
 
-config: configparser.RawConfigParser = tolerant_config_parser()
+config: ConfigStore = ConfigStore(state.config_file)
 
 
 def _hot_reload_config() -> bool:
-    """把 config.ini 解析进全新的 RawConfigParser 并整体替换模块全局；返回是否替换。"""
-    global config
-    fresh = tolerant_config_parser()
+    """配置文件变化时重新解析并校验；未变化时零 I/O。"""
     try:
-        with state.file_update_lock:
-            with open(state.config_file, "r", encoding=state.text_encoding) as fp:
-                fresh.read_file(fp)
-            if not fresh.sections():
-                return False
-            config = fresh
-        warn_duplicate_options(state.config_file, state.text_encoding)
-    except (OSError, UnicodeDecodeError, configparser.Error) as e:
+        return config.reload_if_changed()
+    except Exception as e:
         logger.warning(i18n.tr("发生 I/O 或配置解析错误: {err}", err=f"{type(e).__name__}: {e}"))
         return False
-    return True
 
 
-def _read_https_recording_config(config_parser: configparser.RawConfigParser) -> bool:
+def _read_https_recording_config(config_parser: ConfigStore) -> bool:
     if config_parser.has_option("录制设置", "是否启用https录制"):
         return read_config_bool(config_parser, "录制设置", "是否启用https录制", False)
     if config_parser.has_option("录制设置", "是否强制启用https录制"):
@@ -188,7 +184,7 @@ def _read_https_recording_config(config_parser: configparser.RawConfigParser) ->
 SSL_DISABLE_REQUIRED_PLATFORMS: tuple[str, ...] = ("虎牙直播", "B站直播")
 
 
-def _sync_ssl_disable_platforms(config_parser: configparser.RawConfigParser) -> set[str]:
+def _sync_ssl_disable_platforms(config_parser: ConfigStore) -> set[str]:
     """解析「禁用SSL证书验证的平台」并自动追加必需项；返回合并后的集合。"""
     raw = read_config_value(config_parser, "录制设置", "禁用SSL证书验证的平台(逗号分隔)", "")
     kept = [p.strip() for p in raw.replace("，", ",").split(",") if p.strip()]
@@ -209,7 +205,7 @@ def _sync_ssl_disable_platforms(config_parser: configparser.RawConfigParser) -> 
     return set(kept + appended)
 
 
-def _apply_ssl_platform_exempt(config_parser: configparser.RawConfigParser) -> set[str]:
+def _apply_ssl_platform_exempt(config_parser: ConfigStore) -> set[str]:
     """解析平台豁免并落到 policy（幂等、只追加不移除）；两个调用点共用。"""
     platforms = _sync_ssl_disable_platforms(config_parser)
     if config_parser.has_option("录制设置", "虎牙是否禁用SSL证书验证(是/否)"):
@@ -226,7 +222,7 @@ skip_proxy_check = False
 
 
 def main(non_interactive: bool = False) -> None:
-    """程序主入口（CLI 直跑与 web.py 守护线程共用）：校验 ffmpeg 后死循环「热加载 config.ini →。"""
+    """程序主入口（CLI 直跑与 web.py 守护线程共用）：校验 ffmpeg 后死循环「热加载 config.toml →。"""
     follow_monitor.start()
     douyin_dm_monitor.start()
     global language
@@ -258,10 +254,11 @@ def main(non_interactive: bool = False) -> None:
     while True:
         try:
             if not os.path.isfile(state.config_file):
-                with open(state.config_file, "w", encoding=state.text_encoding) as file:
+                with open(state.config_file, "w", encoding="utf-8") as file:
                     pass
 
-            _ = _hot_reload_config()
+            if _hot_reload_config():
+                set_file_logging(read_config_bool(config, "录制设置", "是否启用日志文件(是/否)", True))
 
             state.ini_URL_content = ""
             if os.path.isfile(state.url_config_file):
@@ -281,7 +278,7 @@ def main(non_interactive: bool = False) -> None:
             if _interruptible_sleep(5):
                 time.sleep(3)
             continue
-        except (OSError, configparser.Error) as err:
+        except (OSError, ConfigError) as err:
             logger.error(i18n.tr("发生 I/O 或配置解析错误: {err}", err=err))
             _interruptible_sleep(3)
 

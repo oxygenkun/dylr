@@ -46,7 +46,7 @@ _PUSH_PLACEHOLDER_ALIASES: dict[str, str] = {
 
 
 def render_push_template(template: str, room_name: str, push_time: str) -> str:
-    """把**用户可编辑的模板**（config.ini 自定义标题/开播/关播推送内容）里的占位符换成真实值。"""
+    """把**用户可编辑的模板**（config.toml 自定义标题/开播/关播推送内容）里的占位符换成真实值。"""
     values = {"ROOM_NAME": room_name, "TIME": push_time}
     rendered = template
     for placeholder, key in _PUSH_PLACEHOLDER_ALIASES.items():

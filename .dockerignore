@@ -81,7 +81,7 @@ htmlcov/
 # ---------- 维护脚本（CI / i18n / 版本同步工具，运行时链路不引用 tool/）----------
 tool/
 
-# ---------- 开发工具配置（pre-commit 钩子定义，仅本地开发用；配套 pyproject dev extra 的 pre-commit>=3.6.0）----------
+# ---------- 开发工具配置（prek 钩子定义，仅本地开发用）----------
 .pre-commit-config.yaml
 
 # ---------- 类型存根（仅供 IDE / mypy 静态检查，运行时无用）----------
@@ -115,6 +115,7 @@ index.html
 *.manifest
 
 # ---------- 配置文件（含敏感信息，运行时通过卷挂载 ./config 提供）----------
+config/config.toml
 config/config.ini
 config/URL_config.ini
 

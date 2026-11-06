@@ -1,10 +1,10 @@
 import asyncio
-import configparser
 import os
 import sys
 import threading
 import time
 
+from src.config.store import read_config_entry
 from src.network import http
 from src.network.credentials import DEFAULT_TTL as _CACHE_TTL_SECONDS
 from src.network.credentials import credential_cache, fetch_cookies, invalidate_cookies
@@ -62,12 +62,9 @@ def _take_cached_ttwid(proxy_addr: OptionalStr) -> str:
 
 def _read_config_ttwid() -> str:
     try:
-        parser = configparser.RawConfigParser()
-        _ = parser.read(f"{_app_root()}/config/config.ini", encoding="utf-8-sig")
-        raw = parser.get(_CONFIG_SECTION, _CONFIG_TTWID_KEY).strip()
-    except configparser.NoSectionError, configparser.NoOptionError, configparser.Error:
-        return ""
+        raw = (read_config_entry(f"{_app_root()}/config/config.toml", _CONFIG_SECTION, _CONFIG_TTWID_KEY) or "").strip()
     except Exception:
+        # 配置异常不得阻断录制启动：视同未配置，走动态获取。
         return ""
     if not raw:
         return ""

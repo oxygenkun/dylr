@@ -16,6 +16,7 @@ from pytest import MonkeyPatch
 
 from src.config import io as config_io
 from src.config.booleans import FALSE_TOKENS, TRUE_TOKENS, format_config_bool, parse_config_bool
+from src.config.store import ConfigStore
 from src.recording import engine as recorder
 from src.recording import state
 
@@ -23,10 +24,12 @@ _MAIN_PY = Path(__file__).resolve().parents[1] / "src/recording/engine.py"
 _KEY = "是否录制弹幕(是/否)"
 
 
-def _make_parser(ini_text: str) -> config_io.configparser.RawConfigParser:
-    parser = config_io.configparser.RawConfigParser()
-    parser.read_string(ini_text)
-    return parser
+def _store(tmp_path: Path, toml_text: str) -> ConfigStore:
+    cfg = tmp_path / "config.toml"
+    cfg.write_text(toml_text, encoding="utf-8")
+    store = ConfigStore(cfg)
+    store.read()
+    return store
 
 
 # ---------------- 纯解析函数 ----------------
@@ -92,45 +95,40 @@ def test_format_config_bool_canonical() -> None:
 def test_read_config_bool_accepts_both_encodings(
     tmp_path: Path, monkeypatch: MonkeyPatch, raw: str, expected: bool
 ) -> None:
-    # 同一份配置文件里两种编码必须解析出相同结果（这是本次事故的核心保证）
-    cfg = tmp_path / "config.ini"
-    cfg.write_text(f"[录制设置]\n{_KEY}={raw}\n", encoding="utf-8")
-    monkeypatch.setattr(state, "config_file", str(cfg))
-    parser = _make_parser(f"[录制设置]\n{_KEY}={raw}\n")
-    assert config_io.read_config_bool(parser, "录制设置", _KEY, False) is expected
+    # 同一份配置里 TOML 布尔与字符串两种写法必须解析出相同结果（这是本次事故的核心保证）
+    value = raw if raw in ("true", "false") else f'"{raw}"'
+    store = _store(tmp_path, f'["录制设置"]\n"{_KEY}" = {value}\n')
+    monkeypatch.setattr(state, "config_file", str(store.path))
+    assert config_io.read_config_bool(store, "录制设置", _KEY, False) is expected
 
 
 def test_read_config_bool_missing_key_writes_canonical_default(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
-    # 缺键 → 按 default 补写规范写法并返回该值（与 read_config_value 的自愈语义一致）
-    cfg = tmp_path / "config.ini"
-    cfg.write_text("[录制设置]\nlanguage=zh_cn\n", encoding="utf-8")
-    monkeypatch.setattr(state, "config_file", str(cfg))
-    parser = _make_parser("[录制设置]\nlanguage=zh_cn\n")
+    # 缺键 → 按 default 以 TOML 原生布尔补写并返回该值（与 read_config_value 的自愈语义一致）
+    store = _store(tmp_path, '["录制设置"]\nlanguage = "zh_cn"\n')
+    monkeypatch.setattr(state, "config_file", str(store.path))
 
-    assert config_io.read_config_bool(parser, "录制设置", _KEY, True) is True
-    migrated = config_io.configparser.RawConfigParser()
-    migrated.read_string(cfg.read_text(encoding="utf-8-sig"))
-    assert migrated.get("录制设置", _KEY) == "是"
+    assert config_io.read_config_bool(store, "录制设置", _KEY, True) is True
+    migrated = ConfigStore(store.path)
+    migrated.read()
+    assert migrated.native("录制设置", _KEY) is True
 
-    assert config_io.read_config_bool(parser, "录制设置", "是否弹幕监控(是/否)", False) is False
-    migrated2 = config_io.configparser.RawConfigParser()
-    migrated2.read_string(cfg.read_text(encoding="utf-8-sig"))
-    assert migrated2.get("录制设置", "是否弹幕监控(是/否)") == "否"
+    assert config_io.read_config_bool(store, "录制设置", "是否弹幕监控(是/否)", False) is False
+    migrated2 = ConfigStore(store.path)
+    migrated2.read()
+    assert migrated2.native("录制设置", "是否弹幕监控(是/否)") is False
 
 
 def test_read_config_bool_unrecognized_value_returns_default_and_keeps_original(
     tmp_path: Path, monkeypatch: MonkeyPatch
 ) -> None:
     # 未识别值返回 default，但**不得**覆写用户原文（避免把用户手改的内容静默改掉）
-    cfg = tmp_path / "config.ini"
-    cfg.write_text(f"[录制设置]\n{_KEY}=maybe\n", encoding="utf-8")
-    monkeypatch.setattr(state, "config_file", str(cfg))
-    parser = _make_parser(f"[录制设置]\n{_KEY}=maybe\n")
+    store = _store(tmp_path, f'["录制设置"]\n"{_KEY}" = "maybe"\n')
+    monkeypatch.setattr(state, "config_file", str(store.path))
 
-    assert config_io.read_config_bool(parser, "录制设置", _KEY, False) is False
-    on_disk = config_io.configparser.RawConfigParser()
-    on_disk.read_string(cfg.read_text(encoding="utf-8-sig"))
-    assert on_disk.get("录制设置", _KEY) == "maybe"
+    assert config_io.read_config_bool(store, "录制设置", _KEY, False) is False
+    on_disk = ConfigStore(store.path)
+    on_disk.read()
+    assert on_disk.native("录制设置", _KEY) == "maybe"
 
 
 # ---------------- 「是否启用https录制」整合读取：两种编码 ----------------
@@ -144,23 +142,20 @@ def test_https_config_accepts_true_false_encoding(
     tmp_path: Path, monkeypatch: MonkeyPatch, raw: str, expected: bool
 ) -> None:
     # 本次事故的直接命中项：true 曾被判为「否」→ 流地址被降级为 http
-    cfg = tmp_path / "config.ini"
-    cfg.write_text(f"[录制设置]\n是否启用https录制={raw}\n", encoding="utf-8")
-    monkeypatch.setattr(state, "config_file", str(cfg))
-    parser = _make_parser(f"[录制设置]\n是否启用https录制={raw}\n")
-    assert recorder._read_https_recording_config(parser) is expected
+    value = raw if raw in ("true", "false") else f'"{raw}"'
+    store = _store(tmp_path, f'["录制设置"]\n"是否启用https录制" = {value}\n')
+    monkeypatch.setattr(state, "config_file", str(store.path))
+    assert recorder._read_https_recording_config(store) is expected
 
 
 def test_https_config_legacy_key_true_encoding_migrates(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
     # 旧键用 true 写法时同样应继承为 True，并迁移写回规范写法「是」
-    cfg = tmp_path / "config.ini"
-    cfg.write_text("[录制设置]\n是否强制启用https录制=true\n", encoding="utf-8")
-    monkeypatch.setattr(state, "config_file", str(cfg))
-    parser = _make_parser("[录制设置]\n是否强制启用https录制=true\n")
-    assert recorder._read_https_recording_config(parser) is True
-    migrated = config_io.configparser.RawConfigParser()
-    migrated.read_string(cfg.read_text(encoding="utf-8-sig"))
-    assert migrated.get("录制设置", "是否启用https录制") == "是"
+    store = _store(tmp_path, '["录制设置"]\n"是否强制启用https录制" = true\n')
+    monkeypatch.setattr(state, "config_file", str(store.path))
+    assert recorder._read_https_recording_config(store) is True
+    migrated = ConfigStore(store.path)
+    migrated.read()
+    assert migrated.native("录制设置", "是否启用https录制") is True
 
 
 # ---------------- 源码级防回归 ----------------

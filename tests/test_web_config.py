@@ -490,12 +490,16 @@ class TestReadWebConfigAllowedHosts:
 
 class TestUpdateConfigLine:
     def test_update_preserves_comments_and_cleans_tmp(self, tmp_path: Path) -> None:
-        cfg = tmp_path / "config.ini"
-        cfg.write_text("[Web]\n# 注释\nweb_host = 127.0.0.1\nweb_port = 8000\n", encoding="utf-8-sig")
+        from src.config.store import ConfigStore
+
+        cfg = tmp_path / "config.toml"
+        cfg.write_text('[Web]\n# 注释\nweb_host = "127.0.0.1"\nweb_port = 8000\n', encoding="utf-8")
         assert update_config_line(cfg, "Web", "web_host", "0.0.0.0") is True
-        text = cfg.read_text(encoding="utf-8-sig")
-        assert "web_host = 0.0.0.0" in text
+        text = cfg.read_text(encoding="utf-8")
         assert "# 注释" in text
+        store = ConfigStore(cfg)
+        store.read()
+        assert store.get("Web", "web_host") == "0.0.0.0"
         # 原子写不应留下临时文件（C7）：精确匹配 .tmp 扩展名
         leftovers = [p.name for p in tmp_path.glob("*.tmp")]
         assert leftovers == [], f"原子写残留临时文件: {leftovers}"
@@ -509,31 +513,25 @@ class TestUpdateConfigLine:
         assert update_config_line(tmp_path / "nope.ini", "Web", "web_host", "x") is False
 
     def test_hash_in_value_reads_back_as_new_value(self, tmp_path: Path) -> None:
-        # M-07（2026-09-30）：读侧 configparser 未开启 inline_comment_prefixes，旧值里的
-        # " #" 本就是值的一部分——二次更新后读回值必须**等于新值**，不得被旧尾注污染
-        # （旧实现把 " #" 之后当注释拼回新值，平台 Cookie/含井号 token 因此静默失效）。
-        parser = configparser.ConfigParser()
-        cfg = tmp_path / "config.ini"
-        cfg.write_text("[Sec]\nkey = old #b\n", encoding="utf-8-sig")
+        # TOML 的字符串由引号界定，值里的 " #" 不会被当成行内注释；替换后必须读回新值，
+        # 且原有的行尾注释仍保留。
+        from src.config.store import ConfigStore
+
+        cfg = tmp_path / "config.toml"
+        cfg.write_text('["Sec"]\nkey = "old #b"\n', encoding="utf-8")
         assert update_config_line(cfg, "Sec", "key", "new") is True
-        parser.read(cfg, encoding="utf-8-sig")
-        assert parser.get("Sec", "key") == "new", "无引号值含 ' #' 时尾串被当注释拼回新值"
-        # 带引号且值含 " #"、无尾注的同型：闭合引号之前的一切都属值本身（F-23 回落分支残留）
-        cfg2 = tmp_path / "config2.ini"
-        cfg2.write_text('[Sec]\nkey = "a #b"\n', encoding="utf-8-sig")
+        store = ConfigStore(cfg)
+        store.read()
+        assert store.get("Sec", "key") == "new"
+
+        cfg2 = tmp_path / "config2.toml"
+        cfg2.write_text('["Sec"]\nkey = "v" # 备注\n', encoding="utf-8")
         assert update_config_line(cfg2, "Sec", "key", "new") is True
-        parser2 = configparser.ConfigParser()
-        parser2.read(cfg2, encoding="utf-8-sig")
-        assert parser2.get("Sec", "key") == "new", "带引号值的 ' #' 被回落启发式二次污染"
-        # F-23 既有语义保持：引号值后的真注释仍原样保留
-        cfg3 = tmp_path / "config3.ini"
-        cfg3.write_text('[Sec]\nkey = "v" # 备注\n', encoding="utf-8-sig")
-        assert update_config_line(cfg3, "Sec", "key", "new") is True
-        text = cfg3.read_text(encoding="utf-8-sig")
-        assert "key = new # 备注" in text
+        store2 = ConfigStore(cfg2)
+        store2.read()
+        assert store2.get("Sec", "key") == "new"
+        assert "# 备注" in cfg2.read_text(encoding="utf-8")
 
-
-class TestVerifyWebPassword:
     def test_hash_roundtrip(self) -> None:
         hashed = hash_web_password("secret123")
         assert is_hashed_web_password(hashed)
@@ -585,25 +583,31 @@ class TestQualityOptions:
         assert read_quality_options(cfg) == list(BUILTIN_QUALITIES)
 
     def test_write_appends_when_key_missing_then_reads_back(self, tmp_path: Path) -> None:
-        cfg = tmp_path / "config.ini"
-        cfg.write_text("[录制设置]\nlanguage = zh_CN\n", encoding="utf-8-sig")
+        from src.config.store import ConfigStore
+
+        cfg = tmp_path / "config.toml"
+        cfg.write_text('["录制设置"]\nlanguage = "zh_CN"\n', encoding="utf-8")
         result = write_quality_options(cfg, ["超清", "高清"])
         assert result == ["超清", "高清"]
-        # 再次读取应拿到同样的列表（保留顺序）
         assert read_quality_options(cfg) == ["超清", "高清"]
-        # 写入不应破坏节内其他键（language 原样保留）
-        assert "language = zh_CN" in cfg.read_text(encoding="utf-8-sig")
+        store = ConfigStore(cfg)
+        store.read()
+        assert store.get("录制设置", "language") == "zh_CN"
 
     def test_write_updates_existing_key_in_place(self, tmp_path: Path) -> None:
-        cfg = tmp_path / "config.ini"
+        from src.config.store import ConfigStore
+
+        cfg = tmp_path / "config.toml"
         cfg.write_text(
-            "[录制设置]\n自定义画质选项(逗号分隔) = 超清,流畅\nlanguage = zh_CN\n",
-            encoding="utf-8-sig",
+            '["录制设置"]\n"自定义画质选项(逗号分隔)" = "超清,流畅"\nlanguage = "zh_CN"\n',
+            encoding="utf-8",
         )
         write_quality_options(cfg, ["蓝光8M", "标清"])
-        text = cfg.read_text(encoding="utf-8-sig")
-        assert "自定义画质选项(逗号分隔) = 蓝光8M,标清" in text
-        assert "language = zh_CN" in text  # 行级替换不应误伤
+        store = ConfigStore(cfg)
+        store.read()
+        assert store.get("录制设置", "自定义画质选项(逗号分隔)") == "蓝光8M,标清"
+        assert store.get("录制设置", "language") == "zh_CN"
+        assert cfg.read_text(encoding="utf-8").count("自定义画质选项(逗号分隔)") == 1
 
     def test_write_newline_in_options_rejected(self, tmp_path: Path) -> None:
         cfg = tmp_path / "config.ini"
@@ -705,9 +709,9 @@ class TestSensitiveItemCaseInsensitive:
     def test_read_config_safe_masks_variant_sections(self, tmp_path: Path) -> None:
         # 端到端：面板读配置走的就是 read_config_safe，变体节名下的凭据必须回显为掩码。
         # 取值一律用脱敏样例（真实 cookie/口令不得出现在仓库里）。
-        cfg = tmp_path / "config.ini"
+        cfg = tmp_path / "config.toml"
         cfg.write_text(
-            "[cookie]\ndouyin = sample-cookie-value\n[账号密码]\nkuaishou = sample-pw\n[Web]\nweb_port = 8000\n",
+            '["cookie"]\ndouyin = "sample-cookie-value"\n["账号密码"]\nkuaishou = "sample-pw"\n[Web]\nweb_port = 8000\n',
             encoding="utf-8",
         )
         safe = read_config_safe(cfg)

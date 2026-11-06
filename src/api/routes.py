@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import configparser
 import inspect
 import json
 import os
@@ -27,7 +26,6 @@ from src.api.config import (
     QUALITY_OPTIONS_KEY,
     QUALITY_OPTIONS_SECTION,
     SENSITIVE_MASK,
-    TEXT_ENCODING,
     _looks_like_secret_value,
     format_url_line,
     hash_web_password,
@@ -41,6 +39,7 @@ from src.api.config import (
     parse_url_config,
     read_config_safe,
     read_quality_options,
+    read_raw_config_value,
     read_web_config,
     update_config_line,
     update_or_append_config_line,
@@ -739,7 +738,7 @@ def create_app(
                             _insecure_bind_detail(
                                 i18n_module.tr("不允许关闭 Web 认证"),
                                 i18n_module.tr(
-                                    "请先在 config.ini 把 web_host 改为 127.0.0.1 并重启本进程"
+                                    "请先在 config.toml 把 web_host 改为 127.0.0.1 并重启本进程"
                                     "（判定以进程实际监听地址为准，只改配置不重启不生效）"
                                 ),
                                 _bind,
@@ -751,18 +750,11 @@ def create_app(
             if cast(bool, current_cfg["web_auth_enable"]):
                 raise HTTPException(400, i18n_module.tr("请先关闭 Web 认证再清空密码"))
         value = req.value
-        old_value = ""
-        try:
-            _raw_parser = configparser.ConfigParser(interpolation=None)
-            _ = _raw_parser.read(cast(str, app.state.config_file), encoding=TEXT_ENCODING)
-            if _raw_parser.has_option(section, key):
-                old_value = str(_raw_parser.get(section, key) or "")
-        except Exception:
-            old_value = ""
+        old_value = read_raw_config_value(cast(str, app.state.config_file), section, key)
         if is_sensitive_item(section, key) or _looks_like_secret_value(value) or _looks_like_secret_value(old_value):
             if not value.strip():
                 raise HTTPException(
-                    400, i18n_module.tr("敏感配置项不得清空：如需移除请显式填写占位值并手工编辑 config.ini")
+                    400, i18n_module.tr("敏感配置项不得清空：如需移除请显式填写占位值并手工编辑 config.toml")
                 )
             if value.strip() == SENSITIVE_MASK:
                 raise HTTPException(400, i18n_module.tr("敏感配置项不得以掩码值提交：请填入真实值，或保持该项不修改"))
@@ -786,8 +778,11 @@ def create_app(
             else:
                 value = normalized_password
 
-        with state.file_update_lock:
-            ok = update_config_line(cast(str, app.state.config_file), section, key, value)
+        try:
+            with state.file_update_lock:
+                ok = update_config_line(cast(str, app.state.config_file), section, key, value)
+        except ValueError as e:
+            raise HTTPException(422, str(e)) from e
         if not ok:
             raise HTTPException(404, i18n_module.tr("未找到对应的配置项"))
         if is_web_section and key_norm == "web_password" and req.value.strip():

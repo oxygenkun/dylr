@@ -84,15 +84,15 @@ def app_env(tmp_path: Path, fake_main: types.ModuleType) -> Generator[types.Simp
         "\n".join(
             [
                 "[Web]",
-                "web_host = 127.0.0.1",
+                'web_host = "127.0.0.1"',
                 "web_port = 8000",
                 "web_auth_enable = true",
-                f"web_password = {wa.hash_web_password(_PLAIN_PWD)}",
-                "web_trusted_proxy =",
+                f'web_password = "{wa.hash_web_password(_PLAIN_PWD)}"',
+                'web_trusted_proxy = ""',
             ]
         )
         + "\n",
-        encoding="utf-8-sig",
+        encoding="utf-8",
     )
 
     app = wa.create_app(
@@ -237,11 +237,11 @@ class TestWriteSideSensitiveParity:
         marker = "_looks_like_secret_value(old_value)"
         assert marker in code, "写侧未判旧值形态（清空路径漏判）"
         segment = code[: code.index(marker)]
-        segment = segment[segment.index('old_value = ""') :]
+        segment = segment[segment.index("old_value = ") :]
         assert "read_config_safe" not in segment, (
             "old_value 又从脱敏读（read_config_safe）取了：值型凭据会被读成掩码，判定失效"
         )
-        assert "configparser.ConfigParser" in segment, "old_value 未从未脱敏的原始配置读取"
+        assert "read_raw_config_value" in segment, "old_value 未从未脱敏的原始配置读取"
 
 
 class TestTokenExpiryClamp:
@@ -309,20 +309,20 @@ class TestAuthKeyReauth:
         # 反向边界只有在关闭态下才验得出来。绑定未接线 → _guard_bind_host 回落到配置里的 127.0.0.1。
         from starlette.testclient import TestClient
 
-        cfg = tmp_path / "config_auth_off.ini"
+        cfg = tmp_path / "config_auth_off.toml"
         cfg.write_text(
             "\n".join(
                 [
                     "[Web]",
-                    "web_host = 127.0.0.1",
+                    'web_host = "127.0.0.1"',
                     "web_port = 8000",
                     "web_auth_enable = false",
-                    "web_password =",
-                    "web_trusted_proxy =",
+                    'web_password = ""',
+                    'web_trusted_proxy = ""',
                 ]
             )
             + "\n",
-            encoding="utf-8-sig",
+            encoding="utf-8",
         )
         _reset_web_api_state(wa)
         app = wa.create_app(
@@ -432,7 +432,7 @@ class TestAuthKeyReauth:
             headers={"Authorization": f"Bearer {token}"},
         )
         assert resp.status_code == 200, f"非认证键被复验要求误伤: {resp.text}"
-        assert "web_host = localhost" in app_env.cfg.read_text(encoding="utf-8-sig")
+        assert 'web_host = "localhost"' in app_env.cfg.read_text(encoding="utf-8")
 
     def test_frontend_sends_confirm_and_reuses_field_name(self) -> None:
         # 前端半边的源码级锁：确认弹窗与字段名必须同时存在——只断言「有 confirm」会被无关 confirm

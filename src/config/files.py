@@ -1,12 +1,11 @@
 """配置文件的读取、原子修改、去重与 URL 更新。"""
 
-import io
 import os
 import re
 from collections import OrderedDict
 from pathlib import Path
 
-from src.config.reader import tolerant_config_parser
+from src.config.store import ConfigError, ConfigStore, ConfigValueError
 from src.recording import state
 from src.support import i18n
 from src.support.logger import logger
@@ -14,18 +13,17 @@ from src.support.utils import atomic_write_text, mask_credentials
 
 
 def read_ini_value(file_path: str | Path, section: str, key: str) -> str | None:
-    """读取指定配置项；缺失或读取失败时返回 None。"""
-    config = tolerant_config_parser()
-
+    """读取指定 TOML 配置项；缺失或读取失败时返回 None。"""
+    store = ConfigStore(file_path)
     try:
-        _ = config.read(file_path, encoding="utf-8-sig")
-    except Exception as e:
+        store.read()
+    except ConfigError as e:
         logger.warning(i18n.tr("Error occurred while reading the configuration file: {e}", e=e))
         return None
 
-    if section in config:
-        if key in config[section]:
-            return config[section][key]
+    if store.has_section(section):
+        if store.has_option(section, key):
+            return store.get(section, key)
         logger.warning(i18n.tr("Key [{key}] does not exist in section [{section}].", key=key, section=section))
     else:
         logger.warning(i18n.tr("Section [{section}] does not exist in the file.", section=section))
@@ -33,26 +31,31 @@ def read_ini_value(file_path: str | Path, section: str, key: str) -> str | None:
     return None
 
 
-def update_config(file_path: str | Path, section: str, key: str, new_value: str) -> None:
-    """持锁修改配置项，并原子写回文件。"""
-    with state.file_update_lock:
-        config = tolerant_config_parser()
+def read_config_value(file_path: str | Path, section: str, key: str) -> str | None:
+    """读取单个 TOML 配置项（不写回默认值）；缺失或读取失败时返回 None。"""
+    return read_ini_value(file_path, section, key)
 
+
+def update_config(file_path: str | Path, section: str, key: str, new_value: str) -> None:
+    """持锁修改 TOML 配置项并原子写回。"""
+    with state.file_update_lock:
+        store = ConfigStore(file_path)
         try:
-            _ = config.read(file_path, encoding="utf-8-sig")
-        except Exception as e:
+            store.read()
+        except ConfigError as e:
             logger.warning(i18n.tr("An error occurred while reading the configuration file: {e}", e=e))
             return
 
-        if section not in config:
+        if not store.has_section(section):
             logger.warning(i18n.tr("Section [{section}] does not exist in the file.", section=section))
             return
 
-        config[section][key] = new_value
-
-        buf = io.StringIO()
-        config.write(buf)
-        if not atomic_write_text(file_path, buf.getvalue()):
+        try:
+            store.set(section, key, new_value)
+        except ConfigValueError as e:
+            logger.warning(i18n.tr("配置值校验失败，未写入: {e}", e=e))
+            return
+        if not store.write():
             return
     try:
         os.chmod(str(file_path), 0o600)

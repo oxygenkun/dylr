@@ -81,13 +81,13 @@ def _write_web_section(
     cfg_path.parent.mkdir(parents=True, exist_ok=True)
     lines = [
         "[Web]",
-        f"web_host = {host}",
+        f'web_host = "{host}"',
         "web_port = 8000",
         f"web_auth_enable = {auth}",
-        f"web_password = {password}",
-        f"web_trusted_proxy = {trusted_proxy}",
+        f'web_password = "{password}"',
+        f'web_trusted_proxy = "{trusted_proxy}"',
     ]
-    cfg_path.write_text("\n".join(lines) + "\n", encoding="utf-8-sig")
+    cfg_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def _reset_web_api_state(wa: types.ModuleType) -> None:
@@ -1135,16 +1135,16 @@ class TestSecurityConfigCacheInvalidation:
             "\n".join(
                 [
                     "[Web]",
-                    "web_host = 127.0.0.1",
+                    'web_host = "127.0.0.1"',
                     "web_port = 8000",
                     "web_auth_enable = true",
-                    f"web_password = {cast('types.ModuleType', wa).hash_web_password('secret123')}",
-                    "web_trusted_proxy = ",
-                    "web_allowed_hosts = ",
+                    f'web_password = "{cast("types.ModuleType", wa).hash_web_password("secret123")}"',
+                    'web_trusted_proxy = ""',
+                    'web_allowed_hosts = ""',
                 ]
             )
             + "\n",
-            encoding="utf-8-sig",
+            encoding="utf-8",
         )
         _reset_web_api_state(cast("types.ModuleType", wa))
         frozen = types.SimpleNamespace(st_mtime=1_000.0, st_size=1_000)
@@ -1340,8 +1340,11 @@ class TestInsecureBindInvariantUsesRealAddress:
             assert step1.status_code == 200, step1.text
             # 前提自证：配置里现在确实写着回环值——否则第②步的 403 可能来自别的分支，
             # 本用例就会退化成「与 SEV-04 单步用例同义」的假绿。
-            cfg_text = (tmp_path / "config.ini").read_text(encoding="utf-8-sig")
-            assert "web_host = 127.0.0.1" in cfg_text, cfg_text
+            from src.config.store import ConfigStore
+
+            _store = ConfigStore(tmp_path / "config.ini")
+            _store.read()
+            assert _store.get("Web", "web_host") == "127.0.0.1"
             # 第②步：关认证。修复前判定读的是刚写进去的 127.0.0.1（判为回环）→ 放行；
             # 修复后读实际绑定 0.0.0.0 → 必须 403。
             # 带上**正确**复验口令（MID-2241）：否则这条 403 可能来自复验守卫而非监听地址守卫，
@@ -1357,7 +1360,9 @@ class TestInsecureBindInvariantUsesRealAddress:
             assert "reauth_password" not in step2.json()["detail"], "403 来自复验守卫而非监听地址守卫"
             # 收尾：安全态没被改动（认证仍在，配置也没被写成关闭态）
             assert client.get("/api/rooms").status_code == 401
-            assert "web_auth_enable = true" in (tmp_path / "config.ini").read_text(encoding="utf-8-sig")
+            _store2 = ConfigStore(tmp_path / "config.ini")
+            _store2.read()
+            assert _store2.native("Web", "web_auth_enable") is True
         finally:
             client.close()
 
@@ -1398,9 +1403,12 @@ class TestInsecureBindInvariantUsesRealAddress:
             )
             assert step2.status_code == 200, f"实际绑定回环时两步序列仍被拒: {step2.text}"
             # 生效态核对：配置确实写成了「回环 + 无认证」，且中间件据此放行（不是被 403 挡在门外）
-            cfg_text = (tmp_path / "config.ini").read_text(encoding="utf-8-sig")
-            assert "web_host = 127.0.0.1" in cfg_text, cfg_text
-            assert "web_auth_enable = false" in cfg_text, cfg_text
+            from src.config.store import ConfigStore
+
+            _store = ConfigStore(tmp_path / "config.ini")
+            _store.read()
+            assert _store.get("Web", "web_host") == "127.0.0.1"
+            assert _store.native("Web", "web_auth_enable") is False
             assert client.get("/api/rooms").status_code == 200
         finally:
             client.close()
@@ -1454,7 +1462,11 @@ class TestInsecureBindInvariantUsesRealAddress:
             )
             assert resp.status_code == 403, f"认证实际已关闭时仍可把 web_host 写成回环伪安全态: {resp.text}"
             assert "不允许把 web_host 改写为回环地址" in resp.json()["detail"], resp.json()["detail"]
-            assert "web_host = 0.0.0.0" in (tmp_path / "config.ini").read_text(encoding="utf-8-sig")
+            from src.config.store import ConfigStore
+
+            _store = ConfigStore(tmp_path / "config.ini")
+            _store.read()
+            assert _store.get("Web", "web_host") == "0.0.0.0"
         finally:
             client.close()
 
@@ -1557,7 +1569,7 @@ class TestInsecureBindInvariantUsesRealAddress:
             detail = resp.json()["detail"]
             assert detail.startswith("<<非回环监听地址（当前实际监听 ")
             assert "<<不允许关闭 Web 认证>>" in detail
-            assert "<<请先在 config.ini 把 web_host 改为 127.0.0.1" in detail
+            assert "<<请先在 config.toml 把 web_host 改为 127.0.0.1" in detail
             assert "<<；确需对局域网无认证开放时" in detail
         finally:
             client.close()
@@ -1736,8 +1748,8 @@ class TestOriginSameHostAndPort:
         cfg = tmp_path / "config.ini"
         _write_web_section(cfg, auth="false", password="", host="127.0.0.1")
         cfg.write_text(
-            cfg.read_text(encoding="utf-8-sig") + "web_allowed_hosts = panel.lan, proxy.example:8443\n",
-            encoding="utf-8-sig",
+            cfg.read_text(encoding="utf-8") + 'web_allowed_hosts = "panel.lan, proxy.example:8443"\n',
+            encoding="utf-8",
         )
         _reset_web_api_state(wa)
         app = wa.create_app(
@@ -1979,7 +1991,9 @@ class TestSensitiveValueBlankRejected:
             headers={"Authorization": f"Bearer {token}"},
         )
         assert resp.status_code == 200, resp.text
-        assert "抖音cookie = ****" in app_env.cfg.read_text(encoding="utf-8-sig")
+        from src.api.config import read_raw_config_value
+
+        assert read_raw_config_value(app_env.cfg, "Cookie", "抖音cookie") == "****"
 
     def test_mask_value_allowed_for_non_sensitive_key(self, app_env: types.SimpleNamespace) -> None:
         # 反向边界：拒绝只针对敏感键。非敏感键（值本身可以是任意文本）不得被误伤，
@@ -1994,7 +2008,9 @@ class TestSensitiveValueBlankRejected:
             headers={"Authorization": f"Bearer {token}"},
         )
         assert resp.status_code == 200, resp.text
-        assert "HLS采集排除平台(逗号分隔) = ***" in app_env.cfg.read_text(encoding="utf-8-sig")
+        from src.api.config import read_raw_config_value
+
+        assert read_raw_config_value(app_env.cfg, "录制设置", "HLS采集排除平台(逗号分隔)") == "***"
 
 
 class TestOutboundTargetKeysValidated:
@@ -2052,7 +2068,9 @@ class TestOutboundTargetKeysValidated:
         # 合法公网地址必须仍可写（收紧不得变成「推送项只读」）
         resp = self._put(app_env, "推送配置", key, "https://ntfy.sh/topic-a")
         assert resp.status_code == 200, resp.text
-        assert "ntfy推送地址 = https://ntfy.sh/topic-a" in app_env.cfg.read_text(encoding="utf-8-sig")
+        from src.api.config import read_raw_config_value
+
+        assert read_raw_config_value(app_env.cfg, "推送配置", "ntfy推送地址") == "https://ntfy.sh/topic-a"
         # 多目标全部合法 → 放行
         resp2 = self._put(app_env, "推送配置", key, "https://ntfy.sh/a,https://ntfy.sh/b")
         assert resp2.status_code == 200, resp2.text
@@ -2433,13 +2451,13 @@ class TestListFiles:
 # GET/PUT /api/language：语言查询与即时切换（写回 config + 热切换进程内翻译）。
 class TestLanguageApi:
     def _write_language_section(self, cfg: Path, value: str = "zh_cn") -> None:
-        # 追加 [录制设置] 节与 language 键（update_config_line 行级更新需键已存在）
-        text = cfg.read_text(encoding="utf-8-sig")
-        if "[录制设置]" not in text:
-            text += "\n[录制设置]\n"
-        if not any(line.strip().startswith("language") for line in text.splitlines()):
-            text += f"language = {value}\n"
-        cfg.write_text(text, encoding="utf-8-sig")
+        # 写入 [录制设置]/language（update_config_line 只改已存在的键）
+        from src.config.store import ConfigStore
+
+        store = ConfigStore(cfg)
+        store.read()
+        store.set("录制设置", "language", value)
+        store.write()
 
     def test_get_language_returns_current_and_available(self, app_env: types.SimpleNamespace) -> None:
         # GET /api/language 须返回当前语言码与全部可用语言集合；
@@ -2467,7 +2485,7 @@ class TestLanguageApi:
             # 进程内翻译已热切换
             assert i18n_module.get_language() == "en_US"
             # config.ini 已写回归一化语言码
-            assert "language = en_US" in app_env.cfg.read_text(encoding="utf-8-sig")
+            assert 'language = "en_US"' in app_env.cfg.read_text(encoding="utf-8")
         finally:
             _ = i18n_module.set_language(saved)
 
@@ -2507,43 +2525,37 @@ class TestLanguageApi:
 
         saved = i18n_module.get_language()
         try:
-            assert "[录制设置]" not in app_env.cfg.read_text(encoding="utf-8-sig")
+            from src.config.store import ConfigStore
+
+            assert not ConfigStore(app_env.cfg).exists() or "录制设置" not in ConfigStore(app_env.cfg).sections()
             token = _login(app_env.client)
             resp = app_env.client.put(
                 "/api/language", json={"language": "en_US"}, headers={"Authorization": f"Bearer {token}"}
             )
             assert resp.status_code == 200, resp.text
-            text = app_env.cfg.read_text(encoding="utf-8-sig")
+            store = ConfigStore(app_env.cfg)
+            store.read()
             # 补建的节与键均在位，且不影响已有 Web 节
-            assert "[录制设置]" in text and "language = en_US" in text and "[Web]" in text
+            assert store.get("录制设置", "language") == "en_US" and store.has_section("Web")
         finally:
             _ = i18n_module.set_language(saved)
 
     def test_append_config_line_edge_cases(self, app_env: types.SimpleNamespace) -> None:
-        # append_config_line 行级追加的边界：目标节存在（含无尾换行文件）与节缺失时新建于尾部。
-        # 直接测 web_config 纯函数（web_api 自 H-6 改造后不再转发导入该符号）
+        # append_config_line 的边界：缺节/缺键时创建，已有值可覆盖；TOML 下不再有行级插入点概念。
         from src.api.config import append_config_line
+        from src.config.store import ConfigStore
 
-        # 节存在但中间夹有其他内容：插入点应在下一节头之前、保留注释与顺序
         cfg = app_env.cfg
-        cfg.write_text(
-            "[Web]\nweb_auth = true\n# 注释行\n[录制设置]\ndelay = 5\n[Cookie]\nk = v\n", encoding="utf-8-sig"
-        )
         assert append_config_line(str(cfg), "录制设置", "language", "en_US") is True
-        lines = cfg.read_text(encoding="utf-8-sig").splitlines()
-        assert lines.index("language = en_US") < lines.index("[Cookie]")
-        assert "# 注释行" in lines
+        store = ConfigStore(cfg)
+        store.read()
+        assert store.get("录制设置", "language") == "en_US"
 
-        # 目标节是最后一节且文件无尾换行：追加后不应与原末行粘连
-        cfg.write_text("[Web]\nweb_auth = true\n[录制设置]\ndelay = 5", encoding="utf-8-sig")
+        cfg.write_text("", encoding="utf-8")
         assert append_config_line(str(cfg), "录制设置", "language", "zh_CN") is True
-        text = cfg.read_text(encoding="utf-8-sig")
-        assert "delay = 5\nlanguage = zh_CN" in text
-
-        # 节缺失：文件尾新建节再插键，返回 True
-        cfg.write_text("[Web]\nweb_auth = true\n", encoding="utf-8-sig")
-        assert append_config_line(str(cfg), "录制设置", "language", "en_US") is True
-        assert "[录制设置]\nlanguage = en_US\n" in cfg.read_text(encoding="utf-8-sig")
+        store = ConfigStore(cfg)
+        store.read()
+        assert store.get("录制设置", "language") == "zh_CN"
 
     def test_put_language_rejects_empty(self, app_env: types.SimpleNamespace) -> None:
         # 空白串与「白名单外的码」共用同一条 400（`not value.strip() or not is_recognized_language(...)`）；
@@ -2583,7 +2595,7 @@ class TestLanguageApi:
             assert body["fallback"] is True
             assert body["notice"]
             text = app_env.cfg.read_text(encoding="utf-8-sig")
-            assert "language = zh_CN" in text
+            assert 'language = "zh_CN"' in text
             assert "en_US" not in text  # 缺目录的码一律不落盘
             assert i18n_module.get_language() == "zh_CN"
         finally:
@@ -2605,7 +2617,7 @@ class TestLanguageApi:
             body = resp.json()
             assert body["language"] == "en_US" and body["requested"] == "en_US"
             assert body["fallback"] is False and body["notice"] == ""
-            assert "language = en_US" in app_env.cfg.read_text(encoding="utf-8-sig")
+            assert 'language = "en_US"' in app_env.cfg.read_text(encoding="utf-8")
         finally:
             _ = i18n_module.set_language(saved)
 
@@ -2629,7 +2641,7 @@ class TestLanguageApi:
             )
             assert resp.status_code == 500, resp.text
             assert i18n_module.get_language() == "zh_CN"  # 已回滚，未留下半切换状态
-            assert "language = en_US" not in app_env.cfg.read_text(encoding="utf-8-sig")
+            assert 'language = "en_US"' not in app_env.cfg.read_text(encoding="utf-8")
         finally:
             _ = i18n_module.set_language(saved)
 
@@ -2660,8 +2672,9 @@ class TestQualityOptionsEndpoints:
         )
         assert resp.status_code == 200, resp.text
         assert resp.json()["options"] == ["超清", "高清", "流畅"]
-        text = app_env.cfg.read_text(encoding="utf-8-sig")
-        assert "自定义画质选项(逗号分隔) = 超清,高清,流畅" in text
+        from src.api.config import read_quality_options
+
+        assert read_quality_options(app_env.cfg) == ["超清", "高清", "流畅"]
         # 持久化后再读仍能复现
         resp2 = app_env.client.get("/api/rooms/qualities", headers={"Authorization": f"Bearer {token}"})
         assert resp2.json()["options"] == ["超清", "高清", "流畅"]

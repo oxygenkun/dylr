@@ -1,7 +1,6 @@
 """直播间 URL 准入与平台解析分派。"""
 
 import asyncio
-import configparser
 import os
 import random
 import re
@@ -13,6 +12,7 @@ from urllib.parse import urlsplit
 from loguru import logger
 
 from src.config import files as config_files
+from src.config.store import ConfigError
 from src.monitors.registry import follow_monitor
 from src.network.http import request
 from src.recording import state
@@ -583,7 +583,7 @@ def _resolve_sooplive_co_kr(ctx: _PlatformResolveContext) -> None:
                             "sooplive_cookie",
                             cast(str, json_data["new_cookies"]),
                         )
-                except (configparser.Error, OSError) as e:
+                except (ConfigError, OSError) as e:
                     logger.warning(
                         i18n.tr(
                             "凭据回写失败（不影响本轮录制）: {type_name}: {e}",
@@ -674,7 +674,7 @@ def _resolve_flextv_co_kr(ctx: _PlatformResolveContext) -> None:
                         config_files.update_config(
                             state.config_file, "Cookie", "flextv_cookie", cast(str, json_data["new_cookies"])
                         )
-                except (configparser.Error, OSError) as e:
+                except (ConfigError, OSError) as e:
                     logger.warning(
                         i18n.tr(
                             "凭据回写失败（不影响本轮录制）: {type_name}: {e}",
@@ -721,7 +721,7 @@ def _resolve_popkontv_com(ctx: _PlatformResolveContext) -> None:
                             key="popkontv_token",
                             new_value=cast(str, ctx.port_info["new_token"]),
                         )
-                except (configparser.Error, OSError) as e:
+                except (ConfigError, OSError) as e:
                     logger.warning(
                         i18n.tr(
                             "凭据回写失败（不影响本轮录制）: {type_name}: {e}",
@@ -758,7 +758,7 @@ def _resolve_twitcasting_tv(ctx: _PlatformResolveContext) -> None:
                         key="twitcasting_cookie",
                         new_value=cast(str, json_data["new_cookies"]),
                     )
-            except (configparser.Error, OSError) as e:
+            except (ConfigError, OSError) as e:
                 logger.warning(
                     i18n.tr(
                         "凭据回写失败（不影响本轮录制）: {type_name}: {e}",
