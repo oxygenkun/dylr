@@ -39,7 +39,7 @@ cleanup() {
   fi
   # 兜底：本轮面板是唯一合法监听 $PORT 的进程；仍在说明有漏网子进程（下一轮重试会因此
   # 端口占用而起不来，务必清干净）。pkill 无匹配时返回非 0，故吞掉退出码。
-  pkill -f 'python web\.py' 2>/dev/null
+  pkill -f 'python -m src[.]main' 2>/dev/null
   return 0
 }
 trap cleanup EXIT
@@ -48,11 +48,24 @@ mkdir -p config logs
 # 全注释的 URL 清单 → 待录制房间为空，引擎只跑配置热加载循环，绝不起 ffmpeg、绝不访问
 # 平台接口（与 tool/build_exe.py 冒烟的 _ensure_url_config 同一手法）。
 [ -s config/URL_config.ini ] || echo '#https://live.douyin.com/000000000000' >config/URL_config.ini
-# config/config.ini 不入库（含口令/Cookie），缺失时 read_web_config 回退 WEB_DEFAULTS：
+# config/config.toml 不入库（含口令/Cookie），缺失时 read_web_config 回退 WEB_DEFAULTS：
 # 127.0.0.1:8000 + 不开认证，与 smoke_web.json 的 base_url 对齐。
+# 面板开关只在 config.toml：CI 工作区没有配置文件时写最小 TOML，已有则把 web_enable 置 true。
+if [ ! -f config/config.toml ]; then
+  printf '[Web]\nweb_enable = true\n' >config/config.toml
+else
+  python - <<'PY'
+from src.config.store import ConfigStore
+
+store = ConfigStore('config/config.toml')
+store.read()
+store.set('Web', 'web_enable', True)
+store.write()
+PY
+fi
 
 # 启动面板。子 shell + & 让它脱离本脚本的控制终端；PID 记入全局供 cleanup 使用。
-nohup python -m src.web >"$PANEL_LOG" 2>&1 &
+nohup python -m src.main >"$PANEL_LOG" 2>&1 &
 panel_pid=$!
 echo "$panel_pid" >"$PID_FILE"
 

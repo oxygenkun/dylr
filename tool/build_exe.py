@@ -3,8 +3,8 @@
 #
 # DouyinLiveRecorder 可执行文件打包脚本（本地 / GitHub Actions 通用）
 #
-# 一次构建产出两个入口（CLI / Web），共享同一发布目录的依赖与资源；
-#     两个 exe 与 main.py / web.py 的对应关系见下方「产物布局」。
+# 一次构建产出唯一入口（纯录制 + 可选面板，均由 python -m src.main 分流）；
+#     exe 与 src/main.py 的对应关系见下方「产物布局」。
 #
 # 用法：
 #     python tool/build_exe.py             # 打包并生成 zip 产物
@@ -15,16 +15,16 @@
 #
 # 产物布局（onedir + contents_directory='_internal'）：
 #     dist/DouyinLiveRecorder/
-#     ├── DouyinLiveRecorder{,-Web}(.exe)   两个入口，见上表
+#     ├── DouyinLiveRecorder(.exe)          唯一入口（[Web] web_enable 决定是否带面板）
 #     ├── config/ · ffmpeg/ · node/              运行时资源，一律与 exe 同级（不进 _internal/）
 #     └── _internal/                             依赖包 + src/ 及打包资源（i18n/ web/ src/javascript）
 #     划分依据：经 __file__ 定位的资源随 contents_directory 收进 _internal/；经 sys.argv[0]/
 #     sys.executable 定位的（config/ ffmpeg/ node/）由本脚本在 COLLECT 之后复制到 exe 同级（见
 #     copy_external_binaries / _prepare_config_dir），二者经 src/logger._app_root() 收敛到同一目录。
-#     多入口共享依赖必须用 .spec 文件（命令行不支持多 Analysis），故本脚本动态生成 spec 后调用 PyInstaller。
+#     打包参数（datas / hiddenimports / excludes / COLLECT）较多，故本脚本动态生成 spec 后调用 PyInstaller。
 #
 # 产物：
-#     dist/DouyinLiveRecorder/                          发布目录（2 个 exe + 运行时目录 + _internal/ 依赖）
+#     dist/DouyinLiveRecorder/                          发布目录（1 个 exe + 运行时目录 + _internal/ 依赖）
 #     dist/DouyinLiveRecorder-v{ver}-{os}-{arch}{suffix}.zip  压缩包（普通构建 suffix 为空，--dual 为 -lite/-full）
 #
 import argparse
@@ -82,7 +82,7 @@ BLOAT_EXCLUDES: tuple[str, ...] = (
     "uvloop",  # 仅 POSIX 安装；Windows 无此包，写明以免将来换平台构建时漏排
     "zuvloop",
     "wsproto",
-    # 开发 / 测试工具链：都不在 requirements.txt 里、运行期不会导入，但一个误加的顶层 import 就
+    # 开发 / 测试工具链：不属于基础运行依赖、运行期不会导入，但一个误加的顶层 import 就
     # 会被静默带进对外分发的 zip（mypy 正是这样进来的）。显式排除把「误收集」变成「不可能发生」。
     "pytest",
     "_pytest",
@@ -97,7 +97,7 @@ BLOAT_EXCLUDES: tuple[str, ...] = (
     "coverage",
     "pip",
     "pygments",
-    "nodejs_wheel",  # 114MB：本仓 venv 里有而 requirements.txt 没有，误收集即炸体积
+    "nodejs_wheel",  # 114MB：本仓 venv 里有但不属于项目依赖，误收集即炸体积
     "py",
     "iniconfig",
     "pluggy",
@@ -140,32 +140,24 @@ hidden_common = [
     'src.support.i18n',                          # main.py 内部延迟导入
     'h2',                            # httpx[http2] 懒加载依赖
     'exejs',                         # PyExecJS 继任者，try/except 条件导入需显式收集
+    # 面板与录制同一个可执行文件：uvicorn 的协议/事件循环模块均按字符串导入，必须全量收集
+    *collect_submodules('uvicorn'),
 ]
-# uvicorn 的协议/事件循环模块均为运行时按字符串导入，必须全量收集
-hidden_web = hidden_common + collect_submodules('uvicorn')
 
 # 注意：PyInstaller 6.x 已移除 cipher / zipped_data / zipfiles，spec 语法为 v6 风格。
-# excludes 一律以 excludes_bloat 打头：两个入口共用同一个 _internal（COLLECT 合并去重），只在
-# 某一个 Analysis 上排除没有意义——只要 Web 收了它，CLI 的产物里照样带着。
+# excludes 一律以 excludes_bloat 打头；单入口产物里不要排除面板依赖（starlette/uvicorn 必须保留）。
 a_cli = Analysis(['src/main.py'], pathex=[SPECPATH], datas=datas, hiddenimports=hidden_common,
                  excludes=excludes_bloat + ['tkinter', 'customtkinter', 'pystray', 'PIL',
-                           'fastapi', 'uvicorn', 'starlette', 'brotlicffi', 'PySide6'],
-                 noarchive=False)
-a_web = Analysis(['src/web.py'], pathex=[SPECPATH], datas=[], hiddenimports=hidden_web,
-                 excludes=excludes_bloat + ['tkinter', 'customtkinter', 'pystray', 'PIL', 'PySide6', 'brotlicffi'],
+                           'fastapi', 'brotlicffi', 'PySide6'],
                  noarchive=False)
 
 pyz_cli = PYZ(a_cli.pure)
-pyz_web = PYZ(a_web.pure)
 
 exe_cli = EXE(pyz_cli, a_cli.scripts, [], exclude_binaries=True,
               name='{app}', console=True, contents_directory='_internal')
-exe_web = EXE(pyz_web, a_web.scripts, [], exclude_binaries=True,
-              name='{app}-Web', console=True, contents_directory='_internal')
 
 coll = COLLECT(
     exe_cli, a_cli.binaries, a_cli.datas,
-    exe_web, a_web.binaries, a_web.datas,
     strip=False, upx=False, name='{app}',
 )
 """
@@ -203,7 +195,7 @@ def preflight_syntax_check() -> None:
     print(f"[build] 预检通过：{len(targets)} 个源码文件语法正常")
 
 
-# 生成 spec 模板并调用 PyInstaller 完成 CLI/Web 两入口 onedir 打包
+# 生成 spec 模板并调用 PyInstaller 完成单入口 onedir 打包
 def run_pyinstaller() -> None:
     preflight_syntax_check()
     _ = SPEC_PATH.write_text(
@@ -248,7 +240,7 @@ def copy_external_binaries(include_runtime: bool = True) -> None:
 
 # 发布目录内**绝不允许**存在的凭据文件（SEV-2213）。与 .dockerignore 的 `config/config.ini` /
 # `config/URL_config.ini` 两条排除项同源——同一批文件、同一份敏感判定，只是作用在「外发 zip」通道上。
-CREDENTIAL_FILE_NAMES: tuple[str, ...] = ("config.ini", "URL_config.ini")
+CREDENTIAL_FILE_NAMES: tuple[str, ...] = ("config.ini", "config.toml", "URL_config.ini")
 
 
 def _sanitized_config_text(text: str, *, fallback_header: str = "") -> str:
@@ -698,6 +690,7 @@ def smoke_cli(timeout: int = 25) -> None:
 
 # 冒烟：启动 Web 后 HTTP 探活首页（IPv4+localhost），能返回即视为面板可用
 def smoke_web(timeout: int = 90, port: int = 8000) -> None:
+    # 单入口下没有第二个 exe：先把发布目录 config/config.toml 的 [Web] web_enable 置 true，探活后还原。
     # 探测地址同时覆盖 IPv4(127.0.0.1) 与主机名(localhost)：config 默认 web_host=0.0.0.0 时两者均可达；
     # 若 web_host 改为 localhost，macOS 会优先解析为 IPv6(::1)，仅探 IPv4 会误判失败。
     # timeout 取较大值：macOS arm64 冷启动加载 uvicorn/starlette/httpx 较重，40s 易超时（平台性能差异，
@@ -707,14 +700,19 @@ def smoke_web(timeout: int = 90, port: int = 8000) -> None:
     # 安全护栏（web.py C1）：未启用 Web 认证时拒绝监听非回环地址（config 默认 web_host=0.0.0.0）。冒烟只做
     # 本地 HTTP 探活、从不真正暴露到局域网，故注入 DOUYIN_WEB_ALLOW_INSECURE=1 放行——这正是该环境变量的
     # 设计用途；同时保留「真实绑定 0.0.0.0」的验证路径，比把 web_host 改成 127.0.0.1 更能暴露回归。
-    exe = RELEASE_DIR / f"{APP_NAME}-Web{EXE_SUFFIX}"
+    exe = RELEASE_DIR / f"{APP_NAME}{EXE_SUFFIX}"
+    config_file = RELEASE_DIR / "config" / "config.toml"
+    backup = config_file.read_bytes() if config_file.is_file() else None
+    config_file.parent.mkdir(parents=True, exist_ok=True)
+    config_file.write_text("[Web]\nweb_enable = true\n", encoding="utf-8")
     hosts = ("127.0.0.1", "localhost")
-    print(f"[smoke:web] 启动 {exe}，探活 http://127.0.0.1:{port}/（最长 {timeout}s）...")
-    proc = _launch(exe, extra_env={"DOUYIN_WEB_ALLOW_INSECURE": "1"})
+    print(f"[smoke:web] 以 web_enable=true 启动 {exe}，探活 http://127.0.0.1:{port}/（最长 {timeout}s）...")
     ok = False
-    start = time.time()
-    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+    proc: subprocess.Popen[str] | None = None
     try:
+        proc = _launch(exe, extra_env={"DOUYIN_WEB_ALLOW_INSECURE": "1"})
+        start = time.time()
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
         while time.time() - start < timeout and proc.poll() is None:
             for host in hosts:
                 try:
@@ -728,7 +726,12 @@ def smoke_web(timeout: int = 90, port: int = 8000) -> None:
                 break
             time.sleep(1)
     finally:
-        _finish(proc, "web")
+        if proc is not None:
+            _finish(proc, "web")
+        if backup is None:
+            config_file.unlink(missing_ok=True)
+        else:
+            config_file.write_bytes(backup)
     if not ok:
         raise RuntimeError(f"[smoke:web] {timeout}s 内 HTTP 探活失败（端口 {port} 被占用或启动过慢也会导致此错误）")
     print("[smoke:web] HTTP 探活成功 ✅")

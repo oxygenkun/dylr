@@ -116,7 +116,7 @@ def _enter_background_mode(logs_dir: str, host: str, port: int) -> None:
     print(i18n.tr("[{ts}] Web 管理面板进入后台运行模式", ts=ts))
     print(i18n.tr("控制台窗口已隐藏，访问地址: http://{host}:{port}", host=host, port=port))
     print(i18n.tr("日志文件: {log_path}", log_path=log_path))
-    print("如需恢复控制台显示，请在 config.ini 设置 web_show_console = true 后重启")
+    print("如需恢复控制台显示，请在 config.toml 设置 web_show_console = true 后重启")
     print(f"{'=' * 60}\n")
 
     if sys.platform == "win32":
@@ -138,8 +138,8 @@ def _is_loopback_host(host: str) -> bool:
     return is_loopback_bind_host(host)
 
 
-def main() -> None:
-    """Web 管理面板入口：启动录制引擎守护线程与 uvicorn HTTP 服务。"""
+def run() -> None:
+    """Web 面板模式：启动录制引擎守护线程与 uvicorn HTTP 服务（由 src.main 按配置调用）。"""
     import uvicorn
 
     from src.api.config import read_web_config
@@ -163,7 +163,7 @@ def main() -> None:
                 "[web] ❌ 拒绝启动: 未启用 Web 认证时不允许监听非回环地址 ({host})。请二选一:", host=host
             )
             print(_reject_msg)
-            print("      1. config.ini [Web] 节设置 web_auth_enable = true 并配置 web_password；")
+            print("      1. config.toml [Web] 节设置 web_auth_enable = true 并配置 web_password；")
             print("      2. 或设置 web_host = 127.0.0.1 仅限本机访问。")
             print("      如确需在无认证状态暴露到局域网，请设置环境变量 DOUYIN_WEB_ALLOW_INSECURE=1 后重启（不推荐）。")
             try:
@@ -176,11 +176,11 @@ def main() -> None:
             "① 读写全部配置（仅「自定义脚本执行命令」被禁止）；② 读取 logs 下的运行日志；"
             "③ 遍历并下载 downloads 下全部录制文件；④ 增删改直播间并可提交任意地址"
             "（存在被用作内网探测跳板的风险）；⑤ 启停录制。\n"
-            "建议立即在 config.ini [Web] 节设置 web_auth_enable = true 并配置 web_password，"
+            "建议立即在 config.toml [Web] 节设置 web_auth_enable = true 并配置 web_password，"
             "然后删除环境变量 DOUYIN_WEB_ALLOW_INSECURE 并重启。\n"
             "另请注意（M-10）：绑定 0.0.0.0/:: 的远程部署下，写操作另受 Origin 同源校验约束——"
-            "未在 config.ini 的 web_allowed_hosts 登记访问用主机名/IP 时，面板会「读得到、写不了」；"
-            "该登记须手工编辑 config.ini 完成。"
+            "未在 config.toml 的 web_allowed_hosts 登记访问用主机名/IP 时，面板会「读得到、写不了」；"
+            "该登记须手工编辑 config.toml 完成。"
         )
         print(_insecure_msg)
         try:
@@ -238,7 +238,3 @@ def main() -> None:
             close_clients()
         except Exception as e:
             print(i18n.tr("[web] 清理 HTTP 连接池失败: {type_name}: {e}", type_name=type(e).__name__, e=e))
-
-
-if __name__ == "__main__":
-    main()

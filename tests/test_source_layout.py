@@ -128,6 +128,9 @@ def test_cli_initializes_encoding_and_engine_in_order(monkeypatch: pytest.Monkey
     monkeypatch.setattr(console, "configure_encoding", lambda: calls.append("encoding"))
     monkeypatch.setattr(src.recording, "engine", engine, raising=False)
     monkeypatch.setitem(sys.modules, "src.recording.engine", engine)
+    # 统一入口的两处外部依赖：配置文件迁移与面板开关，替身避免读写真实配置。
+    monkeypatch.setattr("src.config.store.ensure_config_migrated", lambda *args, **kwargs: False)
+    monkeypatch.setattr("src.api.config.read_web_config", lambda _path: {"web_enable": False})
     if as_module:
         monkeypatch.delitem(sys.modules, "src.main", raising=False)
         runpy.run_module("src.main", run_name="__main__")

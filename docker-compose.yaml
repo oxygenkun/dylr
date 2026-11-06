@@ -1,24 +1,24 @@
 # =============================================================================
 # DouyinLiveRecorder Docker Compose 配置
-# 两种模式：recorder（默认，命令行录制）/ web（--profile web，管理面板）；Docker 不支持 GUI。
+# 唯一入口 python -m src.main：config/config.toml 的 [Web] web_enable 决定是否同时开管理面板
+# （false = 纯录制；true = 面板 + 录制，监听 8000）。Docker 不支持 GUI。
 #
 # 同目录 .env 可覆盖默认变量（compose 自动加载；仓库不含、已被 .gitignore 忽略，首次使用需自建）：
 #   TZ=America/New_York 改时区；APP_VERSION=4.6.0 固定镜像 LABEL 版本（须与 pyproject.toml
-#   的 [project].version 一致；不设则 LABEL version 为空，镜像内版本仍由 main.py /
+#   的 [project].version 一致；不设则 LABEL version 为空，镜像内版本仍由 src/main.py /
 #   src/api/routes.py 经 pyproject.toml 在运行时读取）。
 # 四个宿主机目录 config / downloads / logs / backup_config 首次 `docker compose up` 由 Docker
 #   自动创建。downloads / logs / backup_config 已被 .gitignore 与 .dockerignore 忽略；config/ 下
-#   唯一入库的文件是脱敏后的 config.ini 基线模板，本机填入的 Cookie / 代理 / Web 密码不得提交，
+#   config.toml 含凭据，已被 .gitignore/.dockerignore 排除，本机填入的 Cookie / 代理 / Web 密码不得提交，
 #   且 config/*.ini 已被 .dockerignore 排除、不进镜像。容器侧同名目录由 Dockerfile 的
 #   `mkdir -p logs downloads backup_config` 预建并归属 recorder。
 # =============================================================================
 
 services:
   # ---------------------------------------------------------------
-  # 主录制服务 - 持续监测并录制直播（main.py，纯命令行，不监听端口）
-  # YAML 锚点 &recorder 被 web 复用，只做按需覆盖。
+  # 录制服务：持续监测并录制直播；面板按 web_enable 叠加（进程仍是 src.main）
   # ---------------------------------------------------------------
-  recorder: &recorder
+  recorder:
     # 镜像名与 Dockerfile LABEL url、pyproject [project.urls] 同源（y123ao6）；pull_policy: build
     # 下它只作本地 tag 与 compose push 命名，MIN-18 语义不变
     image: y123ao6/douyin-live-recorder:latest
@@ -39,11 +39,11 @@ services:
 
     # 注入容器运行时行为；除 TZ 外均与 Dockerfile 的 ENV 同源，TZ 与 ARG TZ 默认一致、可在 .env 覆盖
     environment:
-      - PYTHONUNBUFFERED=1
-      - PYTHONDONTWRITEBYTECODE=1
-      - PYTHONIOENCODING=utf-8
-      - TZ=Asia/Shanghai
-      - TERM=xterm-256color
+      PYTHONUNBUFFERED: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONIOENCODING: utf-8
+      TZ: Asia/Shanghai
+      TERM: xterm-256color
 
     # 从同目录 .env 加载额外变量；文件不存在也不报错
     env_file:
@@ -64,19 +64,28 @@ services:
 
     # 卷挂载（宿主机:容器:rw）；四个目录均不进镜像，由这里接进容器
     volumes:
-      # config：config.ini / URL_config.ini（含凭据，改一次即生效）；downloads：视频 / 音频 / 弹幕 SRT 落盘处
+      # config：config.toml / URL_config.ini（含凭据，改一次即生效）；downloads：视频 / 音频 / 弹幕 SRT 落盘处
       # logs：streamget.log 等运行日志；backup_config：运行时修改 config 的自动备份
       - ./config:/app/config:rw
       - ./downloads:/app/downloads:rw
       - ./logs:/app/logs:rw
       - ./backup_config:/app/backup_config:rw
 
+    # 端口映射（宿主机:容器），与 Dockerfile EXPOSE 8000 对应；只有 web_enable = true 时容器才真正
+    # 监听，纯录制模式下该端口无人监听（连接被拒，不影响录制）。
+    # 默认只绑本机回环："8000:8000" 等价于 "0.0.0.0:8000:8000"，会把面板暴露到宿主机**所有**
+    # 网卡，而 web_auth_enable 默认 false，组合后果是「无认证面板直接上网」（与 web.py 那条
+    # 「检测到不安全绑定」启动告警同源）。需要局域网/公网访问时显式改成 "0.0.0.0:8000:8000"
+    # 并同步开启 web_auth_enable——有意暴露必须是显式动作。
+    ports:
+      - "127.0.0.1:8000:8000"
+
     # 重启策略：除非手动停止，否则自动重启（网络抖动 / 直播掉线后恢复）
     restart: unless-stopped
 
-    # 健康检查：同时兼容 main.py 与 web.py 两种模式
+    # 健康检查：单入口 src.main（面板模式同一进程，不切入口）
     healthcheck:
-      test: ["CMD-SHELL", "pgrep -f 'python -m src[.](main|web)' || exit 1"]
+      test: ["CMD-SHELL", "pgrep -f 'python -m src[.]main' || exit 1"]
       interval: 30s
       timeout: 10s
       retries: 3
@@ -98,24 +107,3 @@ services:
       options:
         max-size: "50m"
         max-file: "3"
-
-  # ---------------------------------------------------------------
-  # Web 管理面板模式（web.py = 录制引擎守护线程 + Starlette/uvicorn）
-  # 启动：docker compose --profile web up -d
-  # 重要：web.py 默认监听 127.0.0.1:8000，容器内必须在 config/config.ini 的 [Web] 节设置
-  #   web_host = 0.0.0.0，宿主机才能经 http://localhost:8000 访问面板；一旦监听 0.0.0.0，
-  #   强烈建议同时设 web_auth_enable = true 并配置密码。
-  # ---------------------------------------------------------------
-  web:
-    <<: *recorder
-    container_name: douyin-live-recorder-web
-    profiles:
-      - web
-    entrypoint: ["python", "-m", "src.web"]
-    # 端口映射仅 Web 模式需要（宿主机:容器），与 Dockerfile EXPOSE 8000 对应。
-    # 默认只绑本机回环："8000:8000" 等价于 "0.0.0.0:8000:8000"，会把面板暴露到宿主机**所有**
-    # 网卡，而 web_auth_enable 默认 false，组合后果是「无认证面板直接上网」（与 web.py 那条
-    # 「检测到不安全绑定」启动告警同源）。需要局域网/公网访问时显式改成 "0.0.0.0:8000:8000"
-    # 并同步开启 web_auth_enable——有意暴露必须是显式动作。
-    ports:
-      - "127.0.0.1:8000:8000"

@@ -22,11 +22,13 @@ def test_image_installs_locked_base_dependencies_only() -> None:
     assert "libegl1" not in instructions
 
 
-def test_compose_only_defines_cli_and_web_services() -> None:
+def test_compose_defines_single_entry_service() -> None:
     compose = yaml.safe_load((ROOT / "docker-compose.yaml").read_text(encoding="utf-8"))
-    assert set(compose["services"]) == {"recorder", "web"}
-    for service in compose["services"].values():
-        assert "INSTALL_GUI" not in service["build"].get("args", {})
+    assert set(compose["services"]) == {"recorder"}
+    service = compose["services"]["recorder"]
+    assert "INSTALL_GUI" not in service["build"].get("args", {})
+    # 面板开关只在 config.toml，compose 不得再注入覆盖入口行为的变量
+    assert "DOUYIN_WEB_ENABLE" not in service.get("environment", {})
 
 
 def test_docker_context_contains_lock() -> None:

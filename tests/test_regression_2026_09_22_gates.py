@@ -280,15 +280,11 @@ def test_prepare_url_config_reentrant_with_sanitizer_output() -> None:
     )
 
 
-def test_exe_names_share_one_source() -> None:
-    # MID-2200 定点锁：两个 exe（CLI / Web）的名字必须同源于 APP_NAME——分别写死会在改名时
-    # 漏改一个（产物半新半旧且不易察觉）。
+def test_exe_name_derives_from_app_name() -> None:
+    # MID-2200 定点锁：唯一 exe 的名字必须由 APP_NAME 派生——写死会在改名时漂移。
     build_exe = _load_build_exe()
-    template = build_exe.SPEC_TEMPLATE
-    suffixes = re.findall(r"name='\{app\}([^']*)'", template)
-    assert sorted(suffixes) == sorted(["", "-Web", ""]), (
-        f"exe 名称不再全部由 {{app}} 派生（实际后缀 {suffixes}）：改名时会漂移"
-    )
+    suffixes = re.findall(r"name='\{app\}([^']*)'", build_exe.SPEC_TEMPLATE)
+    assert suffixes and set(suffixes) == {""}, f"exe 名称不再由 {{app}} 派生（实际后缀 {suffixes}）：改名时会漂移"
 
 
 def test_smoke_fatal_markers_cover_import_failures() -> None:

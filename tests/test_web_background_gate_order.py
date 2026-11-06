@@ -32,7 +32,7 @@ _NON_LOOPBACK_HOST = "192.168.7.20"
 
 
 class _BackgroundCalled(RuntimeError):
-    # 正向对照（闸门放行）用的哨兵：web.main() 只有穿过安全闸门才会调用 _enter_background_mode，
+    # 正向对照（闸门放行）用的哨兵：web.run() 只有穿过安全闸门才会调用 _enter_background_mode，
     # 桩在此抛出即让函数停在「录制引擎线程 + uvicorn 创建」之前——那两段既非被测范围，
     # 也不该在测试里真起服务。
     pass
@@ -51,12 +51,13 @@ class _RecordingLogger:
 
 
 class _FakeEngineModule:
-    # 代替 `main` 模块对象：web.main() 在安全闸门之前只读这四个路径属性
+    # 代替 `main` 模块对象：web.run() 在安全闸门之前只读这四个路径属性
     # （config_file 是 read_web_config 的入参，script_path 决定 logs/ 落点）。
     # 其余属性/方法留到放行分支才有意义，这里给最小可调用形态即可。
     def __init__(self, root: Path, config_file: Path) -> None:
         self.script_path = str(root)
         self.config_file = str(config_file)
+        self.legacy_config_file = str(root / "config.ini.legacy")
         self.url_config_file = str(root / "URL_config.ini")
         self.default_path = str(root / "downloads")
         self.recording_enabled = True
@@ -72,7 +73,7 @@ class _FakeEngineModule:
 
 
 class _DriveResult:
-    # 一次 web.main() 驱动的全部可观测面。
+    # 一次 web.run() 驱动的全部可观测面。
     def __init__(self) -> None:
         self.console = io.StringIO()  # 背景化**之前**的真实控制台替身
         self.redirected = io.StringIO()  # 背景化**之后**才存在的日志文件流替身
@@ -86,7 +87,7 @@ def _write_web_config(tmp_path: Path, host: str) -> Path:
     # web_auth_enable=false + 非回环 web_host 才触发闸门。
     cfg = tmp_path / "config.ini"
     cfg.write_text(
-        f"[Web]\nweb_host = {host}\nweb_port = 8000\nweb_auth_enable = false\nweb_show_console = false\n",
+        f'[Web]\nweb_host = "{host}"\nweb_port = 8000\nweb_auth_enable = false\nweb_show_console = false\n',
         encoding="utf-8",
     )
     return cfg
@@ -129,7 +130,7 @@ def _drive_web_main(
         monkeypatch.setenv("DOUYIN_WEB_ALLOW_INSECURE", allow_insecure_env)
 
     try:
-        web.main()
+        web.run()
     except (SystemExit, _BackgroundCalled) as exc:
         # 不接 BaseException：KeyboardInterrupt 必须照常冒出去，否则 Ctrl+C 停不下测试会话。
         res.error = exc
@@ -207,8 +208,8 @@ def test_security_gate_precedes_backgrounding_in_source() -> None:
     # 不必从「控制台为空 + 背景化被调用」反推接线被改。
     source = Path(str(web.__file__)).read_text(encoding="utf-8")
     tree = ast.parse(source)
-    fn = next((node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "main"), None)
-    assert fn is not None, "src/web.py 的入口函数 main 结构变化，本锁需同步"
+    fn = next((node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "run"), None)
+    assert fn is not None, "src/web.py 的面板启动函数 run 结构变化，本锁需同步"
 
     gate_line, exit_line, background_line = _call_sites(fn)
     assert gate_line > 0 and exit_line > 0 and background_line > 0, "找不到闸门判定/退出/背景化三个调用点"

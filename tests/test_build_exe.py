@@ -516,18 +516,19 @@ def test_bloat_excludes_still_cover_the_measured_bloat() -> None:
         "PIL._imagingft",  # 2.07MB
         "httptools",  # 0.17MB
         "watchfiles",  # 0.61MB
-        "nodejs_wheel",  # 114MB：venv 里有、requirements.txt 没有
+        "nodejs_wheel",  # 114MB：venv 里有、不属于项目依赖
     ):
         assert required in build_exe.BLOAT_EXCLUDES, f"体积排除清单缺 {required!r}，产物体积将回弹"
 
 
-def test_every_analysis_applies_the_bloat_excludes() -> None:
+def test_single_analysis_applies_the_bloat_excludes() -> None:
     rendered = build_exe.SPEC_TEMPLATE.format(
         app=build_exe.APP_NAME,
         bloat_excludes=list(build_exe.BLOAT_EXCLUDES),
         i18n_datas=build_exe.i18n_datas_entries(),
     )
-    assert rendered.count("excludes=excludes_bloat +") == 2, "两个 Analysis 必须都挂上排除清单"
+    assert rendered.count("Analysis(") == 1, "单入口产物只应有一个 Analysis"
+    assert rendered.count("excludes=excludes_bloat +") == 1, "唯一 Analysis 必须挂上排除清单"
     spec = ast.parse(rendered)
     datas = next(node for node in spec.body if isinstance(node, ast.Assign) and node.targets[0].id == "datas")
     entries = [ast.literal_eval(item) for item in datas.value.elts if isinstance(item, ast.Tuple)]

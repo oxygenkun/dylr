@@ -30,11 +30,12 @@ _ENV_KEY = "DOUYIN_WEB_AUTO_START_RECORDING"
 
 
 class _FakeEngineModule:
-    # 代替 `main` 模块对象：web.main() 只读四个路径属性，写 recording_enabled，
+    # 代替 `main` 模块对象：web.run() 只读四个路径属性，写 recording_enabled，
     # 再在退出链调用两个收尾函数。main.main（录制主循环）被守护线程调用，直接返回。
     def __init__(self, root: Path, config_file: Path) -> None:
         self.script_path = str(root)
         self.config_file = str(config_file)
+        self.legacy_config_file = str(root / "config.ini.legacy")
         self.url_config_file = str(root / "URL_config.ini")
         self.default_path = str(root / "downloads")
         self.recording_enabled = True  # main.py 的模块默认值
@@ -54,7 +55,7 @@ class _FakeEngineModule:
 
 
 class _FakeServer:
-    # uvicorn.Server 替身：serve() 是协程且立即返回，于是 web.main() 走完整个启动接线
+    # uvicorn.Server 替身：serve() 是协程且立即返回，于是 web.run() 走完整个启动接线
     # 后进 finally 收尾，不需要哨兵异常，也不会真起 HTTP 服务。
     def __init__(self, config: Any) -> None:
         self.config = config
@@ -69,7 +70,7 @@ def _write_web_config(tmp_path: Path) -> Path:
     # web_show_console=true 跳过控制台隐藏。
     cfg = tmp_path / "config.ini"
     cfg.write_text(
-        "[Web]\nweb_host = 127.0.0.1\nweb_port = 8000\nweb_auth_enable = false\nweb_show_console = true\n",
+        '[Web]\nweb_host = "127.0.0.1"\nweb_port = 8000\nweb_auth_enable = false\nweb_show_console = true\n',
         encoding="utf-8",
     )
     return cfg
@@ -97,7 +98,7 @@ def _run_web_main(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, env_value: st
         monkeypatch.setenv(_ENV_KEY, env_value)
 
     try:
-        web.main()
+        web.run()
     finally:
         recorder_thread = getattr(engine, "_recorder_thread", None)
         if recorder_thread is not None:

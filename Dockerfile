@@ -16,7 +16,7 @@ FROM ghcr.io/astral-sh/uv:0.10.9@sha256:10902f58a1606787602f303954cea099626a4adb
 FROM python:3.14-slim-bookworm AS builder
 COPY --from=uv /uv /uvx /usr/local/bin/
 
-# 无缓冲输出便于容器日志、禁止写字节码减小体积、关闭 pip 缓存与版本检查
+# 无缓冲输出便于容器日志、禁止写字节码减小体积；uv 使用系统 Python 与 BuildKit 缓存
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     UV_PROJECT_ENVIRONMENT=/opt/venv \
@@ -211,15 +211,13 @@ RUN mkdir -p logs downloads backup_config \
 
 USER recorder
 
-# 健康检查：经 pgrep 匹配进程命令行，同时兼容 main.py（命令行）与 web.py（面板）两种模式；
-# compose 的 web 服务继承此判定。
+# 健康检查：唯一入口 python -m src.main（面板模式也是同一进程）
 HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
-    CMD pgrep -f 'python -m src[.](main|web)' || exit 1
+    CMD pgrep -f 'python -m src[.]main' || exit 1
 
-# Web 管理面板模式端口。注意：web.py 默认监听 127.0.0.1，容器内需在 config/config.ini 的
-# [Web] 节将 web_host 设为 0.0.0.0，宿主机端口映射才能访问到面板。
+# Web 管理面板端口。注意：面板默认监听 127.0.0.1，容器内需在 config/config.toml 的
+# [Web] 节将 web_host 设为 0.0.0.0 并设 web_enable = true，宿主机端口映射才能访问到面板。
 EXPOSE 8000
 
-# 默认命令行录制模式；Web 面板模式改 command 为 python -m src.web
-# （docker-compose.yaml 提供 web profile 服务）
+# 唯一入口；是否同时启动面板由 config/config.toml 的 [Web] web_enable 决定
 ENTRYPOINT ["python", "-m", "src.main"]
