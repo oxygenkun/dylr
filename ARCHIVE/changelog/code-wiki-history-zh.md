@@ -1,10 +1,10 @@
-# CODE_WIKI 更新日志归档（简体中文卷）
+# 历史实现记录归档（简体中文卷）
 
-> 本卷由 `CODE_WIKI.md` 的「更新日志」于 2026-09-28 整卷迁出，条目正文逐字保留；根文档只留当前发布周期条目 + 本卷指针。
-> 收录 164 条：2026-05-17 ~ 2026-09-24。
+> 本卷由 `CODE_WIKI.md` 的「更新日志」于 2026-09-28 首次整卷迁出，后续追加归档；历史条目正文保留。
+> 收录 193 条版本记录：2026-05-17 ~ 2026-10-01（含卷末追加的 29 条；原目录索引列首次迁出的 164 条）。
 > 回补口径：上一轮文档粗剪脚本把部分句子截成行尾 `…` 的半句，本卷按 `.workbuddy/docold`（2026-09-25 基线）对残句做**逐行前缀匹配**回补，共回补 659 行（唯一匹配失败 136 行、有歧义 0 行保持原样）。
 > 刻意**不做**的事：不复活历史上被有意删除的条目，不回填已外迁到 `docs/agent-reference/changelog-file-inventories.md` 的文件清单块——整块回填会撤销那些有意的整理，故只补残句。
-> 归档卷不参与镜像构建产物，运行时不读取；根文档入口：[CODE_WIKI.md](../../CODE_WIKI.md)。
+> 归档卷不参与镜像构建产物，运行时不读取；活动导航：[实现变更记录](../../docs/changelog/implementation-notes.md) · [文档索引](../../docs/README.md) · [历史文件清单](../agent-reference/changelog-file-inventories.md)。
 
 ## 目录索引
 
@@ -4662,7 +4662,7 @@ black 全仓 134 文件全绿、isort 全绿、`check_annotations` 全通过、`
 
 ### v4.4.0 (2026-09-30) — 全工作区代码审查（产出 `CODE_REVIEW_2026-09-30.md`）：18 批逐文件深审 + Mimosa 深扫交叉证据，严重 2 / 中等 51 / 轻微 160
 
-> 用户口径：对本工作空间全部源代码（Python/JavaScript/Node.js/HTML/CSS/CI 等，排除 node_modules、dist、build 等第三方依赖目录与构建产物）做全面审查，重点排查代码质量、潜在缺陷、安全漏洞与逻辑错误，逐文件记录、按严重程度分类成正式报告。报告落盘为根目录 [`CODE_REVIEW_2026-09-30.md`](CODE_REVIEW_2026-09-30.md)。
+> 用户口径：对本工作空间全部源代码（Python/JavaScript/Node.js/HTML/CSS/CI 等，排除 node_modules、dist、build 等第三方依赖目录与构建产物）做全面审查，重点排查代码质量、潜在缺陷、安全漏洞与逻辑错误，逐文件记录、按严重程度分类成正式报告。报告落盘为根目录 [`CODE_REVIEW_2026-09-30.md`](../worklog/CODE_REVIEW_2026-09-30.md)。
 
 | 项 | 内容 |
 | --- | --- |
@@ -5122,7 +5122,7 @@ black 全仓 134 文件全绿、isort 全绿、`check_annotations` 全通过、`
 - **本轮未做（诚实边界）**：`requirements.txt` 与 `pyproject.toml` 未新增任何依赖（无需求）；`config/config.ini` 未写入
   （含凭据、被忽略，且无新增键需求）；`README*.md` 未改动（用户 09-27 口径）；`docs/agent-reference/session-learnings.md`
   仍是 `docs/agent-reference/` 内唯一 LF-only 文件（finding 7 遗留，不在本轮范围）。
-> 路径级明细已逐字外迁至 [docs/agent-reference/changelog-file-inventories.md](docs/agent-reference/changelog-file-inventories.md)（条目：v4.3.0-dev (2026-09-27) — 本日改动按模块分类总览：发布链四处修复 + finding 4/5/6 + 四文档体积整理 + AGENTS 精简 + 元数据一致性同步｜小节：本日改动按模块分类总览（新增 / 修改 / 删除 + 文件路径））。
+> 路径级明细已逐字外迁至 [docs/agent-reference/changelog-file-inventories.md](../agent-reference/changelog-file-inventories.md)（条目：v4.3.0-dev (2026-09-27) — 本日改动按模块分类总览：发布链四处修复 + finding 4/5/6 + 四文档体积整理 + AGENTS 精简 + 元数据一致性同步｜小节：本日改动按模块分类总览（新增 / 修改 / 删除 + 文件路径））。
 
 ### v4.3.0-dev (2026-09-27) — `AGENTS.md` 体积精简：三处真重复消除 + 读数指针化；实测结论是「根文件已达约束密度下限」
 
@@ -5401,7 +5401,7 @@ black 全仓 134 文件全绿、isort 全绿、`check_annotations` 全通过、`
 
 **涉及文件（按模块分类）**：
 
-> 明细清单已逐字外迁至 [docs/agent-reference/changelog-file-inventories.md](docs/agent-reference/changelog-file-inventories.md)（条目：v4.3.0-dev (2026-09-26) — CI typecheck 检查补装固定版本 pytest，并修掉 `tests/test_proto_runtime_compat.py` 的 `[return]` 误报：消除「本机绿、CI 红」的检查面漂移（纯 CI / 测试改动，零运行期变更）｜小节：涉及文件（按模块分类））。
+> 明细清单已逐字外迁至 [docs/agent-reference/changelog-file-inventories.md](../agent-reference/changelog-file-inventories.md)（条目：v4.3.0-dev (2026-09-26) — CI typecheck 检查补装固定版本 pytest，并修掉 `tests/test_proto_runtime_compat.py` 的 `[return]` 误报：消除「本机绿、CI 红」的检查面漂移（纯 CI / 测试改动，零运行期变更）｜小节：涉及文件（按模块分类））。
 
 **验证**：`mypy`（无参）与 `mypy --platform linux` 均 Success 158 files（本机 pytest 9.1.1，与 CI 新口径同版本）；`mypy --no-site-packages` 下原 `[return]` 已消失，仅剩 5 条剥离噪声；`basedpyright tests/test_proto_runtime_compat.py` 0 errors / 0 warnings / 0 notes；`black --check` unchanged；`pytest tests/test_proto_runtime_compat.py` 4 passed；`yaml.safe_load` 解析 `ci.yml` 通过且 outputs / steps 结构如预期；改动文件行尾形态不变（`ci.yml` 纯 LF，`AGENTS.md` 与该测试文件纯 CRLF）。
 
@@ -5414,7 +5414,7 @@ black 全仓 134 文件全绿、isort 全绿、`check_annotations` 全通过、`
 
 **涉及文件（按模块分类）**：
 
-> 明细清单已逐字外迁至 [docs/agent-reference/changelog-file-inventories.md](docs/agent-reference/changelog-file-inventories.md)（条目：v4.3.0-dev (2026-09-26) — 仓库元数据与文档同源同步：依赖表 / 目录树 / egg-info / 忽略清单对齐，清理已删除模块 `weverse_auth` 的残留记载（纯元数据与文档改动，零运行期代码变更）｜小节：涉及文件（按模块分类））。
+> 明细清单已逐字外迁至 [docs/agent-reference/changelog-file-inventories.md](../agent-reference/changelog-file-inventories.md)（条目：v4.3.0-dev (2026-09-26) — 仓库元数据与文档同源同步：依赖表 / 目录树 / egg-info / 忽略清单对齐，清理已删除模块 `weverse_auth` 的残留记载（纯元数据与文档改动，零运行期代码变更）｜小节：涉及文件（按模块分类））。
 
 **验证**：`scripts/check_version.py` rc=0（`pyproject.toml` 为版本唯一事实源，四处消费方均动态读取）；`scripts/check_runtime_pins.py` rc=0；`pytest tests/test_regression_2026_09_22_gates.py tests/test_build_exe.py` 全绿（含「requirements.txt 与 pyproject 包名集合相等」回归锁）；`pytest tests/test_i18n.py tests/test_i18n_migration.py tests/test_i18n_tr.py tests/test_frontend_*.py` 56 passed；`node --test tests/frontend/*.mjs` 通过。
 
@@ -5422,5 +5422,5 @@ black 全仓 134 文件全绿、isort 全绿、`check_annotations` 全通过、`
 
 ### 更早的更新日志（已归档）
 
-164 条 2026-05-17 ~ 2026-09-24 的逐日开发记录已于 2026-09-28 逐字迁出至 [code-wiki-history-zh.md](docs/changelog/code-wiki-history-zh.md)；该卷同时按 `.workbuddy/docold` 基线回补了上一轮粗剪留下的行尾 `…` / 句中截断（口径见其卷首）。
+164 条 2026-05-17 ~ 2026-09-24 的逐日开发记录已于 2026-09-28 逐字迁出至 [code-wiki-history-zh.md](code-wiki-history-zh.md)；该卷同时按 `.workbuddy/docold` 基线回补了上一轮粗剪留下的行尾 `…` / 句中截断（口径见其卷首）。
 迁出原因：仅「更新日志」一节就占本文件 68.6% 的字符数（242,626 / 353,821）。根文档只保留当前发布周期的条目 + 本指针，正文才恢复可读。

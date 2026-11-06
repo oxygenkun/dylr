@@ -751,7 +751,7 @@ class TestHuyaLetterRoomId:
         assert seen and "roomid=6030242" in seen[0], seen
 
     def test_letter_room_regex_matches_twin_copy(self) -> None:
-        # 反向漂移防线：主实现的正则串与孪生副本 tool/douyin_live_recorder_standalone.py 的
+        # 反向漂移防线：主实现的正则串与孪生副本 tool/dylr_standalone.py 的
         # _HUYA_PROFILE_ROOM_RE 必须逐字一致。用 AST 取字符串常量而非扫源码文本（两处的引号/转义
         # 形态不同，文本比对会自欺）。
         import ast
@@ -768,7 +768,7 @@ class TestHuyaLetterRoomId:
             }
 
         main_patterns = patterns(root / "src" / "streams/spider.py")
-        twin_patterns = patterns(root / "tool" / "douyin_live_recorder_standalone.py")
+        twin_patterns = patterns(root / "tool" / "dylr_standalone.py")
         assert main_patterns, "主实现里找不到 ProfileRoom 正则常量"
         assert main_patterns == twin_patterns, f"两副本正则串不一致: {main_patterns} != {twin_patterns}"
 

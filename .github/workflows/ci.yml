@@ -412,10 +412,10 @@ jobs:
           files: coverage.xml
           token: ${{ secrets.CODECOV_TOKEN }}
           fail_ci_if_error: false
-          # 2026-10-04：slug 从上游 ihmily 改指本仓库 y123ao6。前置条件：Codecov 须为
-          # y123ao6/DouyinLiveRecorder 建好项目且 CODECOV_TOKEN 对该项目有效——未配置前上报会
+          # 2026-10-04：slug 从上游 ihmily 改指当前仓库。前置条件：Codecov 须为
+          # oxygenkun/dylr 建好项目且 CODECOV_TOKEN 对该项目有效——未配置前上报会
           # 落空（fail_ci_if_error: false 仅保证不反噬 CI 检查，数据不会被接收）。
-          slug: y123ao6/DouyinLiveRecorder
+          slug: oxygenkun/dylr
 
       # ── Web 面板 HTTP 冒烟（运行中的真实服务，非 TestClient）──────────────
       # 动机：pytest 全程用 FastAPI TestClient 且注入了 fake main，从不监听端口——

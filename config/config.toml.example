@@ -1,4 +1,4 @@
-# DouyinLiveRecorder 配置模板（TOML）
+# dylr 配置模板（TOML）
 # 复制为 config/config.toml 后按需填写；该文件含凭据，不应提交到版本库。
 # 旧版 config.ini 在首次启动时也会自动迁移为 config.toml（原文件改名为 config.ini.migrated）。
 

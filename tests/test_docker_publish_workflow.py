@@ -4,7 +4,7 @@
 # 构建 job 的 runner 与 --platform 一一对应、凭据只能是自动 GITHUB_TOKEN、分架构 digest 必须提升
 # 为 job 级 output——而工作流文件不在任何检查的判据面里：改坏它不会有测试红，只会在下一次发版时
 # 炸成「build 全绿、清单合成报无效引用」这种最难归因的形态。规格依据：
-# docs/worklog/PROPOSAL_2026-10-02_linux-arm64-ffmpeg.md §五.1、测试面 T-8。
+# ARCHIVE/worklog/PROPOSAL_2026-10-02_linux-arm64-ffmpeg.md §五.1、测试面 T-8。
 #
 # 纯静态结构锁而非行为锁：本机既无 docker 也无推送权限，端到端只能在 CI 首跑时验证，故判据全取
 # 「谁被调用、带不带凭据、引用了哪个 output」这类不变量，不钉行号也不钉排版。
@@ -282,9 +282,9 @@ def test_image_version_still_comes_from_build_arg(data: dict[Any, Any]) -> None:
 
 
 def test_image_name_is_derived_from_the_running_owner(data: dict[Any, Any]) -> None:
-    # 镜像名一律 ghcr.io/<owner 小写>/douyin-live-recorder：用仓库 owner 而不是上游命名空间，
+    # 镜像名一律 ghcr.io/<owner 小写>/dylr：用仓库 owner 而不是上游命名空间，
     # fork 才推得进自己的包；GHCR 强制小写，owner 带大写时推送会直接 4xx，故派生链里必须有小写化。
-    run = _run_containing(_job(data, "prepare"), "prepare", "douyin-live-recorder")
+    run = _run_containing(_job(data, "prepare"), "prepare", "dylr")
     assert "GITHUB_REPOSITORY_OWNER" in run, "镜像名必须由 GITHUB_REPOSITORY_OWNER 派生，不得写死任何命名空间"
     assert "[:upper:]" in run, "owner 必须显式转小写后再拼镜像名"
 

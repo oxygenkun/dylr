@@ -11,7 +11,7 @@
 
 [目录与文件职责参考](docs/agent-reference/project-structure.md)。`src/` 根层保留入口、包初始化与资源；运行时代码按职责放入子包：support 共用支撑、app 生命周期、config 配置、network 网络、recording 录制、streams 视频取流、danmaku 弹幕、monitors 账号监控、notifications 通知、runtime 外部程序与 JS 执行、api Web 后端。维护与构建工具统一在 `tool/`，前端静态资源在 `web/`；根目录 `config/` 是运行期数据，区别于源码包 `src/config/`。唯一入口为 `src.main:main`（`python -m src.main`），是否同时启动 Web 面板由 `[Web] web_enable` 决定；`src.web` 只是面板实现模块，不提供启动入口。
 
-README.md / README_EN.md 面向使用与部署；开发指南、常见问题（Q & A）和更新记录放在 `docs/` 独立文档中，README 仅保留入口链接。
+README.md 面向使用与部署；[文档导航](docs/README.md) 统一路由开发指南、常见问题（Q & A）、架构专题与更新记录。实现说明按主题在 `docs/architecture/` 维护，不再维护根目录架构长文；目录清单只在目录参考维护，重复内容合并到对应专题，其余文档链接引用。`ARCHIVE/` 存放历史审查、提案、旧发布说明与不兼容的旧版本文档：默认不扫描、不全文检索、不作为事实源，仅在用户明确要求追溯历史时按精确路径读取单个文件。
 
 ## 项目级 Skill
 
@@ -105,7 +105,7 @@ uv run --locked --extra dev python tool/check_coverage.py
 1. 完成授权范围，报告实际检查及未执行项；仅在需要 commit 时运行 pytest（0 warnings）与覆盖率检查，不把编辑前的结果当作编辑后的证据。
 2. 录制/选源/ffmpeg/平台解析改动在有条件时对受影响平台做增量真机验证，报告脚本、脱敏 URL、PASS/WARN/FAIL 和适用读数；无外网或无活房间则明确未验证范围及用户复验方法，不声称真机已通过。
 3. 保留受影响的回归用例；缺少必要覆盖时补测试，按提交时机运行。
-4. 用户可见行为、配置/依赖、架构或长期约定变化更新相应文档；重大变化追加 CODE_WIKI 更新日志。小修、测试、注释不强制多处登记，长期规则只在本文维护。
+4. 用户可见行为、配置/依赖、架构或长期约定变化更新相应文档；重大变化追加 [实现变更记录](docs/changelog/implementation-notes.md)。小修、测试、注释不强制多处登记，长期规则只在本文维护。
 5. 按清理节核对本次临时产物和 git diff，不动用户已有变更。
 6. 最终回复说明改动、验证和实质限制；不强制写工具私有记忆、每日流水账或固定回滚模板。
 
@@ -121,7 +121,7 @@ uv run --locked --extra dev python tool/check_coverage.py
 
 ### 调度中枢 src/recording/scheduler.py
 
-- 并发由 ConcurrencyScheduler 管理：最大同时录制数为 0 时动态调速，非 0 时固定并发；动态容量不低于配置下限。ResizableSemaphore 允许 0 暂停，缩容不回收在用槽位。
+- 并发由 ConcurrencyScheduler 管理：最大同时录制数为 0 时动态调速，非 0 时固定并发；动态容量不低于调度器的安全下限 `min_capacity`；错误背压时可低于网络线程数配置值。ResizableSemaphore 允许 0 暂停，缩容不回收在用槽位。
 - host 熔断 open→half-open 只放一个带租约探针，超时可重授，避免未上报轮次永久占住探针。计数增量维护，不在持锁热路径反复 sum(deque)。
 - start_record 先初始化 record_host，再在平台分派前 allow 预检；网络与录制信号量保持分工，录制槽必须在 Popen 前 acquire，启动及运行全部包在 try/finally 中释放。
 

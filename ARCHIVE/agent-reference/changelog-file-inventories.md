@@ -1,8 +1,9 @@
-# 更新日志外迁清单（CODE_WIKI.md 附录）
+# 更新日志外迁清单（早期实现记录附录）
 
-> 本文件收 CODE_WIKI.md 更新日志里「涉及文件（按模块分类）」一类的历史文件清单，逐字搬移、未作改写。
+> 本文件收早期实现记录（原根目录架构文档更新日志）里「涉及文件（按模块分类）」一类的历史文件清单，逐字搬移、未作改写。
 > 原条目处保留小节标题，并以一行指针指向这里；条目名与小节名即指针里标注的定位。
 > 生成于 2026-09-27 的文档体积整理（源文档同日压缩前后对照见 .workbuddy/docold）。
+> 活动导航：[实现变更记录](../../docs/changelog/implementation-notes.md) · [历史归档](../changelog/code-wiki-history-zh.md) · [文档索引](../../docs/README.md)。历史清单中的路径与描述仅代表当时状态。
 
 
 ## v4.3.0-dev (2026-09-26) — CI typecheck 检查补装固定版本 pytest，并修掉 `tests/test_proto_runtime_compat.py` 的 `[return]` 误报：消除「本机绿、CI 红」的检查面漂移（纯 CI / 测试改动，零运行期变更）

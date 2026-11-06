@@ -1,5 +1,5 @@
 # =============================================================================
-# DouyinLiveRecorder .dockerignore
+# dylr .dockerignore
 # 目的：只把容器运行所需内容送入构建上下文，减小体积、避免宿主机敏感文件与开发产物进镜像。
 # 运行所需：main.py / web.py + src/（javascript/ 签名脚本、platforms/ 各平台实现与
 #   弹幕采集、proto/ 弹幕协议）+ web/（面板前端）+ i18n/*.json
@@ -25,14 +25,11 @@ pytest-cache-files-*/
 
 # ---------- 文档（容器内无需运行）----------
 README.md
-README_EN.md
 LICENSE
-CODE_WIKI.md
-CODE_WIKI_EN.md
 AGENTS.md
-# 更新日志归档卷（2026-09-28 新增）：这些条目原先就在上面四份根文档的正文里，
-# 随根文档一起不进镜像；拆分只是换了存放位置，不得因此新增镜像体积。
-docs/changelog/
+# 开发、架构与排障资料在 docs，历史存档在 ARCHIVE，均不进镜像。
+docs/
+ARCHIVE/
 # 审查 / 排查记录与开发期笔记（2026-09-14 由逐文件名列举改为本形态：逐文件名会持续腐化，
 # 新增同类文档自动落入排除，无需再改本文件）
 CODE_CHANGES.md

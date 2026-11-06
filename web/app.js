@@ -1,4 +1,4 @@
-// DouyinLiveRecorder Web 管理面板前端逻辑：把 UI 绑定到 src/web_api.py 暴露的 REST API，
+// dylr Web 管理面板前端逻辑：把 UI 绑定到 src/web_api.py 暴露的 REST API，
 // 覆盖仪表盘（状态/日志轮询）、弹幕监控（增量游标轮询）、直播间、配置、文件五块。
 //
 // 【结构】整体包在 IIFE 内，状态与函数封闭在私有作用域，只把 window.toggleRoom / deleteRoom /
@@ -296,7 +296,7 @@
     var currentLang = 'zh_CN';
     var I18N = {
         zh_CN: {
-            'title': 'DouyinLiveRecorder 管理面板', 'brand': '直播录制管理面板',
+            'title': 'dylr 管理面板', 'brand': '直播录制管理面板',
             'tab.dashboard': '仪表盘', 'tab.danmaku': '弹幕监控', 'tab.rooms': '直播间',
             'tab.config': '配置', 'tab.files': '文件', 'logout': '退出',
             'theme.toggle': '切换主题', 'language.select': '语言',
@@ -365,7 +365,7 @@
             'toast.langSwitchFailed': '语言切换失败: '
         },
         en_US: {
-            'title': 'DouyinLiveRecorder Panel', 'brand': 'Live Recording Panel',
+            'title': 'dylr Panel', 'brand': 'Live Recording Panel',
             'tab.dashboard': 'Dashboard', 'tab.danmaku': 'Danmaku', 'tab.rooms': 'Rooms',
             'tab.config': 'Config', 'tab.files': 'Files', 'logout': 'Logout',
             'theme.toggle': 'Toggle theme', 'language.select': 'Language',

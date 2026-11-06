@@ -98,10 +98,11 @@ def initialize_process(*, cli: bool = False) -> None:
         os.environ["PATH"] = bundled_ffmpeg + os.pathsep + current_path
 
     print("-----------------------------------------------------")
-    print("|                DouyinLiveRecorder                 |")
+    print("|                        dylr                       |")
     print("-----------------------------------------------------")
     print(i18n.tr("版本号: {version}", version=state.version))
-    print("GitHub: https://github.com/ihmily/DouyinLiveRecorder")
+    print("GitHub: https://github.com/oxygenkun/dylr")
+    print("上游: https://github.com/ihmily/DouyinLiveRecorder")
     print(i18n.tr("支持平台: {platforms}", platforms=platforms))
     print(".....................................................")
     os.makedirs(os.path.dirname(state.config_file), exist_ok=True)

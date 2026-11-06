@@ -1,12 +1,12 @@
 [project]
-name = "DouyinLiveRecorder"
+name = "dylr"
 version = "4.6.0"
 description = "支持抖音、TikTok、YouTube、快手等60+平台的直播录制工具，支持循环录制、多人录制、消息推送"
 readme = "README.md"
 requires-python = ">=3.14"
 license = { text = "MIT" }
 authors = [
-    { name = "y123ao6", email = "zmzx0690@agent.qq.com" }
+    { name = "oxygenkun", email = "oxygenkun.1@gmail.com" }
 ]
 keywords = [
     "live-streaming",
@@ -84,12 +84,12 @@ build = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/y123ao6/DouyinLiveRecorder"
-Documentation = "https://github.com/y123ao6/DouyinLiveRecorder"
-Repository = "https://github.com/y123ao6/DouyinLiveRecorder"
-Issues = "https://github.com/y123ao6/DouyinLiveRecorder/issues"
-Changelog = "https://github.com/y123ao6/DouyinLiveRecorder/releases"
-Sponsor = "https://github.com/sponsors/y123ao6"
+Homepage = "https://github.com/oxygenkun/dylr"
+Documentation = "https://github.com/oxygenkun/dylr"
+Repository = "https://github.com/oxygenkun/dylr"
+Issues = "https://github.com/oxygenkun/dylr/issues"
+Changelog = "https://github.com/oxygenkun/dylr/releases"
+Sponsor = "https://github.com/oxygenkun"
 
 [tool.uv]
 package = false

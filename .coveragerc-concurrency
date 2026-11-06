@@ -1,5 +1,5 @@
 # =============================================================================
-# DouyinLiveRecorder 并发测试专用覆盖率配置（CI 的 concurrency-test job）
+# dylr 并发测试专用覆盖率配置（CI 的 concurrency-test job）
 # 用途：该 job（tests/test_concurrency*.py、test_async_http_lock.py 等）经 COVERAGE_RCFILE
 #   指向本文件。并发回归天然只触及并发路径，覆盖率远低于全局阈值（pyproject
 #   [tool.coverage.report].fail_under = 50），故此处 fail_under = 0（不设下限），仅产出报告供人工审查。

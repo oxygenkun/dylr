@@ -8,7 +8,7 @@
 # 测试策略：用 types.ModuleType 注入轻量 fake main（避免导入真实 main.py 触发的 FFmpeg/Node 检查
 # 等重副作用，web_api 仅在请求处理时才 import main、仅用到 file_update_lock 等符号）；通过
 # create_app 注入临时 config/URL_config/downloads/logs 目录隔离文件系统；用 Starlette TestClient
-# 同步驱动异步路由，全程不监听端口。用例内 C4/C8/C10/C11 等为安全/健壮性回归编号（见 CODE_WIKI 变更记录）。
+# 同步驱动异步路由，全程不监听端口。用例内 C4/C8/C10/C11 等为安全/健壮性回归编号（见 docs/changelog/implementation-notes.md）。
 #
 # 两条与被测代码同步演进的环境约束：
 # · TestClient 一律带 base_url="http://127.0.0.1:8000"：MID-36 之后 Host 头必须落在

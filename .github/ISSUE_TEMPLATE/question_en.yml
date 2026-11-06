@@ -12,7 +12,7 @@ body:
     attributes:
       label: ⚠️ Search for similar issues
       description: >
-        🔍 [Click here to search historical issues](https://github.com/ihmily/DouyinLiveRecorder/issues?q=is%3Aissue) see if your question has already been asked.
+        🔍 [Click here to search historical issues](https://github.com/oxygenkun/dylr/issues?q=is%3Aissue) see if your question has already been asked.
       options:
         - label: I have searched the issues and found no similar questions
           required: true

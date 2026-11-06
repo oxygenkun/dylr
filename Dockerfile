@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 # =============================================================================
-# DouyinLiveRecorder 容器镜像（多阶段构建）
+# dylr 容器镜像（多阶段构建）
 # 基础镜像：python:3.14-slim-bookworm（Debian 12，最小 Python 运行时）
 # 平台与版本清单的事实源是 pyproject.toml，此处不再复述
 # =============================================================================
@@ -121,12 +121,12 @@ ARG TZ=Asia/Shanghai
 # 顺序颠倒会让 version 标签固化为空串、--build-arg 完全不生效。
 ARG APP_VERSION
 
-# 维护者与项目 URL 与 pyproject.toml [project.urls]/authors 同源（y123ao6）；上游原作者 ihmily
-# 的署名保留在 README「上游项目」行与 main.py 版权头
-LABEL maintainer="y123ao6 <zmzx0690@agent.qq.com>" \
+# 维护者与项目 URL 与 pyproject.toml [project.urls]/authors 同源（oxygenkun）；上游原作者 ihmily
+# 的署名保留在 README「上游项目」行与 index.html 作者信息
+LABEL maintainer="oxygenkun <oxygenkun.1@gmail.com>" \
       version="${APP_VERSION}" \
       description="支持抖音、TikTok、YouTube等60+平台直播录制工具" \
-      url="https://github.com/y123ao6/DouyinLiveRecorder"
+      url="https://github.com/oxygenkun/dylr"
 
 # 运行时行为：无缓冲、不写字节码、UTF-8 输出、时区、彩色终端、venv 入 PATH
 ENV PYTHONUNBUFFERED=1 \

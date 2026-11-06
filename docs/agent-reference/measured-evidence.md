@@ -28,7 +28,7 @@
 2026-09-20 实测（本机 Windows / GBK 语言环境，isort 9.0.1，命令 `python -m isort --check-only --profile black --line-length 120 .`）：
 不带 `PYTHONUTF8` 时 **rc=0**，stderr 同时出现 **17 条** `UserWarning: Unable to parse file …: 'gbk' codec can't encode character`，
 被跳过的文件为 `main.py`、`gui.py`、`web.py`、`build_exe.py`、`src/streams/spider.py`、`src/streams/selection.py`、
-`src/config/io.py`、`src/notifications/notify.py`、`src/network/async_http.py`、`scripts/douyin_live_recorder_standalone.py`、
+`src/config/io.py`、`src/notifications/notify.py`、`src/network/async_http.py`、`tool/dylr_standalone.py`、
 `scripts/smoke_test.py` 与 `tests/` 下 6 个（`test_config_bool.py`、`test_config_io_readonly.py`、
 `test_http_config.py`、`test_i18n_migration.py`、`test_record_container.py`、`test_web_api.py`）。
 抛错点在 `isort/core.py:479` 的 **encode**（不是 decode）。同一命令加 `PYTHONUTF8=1` 后
@@ -43,7 +43,7 @@ stderr **18 条** `Unable to parse file`；带 `PYTHONUTF8=1` 时 **rc=0、stder
 较 09-20 基线多出的 1 个是 `src/danmaku/collector.py`（其间并行改动新增的中文注释文件）。
 逐文件清单：`build_exe.py`、`gui.py`、`main.py`、`web.py`、
 `src/network/async_http.py`、`src/danmaku/collector.py`、`src/config/io.py`、`src/notifications/notify.py`、`src/streams/spider.py`、
-`src/streams/selection.py`、`scripts/douyin_live_recorder_standalone.py`、`scripts/smoke_test.py`、
+`src/streams/selection.py`、`tool/dylr_standalone.py`、`scripts/smoke_test.py`、
 `tests/test_config_bool.py`、`tests/test_config_io_readonly.py`、`tests/test_http_config.py`、
 `tests/test_i18n_migration.py`、`tests/test_record_container.py`、`tests/test_web_api.py`。
 同轮附带发现：`scripts/run_gates.py` 自身在 cp936 下会因转发 black 成功行的 `✨` 抛
@@ -153,7 +153,7 @@ Flextv/PopkonTV/Twitch/LiveMe/Faceit 共 9 个海外平台的解析分支全部�
 
 ## 性能优化与修复变更记录
 
-近期性能优化与修复的完整变更记录见 `CODE_WIKI.md` 的「更新日志」。2026-08-28/29 的 P1~P5 性能优化（探针客户端复用 / `requests.Session` 线程级复用 / 主循环 set 去重 / 调度器增量计数 / 正则提常量）、探针退避窗口对齐主循环、录制成功清除退避、虎牙 FLV-first、Web 模式 loguru 控制台 sink 重建，均已逐条落地为 AGENTS.md 约定与「录制结果反馈约定」「并发与线程模型」章节。
+性能优化与修复的完整历史记录见 [早期实现记录](../../ARCHIVE/changelog/code-wiki-history-zh.md)，近期变化见 [实现变更记录](../changelog/implementation-notes.md)。2026-08-28/29 的 P1~P5 性能优化（探针客户端复用 / `requests.Session` 线程级复用 / 主循环 set 去重 / 调度器增量计数 / 正则提常量）、探针退避窗口对齐主循环、录制成功清除退避、虎牙 FLV-first、Web 模式 loguru 控制台 sink 重建，均已逐条落地为 AGENTS.md 约定与「录制结果反馈约定」「并发与线程模型」章节。
 
 ## 本机全量 pytest 偶发段错误
 
@@ -199,3 +199,5 @@ PySide6 轮子本机解压尺寸 **647.56MB**（`pip show` 口径，镜像默认
 
 - 根文件保留条目的**约束与结论**并就地链接本文件对应小节；本文件只保留**支撑该结论的原始读数**，一字未改。
 - 新增同类证据段沿用同一判据：句中不得出现「必须 / 禁止 / 不得 / 须」这类祈使式约束才可外迁。
+
+> 约束条目见[已知坑](known-pitfalls.md)；返回[文档导航](../README.md)。

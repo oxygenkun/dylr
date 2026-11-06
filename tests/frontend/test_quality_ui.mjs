@@ -701,7 +701,7 @@ test('MID-39：JSON 错误体只取 detail，登录页不再显示 {"detail":...
 test('MID-39：非 JSON 错误体回退本地化通用文案，安装路径不进 toast', async () => {
     const ctx = await bootConfigView(MASKED_CONFIG, {
         routes: {
-            'PUT /api/config': { status: 502, text: '<html>502 Bad Gateway<br>D:\\DouyinLiveRecorder\\logs\\streamget.log</html>' },
+            'PUT /api/config': { status: 502, text: '<html>502 Bad Gateway<br>D:\\dylr\\logs\\streamget.log</html>' },
         },
     });
     findInput(ctx, '输出格式').value = 'mkv';
@@ -709,7 +709,7 @@ test('MID-39：非 JSON 错误体回退本地化通用文案，安装路径不�
     const toastText = ctx.elements.get('toast').textContent;
     assert.ok(toastText.startsWith('保存失败: '), '非 400 失败仍走通用「保存失败」前缀，实际: ' + toastText);
     assert.ok(toastText.includes('请求失败 (502)'), '通用文案须带状态码便于报障，实际: ' + toastText);
-    assert.ok(!toastText.includes('DouyinLiveRecorder'), '原始响应体（含安装绝对路径）不得进 toast');
+    assert.ok(!toastText.includes('dylr'), '原始响应体（含安装绝对路径）不得进 toast');
 });
 
 // —— MID-38：登出入口显隐与 bearer 吊销 ————————————————————————————

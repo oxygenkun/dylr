@@ -195,7 +195,7 @@ def test_make_zip_aborts_when_release_dir_contains_real_credentials(
     # 这是对「校验存在但没接在 make_zip 上」这一形态的直接否定——只断言函数存在是不够的。
     build_exe = _load_build_exe()
 
-    release = tmp_path / "DouyinLiveRecorder"
+    release = tmp_path / "dylr"
     (release / "config").mkdir(parents=True)
     # 构造一个必然命中敏感判定的值（代理地址带账密，本仓 _PROXY_ADDR_KEYS 明确管这类键）
     (release / "config" / "config.ini").write_text(
@@ -261,7 +261,7 @@ def test_copy_external_binaries_does_not_copytree_config() -> None:
 def test_no_credentials_in_release_passes_on_sanitized_tree(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # 正向对照：脱敏后的发布目录必须**通过**校验（否则校验会把正常构建也拦死）。
     build_exe = _load_build_exe()
-    release = tmp_path / "DouyinLiveRecorder"
+    release = tmp_path / "dylr"
     (release / "config").mkdir(parents=True)
     (release / "config" / "config.ini").write_text("[录制设置]\n代理地址 = \n", encoding="utf-8")
     (release / "config" / "URL_config.ini").write_text("#https://live.douyin.com/000000000000\n", encoding="utf-8")

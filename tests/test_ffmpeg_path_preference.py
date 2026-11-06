@@ -355,14 +355,14 @@ class TestMainWiring:
 # ---------------------------------------------------------------------------
 # 孪生副本等价锁（R-5，2026-09-22）
 #
-# tool/douyin_live_recorder_standalone.py 按设计不 import src/（可独立单文件分发），
+# tool/dylr_standalone.py 按设计不 import src/（可独立单文件分发），
 # 因此同一判据在那里有一份**同名同语义副本**（先例：src/recording/scheduler.py 与它的并发副本）。
 # 复制件的通病是「单边修改 → 语义漂移」，而漂移的后果正好是 R-5 登记的那件事：
 # 主程序让位给原生 arm64、单文件版继续吃 Rosetta。所以这里刻意**不重复写一遍期望值**，
 # 而是把两个实现放进同一组桩里逐一比对结果 —— 谁改了判据而另一边没跟上，本用例就红。
 # ---------------------------------------------------------------------------
 
-STANDALONE_SOURCE = Path(__file__).resolve().parent.parent / "tool" / "douyin_live_recorder_standalone.py"
+STANDALONE_SOURCE = Path(__file__).resolve().parent.parent / "tool" / "dylr_standalone.py"
 
 
 def _load_standalone(monkeypatch: pytest.MonkeyPatch) -> types.ModuleType:

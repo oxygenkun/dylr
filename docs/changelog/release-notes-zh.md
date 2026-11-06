@@ -1,10 +1,10 @@
 # 更新日志
 
-[返回 README](../../README.md) · [English](release-notes-en.md)
+[返回 README](../../README.md)
 
 ## v4.5.0 (2026-10-02 ~ 2026-10-17) — GUI 窗口层迁移 PySide6（Qt6）与界面现代化阶段4~6 收尾 / 移动端与短链平台接入（b23.tv / m.douyu.com / hy.fan / 小红书四类归一）/ Linux arm64 ffmpeg 与 GHCR 多架构镜像 / 启动期字节码缓存清理与发布链在线来源层 / config.toml 重复键容错读取层与 i18n 三批机检 / 全工作区代码审查与两轮元数据对账
 
-> 本版本（v4.5.0，2026-10-02 ~ 10-17）是一次「GUI 全面现代化 + 平台接入扩张」周期：① **窗口层由 tkinter/ttk 迁到 PySide6（Qt6）**，新增 `src/gui_qt/`，令牌与 QSS 单一事实源、控制器层可离屏单测，打包侧靠 `QT_BLOAT_FILES` 剪除 Qt 死重；② **界面现代化阶段4~6 收尾**（CTk → ttk、`customtkinter` 摘除、字号 / 缩放 / 动效）；③ **平台接入扩张**（三类移动端短链 + 小红书四类链接归一，Linux arm64 与 GHCR 多架构补齐）；④ **config.toml 同节重复键不再整份失效**（新增 `src/config/reader.py`）。**存在破坏性变更（GUI 实现与依赖面）**，见下方专节。详细根因与验证见 [CODE_WIKI.md](../../CODE_WIKI.md)。
+> 本版本（v4.5.0，2026-10-02 ~ 10-17）是一次「GUI 全面现代化 + 平台接入扩张」周期：① **窗口层由 tkinter/ttk 迁到 PySide6（Qt6）**，新增 `src/gui_qt/`，令牌与 QSS 单一事实源、控制器层可离屏单测，打包侧靠 `QT_BLOAT_FILES` 剪除 Qt 死重；② **界面现代化阶段4~6 收尾**（CTk → ttk、`customtkinter` 摘除、字号 / 缩放 / 动效）；③ **平台接入扩张**（三类移动端短链 + 小红书四类链接归一，Linux arm64 与 GHCR 多架构补齐）；④ **config.toml 同节重复键不再整份失效**（新增 `src/config/reader.py`）。**存在破坏性变更（GUI 实现与依赖面）**，见下方专节。详细根因与验证见 [实现变更记录](implementation-notes.md)。
 
 **✨ 新增功能 / 改进**
 - **GUI 窗口层迁移 PySide6（Qt6）**：新增 `src/gui_qt/`（16 文件 4189 行，含 `pages/` 五页），`gui.py:main()` 委托 `src.gui_qt.app.main()`（tkinter 实现留作 `_legacy_main()`）。令牌与 QSS 单一事实源在 `theme.py`，线程模型换轨 Qt Signal/Slot + `QTimer`；控制器层无 Qt 布局代码，`QT_QPA_PLATFORM=offscreen` 即可离屏单测。
@@ -57,7 +57,7 @@
 
 ## v4.4.0 (2026-09-29 ~ 2026-10-01) — Web 面板 FastAPI → Starlette 迁移（移除 fastapi/pydantic，24 条路由契约逐字保留）/ Web 前端动效层与移动端适配 / GUI 主题层（阶段3）与长文案自适应折行根除 DPI 卡死 / 抖音原画 HEVC 房「无可用源」死锁根治与 h265 候选按保存格式放行 / 两轮全量代码审查与 P0 修复（standalone SSRF 三道防线、ffmpeg 命令日志脱敏等）/ i18n 盲区补录 / 依赖与文档多轮对账
 
-> 本版本（v4.4.0，2026-09-29 ~ 10-01）为一次「UI 现代化 + 全量审查修复」周期。四点最值得注意：① **Web 后端从 FastAPI 迁移到 Starlette 直接驱动**——自研路由适配器与零依赖校验层，24 条路由契约与全部安全不变量逐字保留，运行时依赖 23 → 21；② **两轮全量代码审查**（`CODE_REVIEW_2026-09-29_2` 31 编号全落地 + `CODE_REVIEW_2026-09-30` 严重 2 / 中等 51 / 轻微 160、P0 已修）清掉 standalone 独立发行版的 SSRF/本地文件读取链、ffmpeg 命令凭据明文落盘等一批静默失效形态；③ **抖音原画 HEVC 房死锁根治**——主播在播却每轮「本轮无可用源」永不录制的死锁（hevc 替换、h265 候选剔除、HLS 静默丢弃三规则叠加）已修复，h265 候选按保存格式（TS/MKV/MP4）放行直拷并新增零源观测告警；④ **GUI 主题层（阶段3）** 与 **Web 前端动效层（阶段1）** 落地，GUI 长文案自适应折行根除两侧裁切与 DPI 重缩放卡死。**存在破坏性变更（依赖面）**，见下方专节。详细根因与验证见 [CODE_WIKI.md](../../CODE_WIKI.md)。
+> 本版本（v4.4.0，2026-09-29 ~ 10-01）为一次「UI 现代化 + 全量审查修复」周期。四点最值得注意：① **Web 后端从 FastAPI 迁移到 Starlette 直接驱动**——自研路由适配器与零依赖校验层，24 条路由契约与全部安全不变量逐字保留，运行时依赖 23 → 21；② **两轮全量代码审查**（`CODE_REVIEW_2026-09-29_2` 31 编号全落地 + `CODE_REVIEW_2026-09-30` 严重 2 / 中等 51 / 轻微 160、P0 已修）清掉 standalone 独立发行版的 SSRF/本地文件读取链、ffmpeg 命令凭据明文落盘等一批静默失效形态；③ **抖音原画 HEVC 房死锁根治**——主播在播却每轮「本轮无可用源」永不录制的死锁（hevc 替换、h265 候选剔除、HLS 静默丢弃三规则叠加）已修复，h265 候选按保存格式（TS/MKV/MP4）放行直拷并新增零源观测告警；④ **GUI 主题层（阶段3）** 与 **Web 前端动效层（阶段1）** 落地，GUI 长文案自适应折行根除两侧裁切与 DPI 重缩放卡死。**存在破坏性变更（依赖面）**，见下方专节。详细根因与验证见 [历史实现记录](../../ARCHIVE/changelog/code-wiki-history-zh.md)。
 
 **✨ 新增功能 / 改进**
 - **GUI 主题层（阶段3）**：新增 `src/ui_theme.py`（零显示依赖、可无头 import）——13 个语义槽位 × 三套主题（浅色 / 深色 / 高对比度），侧边栏「界面主题」菜单运行时切换并持久化到 `config.toml [GUI] gui_theme`；WCAG 对比度机检（正文 4.5 / 非文本与禁用 3.0）由 `tests/test_ui_theme.py`（34 用例）持续回归。
@@ -96,12 +96,12 @@
 **🧪 测试与验证**
 - 全量 `pytest` **3721 passed / 14 skipped / 0 failed / 0 警告**（2026-10-01 终态实测；14 条 skip 均为平台条件性：符号链接特权缺失、Windows chmod 只读位语义、SIGKILL POSIX 形态、h2 已装致缺依赖分支不可达等）。
 - 覆盖率 44 模块全部达阈（总 84.9%，coverage.json 实测）；basedpyright 0 error / 0 warning；`run_gates.py` 8/8 全绿。
-- 真机验证（09-29 ~ 09-30）：抖音 PASS（59 条 / SRT 4518 字节）、B站 PASS（9 条 / 678 字节）、虎牙 WARN（连接正常、该时段无弹幕）、Twitch WARN、斗鱼 SKIP(房间未开播，解析链正常)、TikTok SKIP(无出境网络)；standalone `--dry-run` 虎牙真实在播房间 PASS（S-01/S-02 增量验证）；公网 HLS 分片探针走通且四类内网目标全拒。GUI 目视项、斗鱼/TikTok 活房间复跑、打包体积复测等交回动作见 [CODE_WIKI.md](../../CODE_WIKI.md)。
+- 真机验证（09-29 ~ 09-30）：抖音 PASS（59 条 / SRT 4518 字节）、B站 PASS（9 条 / 678 字节）、虎牙 WARN（连接正常、该时段无弹幕）、Twitch WARN、斗鱼 SKIP(房间未开播，解析链正常)、TikTok SKIP(无出境网络)；standalone `--dry-run` 虎牙真实在播房间 PASS（S-01/S-02 增量验证）；公网 HLS 分片探针走通且四类内网目标全拒。GUI 目视项、斗鱼/TikTok 活房间复跑、打包体积复测等交回动作见 [历史实现记录](../../ARCHIVE/changelog/code-wiki-history-zh.md)。
 - 真机验证（10-01，抖音 hevc 原画在播房「央视网快看」）三态全 PASS：HLS 关 + TS 保存格式 → h265 FLV 主候选被放行并选中（codec=h265 实测探针通过）；HLS 关 + FLV → 落到 h264 原画备选（codec=h264）；摘除备选 → 返回 None 且零源观测告警实弹打出。
 
 ## v4.3.0 (2026-09-16 ~ 2026-09-27) — P0 修复 ffmpeg master 构建下录制 100% 失败（`-thread_queue_size` 被上游收窄为输出专属选项）/ 布尔配置解析口径统一（`true/false` 致 8 项配置静默失效、9 个海外平台无法录制）/ 两轮全量代码审查（62 + 106 项分级修复）/ 供应链加固（官方哈希优先 + GPG 验签 + 删除蓝奏云兜底）/ 发布链四处故障修复（**对外分发的 lite 包一度从未真正存在**）/ Apple Silicon 的 ffmpeg PATH 让位策略 / 日志房间关联字段与 `/health` 探活端点 / 构建产物体积 −21.6% / 覆盖率 73.28% → 82.03%（专项）与 83.91%（09-27 终态）
 
-> 本版本（v4.3.0，2026-09-16 ~ 09-27）为一次以「正确性 + 供应链安全」为主线的收敛周期。四处最值得注意：① **P0**：ffmpeg master 构建把 `-thread_queue_size` 收窄为输出专属选项，我们仍放在 `-i` 之前，导致该构建下**每一次录制都以 `-22 (EINVAL)` 退出、零字节产物**；② **布尔配置解析口径统一**：`config.toml` 写 `true/false` 曾被判为无效并**静默**回落硬编码兜底值（无告警无日志），实测致 8 项配置生效值漂移，其中最严重的一项使 9 个海外平台 100% 无法录制，现已统一为「`是/否` 与 `true/false`/`1/0`/`yes/no`/`on/off` 等价」；③ **两轮全量代码审查**（09-19 的 62 项：严重 12 / 中等 22 / 轻微 28；09-21 的 `CODE_REVIEW_2026-09-20` 106 项：严重 10 / 中等 70 / 轻微 26）把 SSRF、面板接管、凭据明文落盘、弹幕线程死循环等一批静默失效形态一次性清掉；④ **发布链四处故障**（09-26 ~ 09-27），其中最影响用户的一条是：`make_zip` 用 `Path.with_suffix(".zip")` 收尾，而版本号本身带点，lite 与 full 算出同一个附件名，第二次以覆盖模式原地截断第一次，**某次 Release 实际只留下一个既无平台也无变体标识的包，精简版从未分发出去**。**存在破坏性变更**，见下方专节。详细根因与验证见 [CODE_WIKI.md](../../CODE_WIKI.md)。
+> 本版本（v4.3.0，2026-09-16 ~ 09-27）为一次以「正确性 + 供应链安全」为主线的收敛周期。四处最值得注意：① **P0**：ffmpeg master 构建把 `-thread_queue_size` 收窄为输出专属选项，我们仍放在 `-i` 之前，导致该构建下**每一次录制都以 `-22 (EINVAL)` 退出、零字节产物**；② **布尔配置解析口径统一**：`config.toml` 写 `true/false` 曾被判为无效并**静默**回落硬编码兜底值（无告警无日志），实测致 8 项配置生效值漂移，其中最严重的一项使 9 个海外平台 100% 无法录制，现已统一为「`是/否` 与 `true/false`/`1/0`/`yes/no`/`on/off` 等价」；③ **两轮全量代码审查**（09-19 的 62 项：严重 12 / 中等 22 / 轻微 28；09-21 的 `CODE_REVIEW_2026-09-20` 106 项：严重 10 / 中等 70 / 轻微 26）把 SSRF、面板接管、凭据明文落盘、弹幕线程死循环等一批静默失效形态一次性清掉；④ **发布链四处故障**（09-26 ~ 09-27），其中最影响用户的一条是：`make_zip` 用 `Path.with_suffix(".zip")` 收尾，而版本号本身带点，lite 与 full 算出同一个附件名，第二次以覆盖模式原地截断第一次，**某次 Release 实际只留下一个既无平台也无变体标识的包，精简版从未分发出去**。**存在破坏性变更**，见下方专节。详细根因与验证见 [历史实现记录](../../ARCHIVE/changelog/code-wiki-history-zh.md)。
 
 **🐛 修复的问题**
 - **P0：ffmpeg master 构建下录制 100% 失败**：`-thread_queue_size` 被上游收窄为 muxer 专属选项，置于 `-i` 之前时 ffmpeg 以 `Option thread_queue_size … cannot be applied to input url … Error opening input files: Invalid argument`（返回码 -22）退出；与房间 / 平台 / CDN 无关，该构建下每次录制都失败。
@@ -155,4 +155,4 @@
 
 ## 更早的更新日志（已归档）
 
-v4.0.0 ~ v4.2.0 的 19 条发布说明见[历史更新日志](release-notes-history-zh.md)。
+v4.0.0 ~ v4.2.0 的 19 条发布说明见[历史更新日志](../../ARCHIVE/changelog/release-notes-history-zh.md)。

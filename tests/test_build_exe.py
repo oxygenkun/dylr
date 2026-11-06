@@ -141,8 +141,8 @@ def test_dual_build_zips_both_variants_before_smoke(monkeypatch: pytest.MonkeyPa
 def test_dual_build_prunes_stale_zips_before_first_zip(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     dist = tmp_path / "dist"
     dist.mkdir(parents=True)
-    stale_buggy = dist / "DouyinLiveRecorder-v4.3.zip"  # with_suffix 截断缺陷时期的产物名形态
-    stale_old = dist / "DouyinLiveRecorder-v4.2.0-windows-amd64-full.zip"
+    stale_buggy = dist / "dylr-v4.3.zip"  # with_suffix 截断缺陷时期的产物名形态
+    stale_old = dist / "dylr-v4.2.0-windows-amd64-full.zip"
     user_file = dist / "release-notes.txt.zip"  # 不归本构建管辖，绝不得碰
     for victim in (stale_buggy, stale_old, user_file):
         victim.write_bytes(b"PK\x03\x04")
@@ -159,7 +159,7 @@ def test_dual_build_prunes_stale_zips_before_first_zip(monkeypatch: pytest.Monke
 def test_no_zip_build_keeps_existing_dist_zips(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     dist = tmp_path / "dist"
     dist.mkdir(parents=True)
-    keeper = dist / "DouyinLiveRecorder-v4.2.0-windows-amd64-lite.zip"
+    keeper = dist / "dylr-v4.2.0-windows-amd64-lite.zip"
     keeper.write_bytes(b"PK\x03\x04")
     order: list[str] = []
     _stub_build_steps(monkeypatch, order, tmp_path)
@@ -305,7 +305,7 @@ def test_make_zip_name_keeps_dotted_version_and_variant_suffix(
 ) -> None:
     _stub_make_zip_inputs(monkeypatch, tmp_path, [f"{build_exe.APP_NAME}/_internal/a.py"])
     zip_path = build_exe.make_zip("4.3.0", suffix=suffix)
-    pattern = rf"DouyinLiveRecorder-v4\.3\.0-(windows|macos|linux)-[a-z0-9_]+-{tail}\.zip"
+    pattern = rf"dylr-v4\.3\.0-(windows|macos|linux)-[a-z0-9_]+-{tail}\.zip"
     assert re.fullmatch(pattern, zip_path.name), zip_path.name
 
 
@@ -325,7 +325,7 @@ def test_make_zip_refuses_name_containing_path_separator(monkeypatch: pytest.Mon
         with pytest.raises(SystemExit) as caught:
             build_exe.make_zip(version, suffix=suffix)
         assert "路径分隔符" in str(caught.value), (version, suffix)
-        assert not (tmp_path / "dist" / "DouyinLiveRecorder-v4.3.0").exists(), (version, suffix)
+        assert not (tmp_path / "dist" / "dylr-v4.3.0").exists(), (version, suffix)
         assert list((tmp_path / "dist").glob("*.zip")) == [], (version, suffix)
         assert list(tmp_path.glob("*.zip")) == [], (version, suffix)
 
@@ -342,7 +342,7 @@ def test_dual_and_no_zip_are_mutually_exclusive(monkeypatch: pytest.MonkeyPatch,
 
 
 def _stub_two_colliding_zips(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, order: list[str]) -> Path:
-    victim = tmp_path / "dist" / "DouyinLiveRecorder-v4.3.zip"
+    victim = tmp_path / "dist" / "dylr-v4.3.zip"
     victim.parent.mkdir(parents=True, exist_ok=True)
 
     def _fake(*args: object, **kwargs: object) -> Path:
@@ -391,13 +391,13 @@ def test_dual_build_aborts_when_a_variant_zip_is_missing(monkeypatch: pytest.Mon
 def test_clean_stale_release_zips_only_touches_own_artifacts(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     dist = tmp_path / "dist"
     dist.mkdir()
-    mine = [dist / "DouyinLiveRecorder-v4.3.zip", dist / "DouyinLiveRecorder-v4.2.0-linux-x86_64-full.zip"]
-    keepers = [dist / "notes.zip", dist / "DouyinLiveRecorder.txt"]
+    mine = [dist / "dylr-v4.3.zip", dist / "dylr-v4.2.0-linux-x86_64-full.zip"]
+    keepers = [dist / "notes.zip", dist / "dylr.txt"]
     for victim in mine + keepers:
         victim.write_bytes(b"x")
     monkeypatch.setattr(build_exe, "DIST_DIR", dist)
     removed = build_exe._clean_stale_release_zips()
-    assert sorted(removed) == ["DouyinLiveRecorder-v4.2.0-linux-x86_64-full.zip", "DouyinLiveRecorder-v4.3.zip"]
+    assert sorted(removed) == ["dylr-v4.2.0-linux-x86_64-full.zip", "dylr-v4.3.zip"]
     assert not any(victim.exists() for victim in mine)
     assert all(victim.exists() for victim in keepers)
     assert build_exe._clean_stale_release_zips() == []

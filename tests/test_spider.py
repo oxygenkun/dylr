@@ -698,7 +698,7 @@ class TestBilibiliStreamData:
 
 
 # ─── WP-A（2026-09-29）：src/streams/spider.py 安全收口回归锁 ──────────────────────
-# 覆盖 docs/worklog/CODE_REVIEW_2026-09-29_2.md 的 M-3 / M-4 / M-8 / M-9 / M-10。
+# 覆盖 ARCHIVE/worklog/CODE_REVIEW_2026-09-29_2.md 的 M-3 / M-4 / M-8 / M-9 / M-10。
 # S-1（Shopee 落地页域族白名单 + 凭据收口 + api_host 闸）单独落在
 # tests/test_shopee_landing_guard.py。
 # 共同约定：一律 monkeypatch.setattr（自动还原、进程内不留桩），替身只打**网络层**与

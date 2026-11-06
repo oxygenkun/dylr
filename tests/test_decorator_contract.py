@@ -36,7 +36,7 @@ _EXCLUDE_DIR_PARTS = {
     "dist",
     "node_modules",
 }
-_EXCLUDE_FILE_NAMES = {"douyin_live_recorder_standalone.py", "douyin_pb2.py"}
+_EXCLUDE_FILE_NAMES = {"dylr_standalone.py", "douyin_pb2.py"}
 
 
 def _iter_py_files() -> list[Path]:

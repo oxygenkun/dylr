@@ -45,7 +45,7 @@
 
 ## 并发、事件循环与锁
 
-跨循环淘汰 AsyncClient 不在错误循环创建/调度 aclose；沿用现有释放策略，避免永不完成协程与 RuntimeWarning。Qt QApplication 只在主线程创建；legacy Tk 进程不得混入 Qt 托盘。线程死锁、段错误先取证再归因，不预判为环境噪声。
+跨循环淘汰 AsyncClient 不在错误循环创建/调度 aclose；沿用现有释放策略，避免永不完成协程与 RuntimeWarning。旧 GUI 的线程约束仅供历史记录参考，当前不再包含 Qt/Tk 入口。线程死锁、段错误先取证再归因，不预判为环境噪声。
 
 ## ffmpeg 命令构造与容器格式
 
@@ -64,7 +64,7 @@ Web 安全拒绝启动必须早于 stdio 重定向，保留日志兜底；重定
 ## 配置键名、布尔口径与 SSL 验证
 
 - 配置键不含 = / :，读取 utf-8-sig，键名对比大小写归一；旧迁移键不盲补。补写原子、持锁、幂等，写回结果可被 strict parser 重读。
-- 容错读取用 config_read.tolerant_config_parser。读取层不依赖 Web 配置或录制引擎，utils 直接复用该解析器。
+- 当前主配置用 config.store.ConfigStore 读取 TOML；config.reader.tolerant_config_parser 仅用于旧 INI 迁移。配置存储实现见 [配置专题](../architecture/configuration.md)，不恢复平行 INI 主配置路径。
 - TLS 平台覆盖经 network.policy，异常平台只追加不删除用户项；全局已禁用校验时不重复应用覆盖。
 
 ## 凭据与敏感配置脱敏
@@ -94,7 +94,7 @@ Web 安全拒绝启动必须早于 stdio 重定向，保留日志兜底；重定
 
 ## Web 面板与接口层
 
-- Web 路由走 _route，模型走 web_models.parse，保留请求校验、线程池派发与 422 语义；不恢复 FastAPI/pydantic。房间表格保持受作用域约束的固定布局与窄屏横向滚动。
+- Web 路由走 api.routes._route，请求模型走 api.models.parse，保留请求校验、线程池派发与 422 语义；不恢复 FastAPI 路由层。主配置的 pydantic 类型校验属于独立存储层。房间表格保持受作用域约束的固定布局与窄屏横向滚动。
 - 画质写回共用 update_room_quality，刷新编辑器快照和配置显示源，不把子进程旧设置当现值；显示名查表前去序号前缀。
 
 ## 测试质量与审查协作流程
@@ -104,3 +104,5 @@ Web 安全拒绝启动必须早于 stdio 重定向，保留日志兜底；重定
 ## 本机 y123 部署补丁边界
 
 shutdown_manager 管理的录制/转换进程只发一次停止信号并等待，不再进入 terminate/kill 兜底；两个登记表注销同步。关注 feed 只作正向直播提示，缺失或失败不解释为关播。修改时运行 test_local_migration、test_douyin_follow、test_graceful_shutdown 对应用例。
+
+> 工程约束见[AGENTS](../../AGENTS.md)；读数依据见[实测依据](measured-evidence.md)；返回[文档导航](../README.md)。

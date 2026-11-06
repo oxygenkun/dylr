@@ -37,7 +37,7 @@ def test_package_import_leaves_entry_initialization_to_entry(tmp_path: Path) -> 
 def test_source_and_frozen_entries_keep_resources_at_app_root(monkeypatch: pytest.MonkeyPatch, frozen: bool) -> None:
     process = types.SimpleNamespace(**vars(sys))
     process.argv = [str(ROOT / "src" / "main.py")]
-    process.executable = str(ROOT / "DouyinLiveRecorder")
+    process.executable = str(ROOT / "dylr")
     process.frozen = frozen
     monkeypatch.setattr(logger_module, "sys", process)
     assert Path(logger_module._app_root()) == ROOT

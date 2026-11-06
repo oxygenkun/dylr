@@ -1,6 +1,6 @@
 # WP-A / S-1（严重）：Shopee 短链落地页的凭据外泄 + 内网 SSRF 回归锁。
 #
-# 病史（docs/worklog/CODE_REVIEW_2026-09-29_2.md 的 S-1，与已定稿的小红书 SEV-2214 同型）：
+# 病史（ARCHIVE/worklog/CODE_REVIEW_2026-09-29_2.md 的 S-1，与已定稿的小红书 SEV-2214 同型）：
 # get_shopee_stream_url 在「非直链且非店铺主页」分支用 request(redirect_url=True) 解短链，
 # 解出的落地页 URL 由**响应**决定并直接替换 url；随后 host_suffix 由裸字符串切分得出、
 # 拼成 api_host=https://live.shopee.{host_suffix}，再对它发三次请求（ongoing / replay_list /

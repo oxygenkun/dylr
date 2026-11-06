@@ -1,6 +1,6 @@
 # 项目结构
 
-本文按当前源码列出目录、文件职责与主要调用关系。快速概览见 [README](../../README.md#-项目结构)，实现说明见 [CODE_WIKI](../../CODE_WIKI.md#核心模块详解)，工程约定以 [AGENTS.md](../../AGENTS.md) 为准。历史审查和更新日志中的路径描述当时的代码布局。
+本文按当前源码列出目录、文件职责与主要调用关系。快速概览见 [README](../../README.md#-项目结构)，实现说明见 [架构专题](../architecture/README.md)，工程约定以 [AGENTS.md](../../AGENTS.md) 为准。历史审查和更新日志中的路径描述当时的代码布局。
 
 ## 仓库目录
 
@@ -14,19 +14,24 @@
 | `tests/fixtures/`、`tests/golden/` | 测试辅助程序与 FFmpeg 命令基线 |
 | `tool/` | 构建、覆盖率、翻译提取、冒烟与独立录制工具 |
 | `typings/execjs/` | PyExecJS 类型存根 |
-| `docs/development.md`、`docs/development-en.md` | 中英文开发指南 |
-| `docs/faq.md`、`docs/faq-en.md` | 中英文常见问题（Q & A） |
-| `docs/agent-reference/` | 目录、已知坑、实测依据和共享经验参考 |
-| `docs/changelog/` | 中英文发布说明与历史架构日志、发布说明归档 |
-| `docs/worklog/` | 历史审查、诊断与提案 |
+| `docs/development.md` | 开发指南 |
+| `docs/configuration.md` | 配置参考 |
+| `docs/usage.md` | 使用说明 |
+| `docs/deployment.md` | 部署说明 |
+| `docs/faq.md` | 常见问题（Q & A） |
+| `docs/agent-reference/` | 目录、已知坑与实测依据参考 |
+| `docs/changelog/` | 发布说明与近期实现记录 |
+| `ARCHIVE/` | 历史审查、诊断、提案、旧发布说明与不兼容资料；默认不扫描 |
 | `.agents/skills/` | 入库的项目技能，清单见 AGENTS.md |
 | `.github/` | Issue / PR 模板、共用重试动作、CI、发布与镜像审计工作流 |
 | `pyproject.toml`、`uv.lock` | 项目元数据、唯一版本声明、依赖与开发工具配置、依赖锁定 |
 | `Dockerfile`、`docker-compose.yaml` | CLI / Web 镜像构建与服务编排 |
 | `.gitignore`、`.dockerignore` | 仓库与镜像构建上下文排除项 |
 | `.pre-commit-config.yaml`、`.coveragerc-concurrency` | prek 提交检查与并发专项覆盖率配置 |
-| `README.md`、`README_EN.md` | 中英文使用、部署指南与独立文档入口 |
-| `CODE_WIKI.md` | 架构与实现说明（中文） |
+| `README.md` | 使用、部署指南与文档入口 |
+| `docs/README.md` | 文档导航与维护边界 |
+| `docs/architecture/` | 按主题拆分的架构与实现说明 |
+| `docs/build-and-release.md` | 打包、冒烟、CI 与发布说明 |
 | `AGENTS.md` | 工程约定、检查时机与完成定义 |
 | `index.html` | 独立 M3U8 播放器，与 `web/` 面板入口分开 |
 | `LICENSE` | MIT 许可证 |
@@ -124,15 +129,9 @@ src/
 └── external_resources.json      # 下载地址、版本、哈希、签名与 JS 哈希元数据
 ```
 
-## 主要调用关系与边界
+## 调用关系入口
 
-1. `src/main.py` 设置终端编码并确保配置已迁移，再按 `[Web] web_enable` 分流：关闭时调用 `recording.engine.initialize_process(cli=True)` 和 `recording.engine.main()`；开启时交给 `src/web.py` 的 `run()`，后者校验监听与认证配置，在守护线程运行引擎，主线程运行 uvicorn 与 `api.routes.create_app()` 创建的应用。`src/web.py` 只是面板实现，不是启动入口。
-2. `recording/engine.py` 读取配置、热加载房间并启动各房间的 `recording.session.start_record()`。每房间独立线程，异步平台请求由各自的 `asyncio.run()` 驱动；没有进程级共享事件循环。
-3. `recording/session.py` 调用 `streams/dispatch.py` 分派平台，平台实现经 `spider.py` 获取数据、`stream.py` 解析地址和画质，再由 `selection.py` 选源。FFmpeg 命令和运行监控在 session，进程清理在 process，转码等后处理在 postprocess。
-4. 弹幕参数由平台分派写入房间上下文，session 经 `src/__init__.py` 工厂启动 `danmaku/collector.py`。字幕、实时弹幕监控和账号关注/私信监控分别归属 `danmaku/srt_writer.py`、`danmaku/monitor.py`、`monitors/`。
-5. Web API 通过 `recording/state.py`、`recording/status.py`、`config/io.py` 和 `api/config.py` 读写状态与配置，业务模块不反向导入 CLI / Web 入口。配置写入共享 `state.file_update_lock`。
-6. `support/` 提供通用支撑；`app/` 负责启动与停止收尾，不导入录制状态。配置操作归 `config/`，JS 执行归 `runtime/`，URL/Cookie 格式处理归 `network/urls.py`，平台解析兜底归 `streams/errors.py`。
-7. 异步 HTTP 与同步选源探针共用 `network/targets.py` 的地址判定；网络层不导入 `api/`。通用 gzip/zlib 弹幕解压归 `danmaku/compression.py`，B站专用 Brotli 解压留在平台实现。
+系统流程与依赖边界只在 [架构总览](../architecture/README.md#工作流程与依赖边界) 维护；本页保留目录与文件清单。协议、配置、网络及录制实现从该页进入对应专题。
 
 ## 工具与运行期目录
 
@@ -143,7 +142,7 @@ src/
 | `tool/extract_i18n_strings.py` | 从源码提取文案并比对英文目录 |
 | `tool/smoke_test.py`、`tool/smoke_web.json` | 对运行中的 Web / HTTP 接口做冒烟检查 |
 | `tool/_ci_web_smoke.sh` | CI 中启动 Web、等待就绪与收尾 |
-| `tool/douyin_live_recorder_standalone.py` | 纯标准库单文件录制工具，保留独立实现 |
+| `tool/dylr_standalone.py` | 纯标准库单文件录制工具，保留独立实现 |
 | `tool/spike_arm64_static_ffmpeg.sh` | Linux arm64 静态 FFmpeg 调研辅助脚本 |
 
 源码从项目根目录运行，不安装项目自身：
@@ -155,3 +154,5 @@ uv run --locked python -m src.main
 ```
 
 根目录的 `config/` 保存 `config.toml` 和 `URL_config.ini`；`downloads/`、`logs/`、`backup_config/` 分别保存录制文件、运行日志和配置备份。`ffmpeg/`、`node/` 是本地运行时目录；这些路径按需创建，不要求首次检出时存在。冻结运行时以可执行文件所在目录定位用户数据，两种运行形态共享 `_internal/` 中的打包资源。
+
+> 实现说明见[架构导航](../architecture/README.md)；打包见[构建与发布](../build-and-release.md)；返回[文档导航](../README.md)。

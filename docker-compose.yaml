@@ -1,5 +1,5 @@
 # =============================================================================
-# DouyinLiveRecorder Docker Compose 配置
+# dylr Docker Compose 配置
 # 唯一入口 python -m src.main：config/config.toml 的 [Web] web_enable 决定是否同时开管理面板
 # （false = 纯录制；true = 面板 + 录制，监听 8000）。Docker 不支持 GUI。
 #
@@ -19,10 +19,10 @@ services:
   # 录制服务：持续监测并录制直播；面板按 web_enable 叠加（进程仍是 src.main）
   # ---------------------------------------------------------------
   recorder:
-    # 镜像名与 Dockerfile LABEL url、pyproject [project.urls] 同源（y123ao6）；pull_policy: build
+    # 镜像名与 Dockerfile LABEL url、pyproject [project.urls] 同源（oxygenkun）；pull_policy: build
     # 下它只作本地 tag 与 compose push 命名，MIN-18 语义不变
-    image: y123ao6/douyin-live-recorder:latest
-    container_name: douyin-live-recorder
+    image: oxygenkun/dylr:latest
+    container_name: dylr
 
     # MIN-18（2026-09-21）：镜像只从本地 build 取，绝不回退去拉远端 :latest——只写 build: 时，
     # 未构建就 `docker compose up` 会让 Compose 按 image 名去 registry 拉 :latest，版本漂移且可能

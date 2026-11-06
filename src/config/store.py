@@ -361,7 +361,7 @@ def migrate_ini_to_toml(ini_path: str | Path, toml_path: str | Path) -> bool:
     parser.read(ini, encoding="utf-8-sig")
     warn_duplicate_options(ini)
     doc = tomlkit.document()
-    doc.add(tomlkit.comment("DouyinLiveRecorder 配置（TOML）。由 config.ini 自动迁移生成。"))
+    doc.add(tomlkit.comment("dylr 配置（TOML）。由 config.ini 自动迁移生成。"))
     for section in parser.sections():
         table = tomlkit.table()
         for key, raw in parser.items(section):
@@ -401,7 +401,7 @@ def ensure_config_migrated(config_path: str | Path, legacy_path: str | Path) -> 
     return True
 
 
-_MIGRATION_HEADER = "# DouyinLiveRecorder 配置（TOML）。\n"
+_MIGRATION_HEADER = "# dylr 配置（TOML）。\n"
 
 
 def read_config_entry(config_path: str | Path, section: str, key: str) -> str | None:

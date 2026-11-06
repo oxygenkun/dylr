@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # =============================================================================
-# DouyinLiveRecorder 单文件整合版 (standalone)
+# dylr 单文件整合版 (standalone)
 # =============================================================================
 # 本文件从工作区的源模块(约 2.1 万行)中抽取并整合核心录制主链路，合并为一个**开箱即用**
 # 的单文件脚本。
@@ -47,10 +47,10 @@
 # 使用
 # -----------------------------------------------------------------------------
 # 本文件位于 tool/ 下，以下命令均在仓库根目录执行：
-#   python tool/douyin_live_recorder_standalone.py --selftest
-#   python tool/douyin_live_recorder_standalone.py --url "https://live.douyin.com/123456" --dry-run
-#   python tool/douyin_live_recorder_standalone.py --url "https://www.huya.com/660002" --once
-#   python tool/douyin_live_recorder_standalone.py --config config/config.ini --url-config config/URL_config.ini
+#   python tool/dylr_standalone.py --selftest
+#   python tool/dylr_standalone.py --url "https://live.douyin.com/123456" --dry-run
+#   python tool/dylr_standalone.py --url "https://www.huya.com/660002" --once
+#   python tool/dylr_standalone.py --config config/config.ini --url-config config/URL_config.ini
 #
 # 依赖与前置条件见文件末尾 RUN_STEPS 常量(可用 --help-steps 打印)。
 
@@ -2563,7 +2563,7 @@ def selftest() -> int:
 # =============================================================================
 
 RUN_STEPS = """
-环境准备与运行步骤 (douyin_live_recorder_standalone.py v@@VERSION@@)
+环境准备与运行步骤 (dylr_standalone.py v@@VERSION@@)
 ================================================================================
 【1. 依赖安装】
   本文件**零第三方依赖**，只需 Python 标准库。但语法基线是 **Python >= 3.14**
@@ -2608,11 +2608,11 @@ RUN_STEPS = """
   - 支持平台：抖音 / 虎牙 / B站 / 斗鱼(其余平台请用原工程完整版)。
 
 【5. 常用命令】(本文件位于 tool/ 下，以下命令在仓库根目录执行)
-  python tool/douyin_live_recorder_standalone.py --selftest          # 离线自检
-  python tool/douyin_live_recorder_standalone.py --help-steps        # 打印本说明
-  python tool/douyin_live_recorder_standalone.py --url "https://live.douyin.com/xxxx" --dry-run
-  python tool/douyin_live_recorder_standalone.py --url "https://www.huya.com/660002" --once --duration 30
-  python tool/douyin_live_recorder_standalone.py --config config.ini --url-config URL_config.ini
+  python tool/dylr_standalone.py --selftest          # 离线自检
+  python tool/dylr_standalone.py --help-steps        # 打印本说明
+  python tool/dylr_standalone.py --url "https://live.douyin.com/xxxx" --dry-run
+  python tool/dylr_standalone.py --url "https://www.huya.com/660002" --once --duration 30
+  python tool/dylr_standalone.py --config config.ini --url-config URL_config.ini
 
 【6. 结果验证方式】
   1) --selftest 全部 [PASS]，退出码 0；
@@ -2630,7 +2630,7 @@ RUN_STEPS = """
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
-        description="DouyinLiveRecorder 单文件整合版(抖音/虎牙/B站/斗鱼)",
+        description="dylr 单文件整合版(抖音/虎牙/B站/斗鱼)",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
     parser.add_argument("--url", action="append", default=[], help="直播间地址，可重复传入")

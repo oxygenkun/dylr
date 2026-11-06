@@ -1,6 +1,6 @@
 # 真机验证 4 项保守实施回归。
 #
-# 4 项原始变更详情见 CODE_WIKI v4.1.0-dev：
+# 4 项原始变更详情见 ARCHIVE/changelog/code-wiki-history-zh.md v4.1.0-dev：
 # ① spider.py：_safe_loads / is_http_url 保护 JSON 解析与 URL scheme 校验
 # ② websocket.py：心跳回调 wait_for 兜底 + 超时主动关连接
 # ③ proxy.py：ProxyInfo 接受 IPv6 主机（[::1] / ::1）

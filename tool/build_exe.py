@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 #
-# DouyinLiveRecorder 可执行文件打包脚本（本地 / GitHub Actions 通用）
+# dylr 可执行文件打包脚本（本地 / GitHub Actions 通用）
 #
 # 一次构建产出唯一入口（纯录制 + 可选面板，均由 python -m src.main 分流）；
 #     exe 与 src/main.py 的对应关系见下方「产物布局」。
@@ -13,8 +13,8 @@
 #     python tool/build_exe.py --dual      # 同时生成 lite（无运行时）与 full（下载并打包 ffmpeg+node）两个 zip
 #
 # 产物布局（onedir + contents_directory='_internal'）：
-#     dist/DouyinLiveRecorder/
-#     ├── DouyinLiveRecorder(.exe)          唯一入口（[Web] web_enable 决定是否带面板）
+#     dist/dylr/
+#     ├── dylr(.exe)          唯一入口（[Web] web_enable 决定是否带面板）
 #     ├── config/ · ffmpeg/ · node/              运行时资源，一律与 exe 同级（不进 _internal/）
 #     └── _internal/                             依赖包 + src/ 及打包资源（i18n/ web/ src/javascript）
 #     划分依据：经 __file__ 定位的资源随 contents_directory 收进 _internal/；经 sys.argv[0]/
@@ -23,8 +23,8 @@
 #     打包参数（datas / hiddenimports / excludes / COLLECT）较多，故本脚本动态生成 spec 后调用 PyInstaller。
 #
 # 产物：
-#     dist/DouyinLiveRecorder/                          发布目录（1 个 exe + 运行时目录 + _internal/ 依赖）
-#     dist/DouyinLiveRecorder-v{ver}-{os}-{arch}{suffix}.zip  压缩包（普通构建 suffix 为空，--dual 为 -lite/-full）
+#     dist/dylr/                          发布目录（1 个 exe + 运行时目录 + _internal/ 依赖）
+#     dist/dylr-v{ver}-{os}-{arch}{suffix}.zip  压缩包（普通构建 suffix 为空，--dual 为 -lite/-full）
 #
 import argparse
 import http.client
@@ -46,10 +46,10 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from src.runtime.installer import install_runtime  # noqa: E402 -- 直接执行脚本前须先加入项目根目录。
 
-APP_NAME = "DouyinLiveRecorder"
+APP_NAME = "dylr"
 DIST_DIR = PROJECT_ROOT / "dist"
 RELEASE_DIR = DIST_DIR / APP_NAME
-SPEC_PATH = PROJECT_ROOT / "DouyinLiveRecorder.spec"
+SPEC_PATH = PROJECT_ROOT / "dylr.spec"
 # 与下方 spec 模板中的 contents_directory 保持一致：冻结后所有资源落在 _internal/
 CONTENTS_DIR = "_internal"
 IS_WIN = sys.platform == "win32"
@@ -482,7 +482,7 @@ def _clean_runtime_artifacts_from_release() -> list[str]:
 
 def _zip_member_is_runtime_artifact(name: str) -> bool:
     # 判定 zip 成员名（`unzip -l` 看到的那一列）是否为不得分发的运行期产物。
-    # 成员名一律以 `DouyinLiveRecorder/` 打头（_zip_release_dir 的写法，与旧 shutil.make_archive 同构），
+    # 成员名一律以 `dylr/` 打头（_zip_release_dir 的写法，与旧 shutil.make_archive 同构），
     # 故先剥掉该前缀再按相对路径判定；zip 规范的分隔符恒为 '/'（不用 os.sep，否则 Windows 上未必判得出、
     # Linux CI 上又恰好能过——「本地绿 CI 绿但判据不同」）。
     parts = [p for p in name.replace("\\", "/").split("/") if p and p != "."]
@@ -530,13 +530,13 @@ def make_zip(version: str, suffix: str = "") -> Path:
     arch = platform.machine().lower()
     # `.zip` 必须与其余段拼进同一个 f-string，**不得**改用 Path.with_suffix(".zip")：版本号本身带点
     # （如 4.3.0），with_suffix 把最后一个点之后的全部内容当旧扩展名整段丢弃——实测（Windows 架构段是
-    # amd64）DouyinLiveRecorder-v4.3.0-windows-amd64-lite → DouyinLiveRecorder-v4.3.zip，于是 lite 与 full
+    # amd64）dylr-v4.3.0-windows-amd64-lite → dylr-v4.3.zip，于是 lite 与 full
     # 落到同一路径、full 静默覆盖 lite（平台/架构标识也一起没了）。2026-09-27 CI 实红即此形态：
     # build-release.yml 的 lite/full 校验与 dist/*-lite.zip 上传通配双双落空。
     zip_path = DIST_DIR / f"{APP_NAME}-v{version}-{os_tag}-{arch}{suffix}.zip"
     # version / suffix 一旦含路径分隔符，f-string 拼出的就不再是**单个文件名**而是子路径，
     # 成品会落到 DIST_DIR 之外（Windows 下 pathlib 把 `\` 当分隔符，实测 `make_zip("4.3.0\p1")`
-    # 的目标是 dist/DouyinLiveRecorder-v4.3.0/p1-<os>-<arch>.zip）。读版本失败时会回退 "0.0.0"，
+    # 的目标是 dist/dylr-v4.3.0/p1-<os>-<arch>.zip）。读版本失败时会回退 "0.0.0"，
     # 静默写到别处比报错更难查，故按「父目录必须还是 dist/」这一结构性不变量拦住（同时覆盖 suffix）。
     if zip_path.parent != DIST_DIR:
         raise SystemExit(f"[build][FATAL] zip 产物名含路径分隔符，会写到 {DIST_DIR} 之外：{zip_path}")
@@ -553,7 +553,7 @@ def _clean_stale_release_zips() -> list[str]:
     # 管辖。为什么必须删（2026-09-27 复核发布链时列为未闭合项）：build-release.yml 的「Upload build
     # artifact (inspection only)」用 `path: dist/*.zip`，凡是复用工作区的 runner（自建 / 手动 `--dual`
     # 反复跑）都会把上一轮的 zip 连同本轮一起扫进附件——包括 with_suffix 截断缺陷时期那种名字里既无平台也
-    # 无变体的 `DouyinLiveRecorder-v4.3.zip`。必须在**第一个** zip 之前调用：放进 make_zip 内会让第二次删掉
+    # 无变体的 `dylr-v4.3.zip`。必须在**第一个** zip 之前调用：放进 make_zip 内会让第二次删掉
     # 第一次的产物。
     removed: list[str] = []
     for victim in sorted(DIST_DIR.glob(f"{APP_NAME}-v*.zip")):

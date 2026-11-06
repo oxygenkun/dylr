@@ -321,7 +321,7 @@ wheels = [
 ]
 
 [[package]]
-name = "douyinliverecorder"
+name = "dylr"
 version = "4.6.0"
 source = { virtual = "." }
 dependencies = [

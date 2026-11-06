@@ -8,7 +8,7 @@
 # 构建逻辑统一由仓库根目录 tool/build_exe.py 承担（本地 / CI 行为一致）：
 #   · --dual   PyInstaller 只跑一次，先产 lite（不含运行时）再产 full（含 ffmpeg+node）
 #   · --smoke  对打出的单入口依次做启动冒烟（含面板探活）
-#   产物命名：dist/DouyinLiveRecorder-v<版本>-<os>-<arch>{-lite,-full}.zip
+#   产物命名：dist/dylr-v<版本>-<os>-<arch>{-lite,-full}.zip
 #   · 网络安装（choco / apt / brew / uv）统一经 .github/actions/retry 复合动作
 #     包装（线性退避重试），与 ci.yml 共用同一实现——重试策略调整只改 action.yml 一处。
 #
@@ -344,7 +344,7 @@ jobs:
           !(github.event_name == 'workflow_dispatch' && inputs.create_release == true)
         uses: actions/upload-artifact@v7
         with:
-          name: DouyinLiveRecorder-${{ matrix.platform }}
+          name: dylr-${{ matrix.platform }}
           path: dist/*.zip
           compression-level: 0        # zip 已压缩，跳过二次压缩以加速上传
           if-no-files-found: error
@@ -454,7 +454,7 @@ jobs:
           prerelease: false
           fail_on_unmatched_files: true
           body: |
-            ## DouyinLiveRecorder v${{ needs.prepare.outputs.version }}
+            ## dylr v${{ needs.prepare.outputs.version }}
 
             ### 下载说明
 

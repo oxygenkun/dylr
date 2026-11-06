@@ -3,7 +3,7 @@
 # -----------------------------------------------------------------------------
 # 触发：仅 push tag `v*`。latest 只允许由**不可变的 tag 推**出来，
 #   不留 workflow_dispatch 覆盖 latest 的口子（那等于把发布物变成可反复改写的别名）。
-#   依据：docs/worklog/PROPOSAL_2026-10-02_linux-arm64-ffmpeg.md §二.5 与 §五.1。
+#   依据：ARCHIVE/worklog/PROPOSAL_2026-10-02_linux-arm64-ffmpeg.md §二.5 与 §五.1。
 # 凭据：自动注入的 GITHUB_TOKEN + job 级 packages: write，不引入任何**手工配置**的 secret；
 #   锁的形态是「secrets.* 引用集合恰等于 {secrets.GITHUB_TOKEN}」，不是「不含 secrets.」
 #   ——后者会把 login 唯一能用的那把也禁掉。
@@ -66,7 +66,7 @@ jobs:
           set -euo pipefail
           # 镜像名用 GITHUB_REPOSITORY_OWNER，绝不用仓库名或上游命名空间：fork 推自己的命名空间，
           # 不会撞上游；GHCR 强制小写，故显式 tr 一遍（owner 带大写时推送会直接 4xx）。
-          IMAGE="${REGISTRY}/$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')/douyin-live-recorder"
+          IMAGE="${REGISTRY}/$(echo "${GITHUB_REPOSITORY_OWNER}" | tr '[:upper:]' '[:lower:]')/dylr"
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             VERSION="${GITHUB_REF_NAME#v}"
           else
