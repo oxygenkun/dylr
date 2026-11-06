@@ -1,7 +1,7 @@
 # =============================================================================
 # 复合动作：网络安装类命令的统一重试包装
 # -----------------------------------------------------------------------------
-# 用途：pip / apt 等网络安装步骤偶发失败（PyPI 抖动、源镜像瞬断）时按线性
+# 用途：uv / apt 等网络安装步骤偶发失败（PyPI 抖动、源镜像瞬断）时按线性
 #       退避重试，避免整条流水线因瞬时网络问题变红。
 # 收敛动机：ci.yml 原先 8 处、build-release.yml 4 处几乎相同的内联重试脚本，
 #       重试策略（次数 / 退避基数）改动需要逐处手改、极易漂移；抽到此处后
@@ -12,10 +12,9 @@
 #   - name: Install dependencies
 #     uses: ./.github/actions/retry
 #     with:
-#       label: pip 安装依赖
+#       label: uv 锁定安装依赖
 #       command: >-
-#         python -m pip install --upgrade pip
-#         && pip install -r requirements.txt
+#         uv sync --locked --extra dev
 #
 # 语义约定：
 #   · command 以 bash 语义经 `bash -c` 执行，支持 && 链接，失败即整体重试；

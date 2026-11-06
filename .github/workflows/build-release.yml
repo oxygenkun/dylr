@@ -7,9 +7,9 @@
 #
 # 构建逻辑统一由仓库根目录 tool/build_exe.py 承担（本地 / CI 行为一致）：
 #   · --dual   PyInstaller 只跑一次，先产 lite（不含运行时）再产 full（含 ffmpeg+node）
-#   · --smoke  对打出的 CLI / Web 两个入口依次做启动冒烟
+#   · --smoke  对打出的单入口依次做启动冒烟（含面板探活）
 #   产物命名：dist/DouyinLiveRecorder-v<版本>-<os>-<arch>{-lite,-full}.zip
-#   · 网络安装（choco / apt / brew / pip）统一经 .github/actions/retry 复合动作
+#   · 网络安装（choco / apt / brew / uv）统一经 .github/actions/retry 复合动作
 #     包装（线性退避重试），与 ci.yml 共用同一实现——重试策略调整只改 action.yml 一处。
 #
 # 版本号事实源：pyproject.toml [project].version（唯一）。
@@ -470,7 +470,7 @@ jobs:
             ```
 
             > 产物由 GitHub Actions 在 `windows-latest` / `ubuntu-latest` / `ubuntu-24.04-arm` / `macos-latest`
-            > 四个平台上经 `tool/build_exe.py --smoke --dual` 构建，并已通过 CLI / Web 两入口启动冒烟测试。
+            > 四个平台上经 `tool/build_exe.py --smoke --dual` 构建，并已通过单入口启动冒烟测试（含面板探活）。
             > 可执行文件**未做代码签名**，首次运行时系统可能提示未知发布者。
 
       - name: Write job summary

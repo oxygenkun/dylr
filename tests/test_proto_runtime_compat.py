@@ -2,7 +2,7 @@
 #
 # src/proto/douyin_pb2.py 是 protoc 25.x（gencode 4.25.3）生成物、标注 DO NOT EDIT，本环境无
 # protoc / grpcio-tools 无法重新生成，因此护栏落在三件事：
-#   1. requirements.txt / pyproject.toml 给 runtime 加 `<8` 上限；
+#   1. pyproject.toml 给 runtime 加 `<8` 上限；
 #   2. 断言已安装 runtime 满足声明区间且不早于 gencode 版本——升到窗口外时 CI 立刻变红，
 #      而不是等到线上弹幕解码时才炸；
 #   3. 断言 douyin_pb2 能 import 并完成一次往返编解码（不兼容的典型症状：AttributeError /
@@ -10,6 +10,7 @@
 # 升级 runtime 的正确姿势：先用**同代 protoc**重新生成 *_pb2.py，再放开上限，并回归本文件。
 
 import re
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -28,19 +29,15 @@ def _gencode_version() -> tuple[int, int, int]:
 
 
 def _declared_protobuf_specifier() -> str:
-    # 从 requirements.txt 取声明区间（形如 `protobuf>=6.33.5,<8 # 注释`）
-    for line in (_REPO_ROOT / "requirements.txt").read_text(encoding="utf-8").splitlines():
-        stripped = line.split("#", 1)[0].strip()
-        if stripped.startswith("protobuf"):
-            return stripped[len("protobuf") :].strip()
-    # 这里刻意用 raise 而非 pytest.fail()：CI 的 typecheck job 只装 requirements.txt + mypy，
-    # 未装 pytest 时 `import pytest` 解析为 Any，pytest.fail() 的 NoReturn 丢失，mypy 会认为
-    # 本函数可能隐式返回 None 而报 [return]（本机装了 pytest 则看不到）。raise 与是否装 pytest 无关。
-    raise AssertionError("requirements.txt 中未找到 protobuf 声明")
+    project = tomllib.loads((_REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8"))["project"]
+    for dependency in project["dependencies"]:
+        if dependency.startswith("protobuf"):
+            return dependency.removeprefix("protobuf").strip()
+    raise AssertionError("pyproject.toml 中未找到 protobuf 声明")
 
 
 def test_declared_specifier_is_bounded_above() -> None:
-    # 上限是 F-14 的核心护栏：无上限意味着 pip 会自动升到下一个大版本，
+    # 上限是 F-14 的核心护栏：无上限意味着更新依赖时可能升到下一个大版本，
     # gencode 兼容窗口可能在某次升级后突然关闭。
     spec = _declared_protobuf_specifier()
     assert "<" in spec, f"protobuf 声明缺少上限（当前：{spec}）——F-14 护栏失效"

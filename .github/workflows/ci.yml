@@ -8,20 +8,18 @@
 #   · Node.js 仅作为「JS 签名脚本运行时」：src/javascript/*.js 由 exejs / PyExecJS
 #     调起，src/runtime/node.py 负责探测与自动下载 —— 因此 CI 只需保证 node 可执行，
 #     而非构建前端。
-#   · 依赖管理为单源双写：requirements.txt（运行时）与 pyproject.toml
-#     [project.optional-dependencies]（dev / build）。**没有 lock 文件**
-#     （uv.lock 仅随仓库分发，镜像/CI 均用 pip 走 requirements.txt，不消费它），
-#     故 pip 缓存 key 以这两个文件的 hash 为准。
+#   · Python 依赖由 pyproject.toml 声明，uv.lock 锁定；各 job 使用 uv sync --locked
+#     按需安装基础依赖及 dev / build extra，uv 缓存以 uv.lock 为 key。
 #   · 打包由根目录 tool/build_exe.py（PyInstaller）承担，本地与 CI 行为一致。
 #
 # Job 拓扑（lint / audit / type / test / build 七路并行，收尾串行汇总）：
 #
 #   setup ──┬── static             格式 / 导入序 / 版本一致性 / 派生元数据一致性 / 运行时钉定表结构
-#           ├── deps-audit         pip-audit 按 OSV 审计 requirements.txt（补-05）
+#           ├── deps-audit         pip-audit 审计 uv.lock 全部依赖闭包与安全下限
 #           ├── test               pytest 矩阵（3.14）+ 全局与逐模块覆盖率检查 + Web 面板 HTTP 冒烟
 #           ├── concurrency-test   线程安全 / 跨事件循环锁 / 速率限制专项
 #           ├── integration-verify ffmpeg / node 真实环境探测验证
-#           └── build-verify       PyInstaller lite 打包 + CLI/Web 两入口冒烟
+#           └── build-verify       PyInstaller lite 打包 + 单入口冒烟（含面板探活）
 #                            └────► ci-summary（唯一 required check，汇总上游结果）
 #
 #   职责边界：**本工作流止于验证，不含部署 / 发布**——Release 产出由
@@ -33,12 +31,11 @@
 #   · actions 大版本：checkout@v7 / setup-python@v7 / setup-node@v7 /
 #     upload-artifact@v7 —— 与 build-release.yml 完全一致，避免两份工作流
 #     各自漂移出不同版本的 action 行为。
-#   · 依赖缓存：统一 setup-python 内置 pip 缓存，key =
-#     hash(requirements.txt + pyproject.toml)（无 lock 文件）；setup-node
-#     不开缓存（仓库无 package.json，开了会直接报错）。
+#   · 依赖缓存：统一 setup-uv 缓存，以 uv.lock 为 key；setup-node 不开缓存
+#     （仓库无 package.json，开了会直接报错）。
 #   · 超时：每个 job 显式 timeout-minutes（含 setup / summary 轻量 job），
 #     卡死不再白烧默认 6 小时额度。
-#   · 网络重试：pip / apt 安装统一经 .github/actions/retry 复合动作
+#   · 网络重试：uv / apt 安装统一经 .github/actions/retry 复合动作
 #     （线性退避 ×3），实现收敛在 action.yml 一处，勿在 job 内重新内联。
 #   · apt 强化参数（与 build-release.yml 的 Linux 构建一致）：
 #     DEBIAN_FRONTEND=noninteractive（防交互卡死）+ Acquire::Retries=3
@@ -62,7 +59,7 @@
 #                              **传参口径（MIN-2263）**：该 secret 只以 step 级 env 出现在
 #                              「Detect Codecov token」与「Upload coverage to Codecov」两步，
 #                              test job 不再有 job 级 env——否则 token 会进入 pytest（执行
-#                              仓库测试代码）与 pip 安装的第三方包所在的整棵进程树。
+#                              仓库测试代码）与 uv 安装的第三方包所在的整棵进程树。
 # =============================================================================
 
 name: CI
@@ -141,7 +138,7 @@ jobs:
       # 「skipped 与 passed 在汇总里不可区分」同一形态的假绿，必须消灭。手动触发的语义本来
       # 就是「跑全量」，故不再做路径过滤。
       # [历史注] 原过滤口径（2026-09-20 定稿）为：src/**、tests/**、tool/**、i18n/**、
-      # web/**、源码入口（main/web/i18n/msg_push.py）、requirements.txt、pyproject.toml、
+      # web/**、源码入口（main/web/i18n/msg_push.py）、pyproject.toml、
       # uv.lock、.coveragerc-concurrency、Dockerfile、
       # docker-compose.yaml、.github/workflows/**、.github/actions/** 归入 python 组。
 
@@ -190,14 +187,8 @@ jobs:
         run: python -m ruff check .
 
   # ── 1.5 依赖漏洞审计（pip-audit，补-05）────────────────────────────────
-  # 本仓运行时清单刻意「只有下限、无上限」（唯一例外 protobuf<8），且 uv.lock 不参与
-  # 镜像/CI 安装，于是「声明区间内仍含已知受影响版本」这类问题在既有检查里完全不可见
-  # （starlette 旧下限 0.49.1 就把 CVE-2026-48710 的 <=1.0.0 整段留在合法区间内）。
-  # pip-audit 直查 OSV：解析 requirements.txt 到临时环境后逐个比对公告。
-  # 刻意只装在本 job（**不进 requirements.txt / [project.dependencies]**：
-  # 它是审计工具、不是运行时依赖，与 pytest/black 同理归 dev 侧）。
-  # 独立成 job 而非塞进 static：static 只装两个秒级 lint 工具，pip-audit 要解析全部
-  # 运行时依赖（分钟级），混在一起会拖慢最常被看的格式检查，且失败归因会含糊。
+  # 审计 uv.lock 中的运行时、dev/build 依赖闭包，并复核声明及约束中的安全下限。
+  # pip-audit 属 dev extra，按锁文件安装；审计单独成 job，避免拖慢静态检查。
   deps-audit:
     name: Dependency audit (pip-audit)
     needs: setup
@@ -225,32 +216,25 @@ jobs:
         with:
           label: uv 安装 pip-audit
           command: >-
-            uv pip install pip-audit
+            uv sync --locked --no-dev --extra dev
 
-      # 审计对象 = 从 uv.lock 导出的基础依赖闭包，与默认镜像实际安装的版本相同。
-      # 而非 pyproject 的 dev/build extras：那些不进运行时。
+      # 审计基础依赖及全部 extras，覆盖运行时、开发和构建工具的间接依赖。
       # --strict 无需额外传：发现漏洞时 pip-audit 本身即以非 0 退出。
       #
-      # PYTHONUTF8=1（与 MID-63 同源，2026-09-21 本地实测补）：pip-audit 解析清单走
-      # pip-requirements-parser 的 auto_decode()，它用的是 locale.getpreferredencoding(False)
-      # 而不是 UTF-8——非 UTF-8 locale 下会在读 requirements.txt 的中文注释时直接抛
-      # UnicodeDecodeError（本机 Windows/GBK 实测 rc=1、崩溃在 decode 而非漏洞判定）。
-      # ubuntu runner 默认 UTF-8 不受影响，但仍显式钉住，避免任何换 locale 后「检查换个死法」。
-      - name: Audit runtime requirements against OSV
+      # 明确使用 UTF-8，避免审计工具受 runner locale 影响。
+      - name: Audit locked dependencies
         env:
           PYTHONUTF8: "1"
+        shell: bash
         run: |
-          uv export --locked --no-dev --no-emit-project --no-hashes --output-file /tmp/dlr-runtime-requirements.txt
-          pip-audit -r /tmp/dlr-runtime-requirements.txt --progress-spinner off --timeout 120
+          set -euo pipefail
+          locked_requirements=$(mktemp)
+          trap 'rm -f "$locked_requirements"' EXIT
+          uv export --locked --all-extras --no-dev --no-emit-project --no-hashes --output-file "$locked_requirements"
+          uv run --locked --no-sync pip-audit -r "$locked_requirements" --no-deps --disable-pip --progress-spinner off --timeout 120
 
-      # 下限复核（2026-09-21 补-05 的实测延伸，**不可删**）：上一步是「解析模式」，
-      # 只会把每条 >=X 解析到区间内**最新**版本再审计，因此对「下限自身落在受影响段」
-      # 完全失明。本地实测同一条 requirements.txt：解析模式 rc=0（No known vulnerabilities），
-      # 而逐项下限 + --no-deps 模式 rc=1，报出 starlette 1.0.1（PYSEC-2026-2280/2281/248/249）
-      # 与 protobuf 6.31.1（PYSEC-2026-1805）、h2 4.3.0（PYSEC-2026-3628，2026-09-26 抓出）
-      # ——正是本仓「只有下限」清单的风险形态：三次都是「下限自身落在受影响段」，解析模式全瞎。
-      # 本步把下限逐条钉成 == 再审计，才真正守住 AGENTS.md「安全下限」条目。
-      - name: Audit declared floors against OSV (no resolution)
+      # 把直接依赖与 uv 间接依赖约束的下限钉成 == 后审计，防止回落到受影响版本。
+      - name: Audit declared floors (no resolution)
         env:
           PYTHONUTF8: "1"
         shell: bash
@@ -260,8 +244,8 @@ jobs:
           trap 'rm -f "$floors"' EXIT
           python - "$floors" <<'PY'
           import re, sys, tomllib
-          project = tomllib.load(open("pyproject.toml", "rb"))["project"]
-          specs = project["dependencies"]
+          config = tomllib.load(open("pyproject.toml", "rb"))
+          specs = config["project"]["dependencies"] + config["tool"]["uv"].get("constraint-dependencies", [])
           out = []
           for spec in specs:
               m = re.match(r"^([A-Za-z0-9_.\[\]-]+)\s*>?=\s*([0-9][0-9a-zA-Z.]*)", spec)
@@ -271,7 +255,7 @@ jobs:
           open(sys.argv[1], "w", encoding="utf-8").write("\n".join(out) + "\n")
           print(f"复核 {len(out)} 条声明下限")
           PY
-          pip-audit -r "$floors" --no-deps --progress-spinner off --timeout 120
+          uv run --locked --no-sync pip-audit -r "$floors" --no-deps --disable-pip --progress-spinner off --timeout 120
 
   # ── 2. 静态类型检查 ──────────────────────────────────────────────────────
   # ── 3. 单元测试 + 覆盖率检查 ─────────────────────────────────────────────
@@ -282,7 +266,7 @@ jobs:
     timeout-minutes: 25
     # MIN-2263：原先此处有 job 级 `env: CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}`，
     # 而全 job 只有「Upload coverage to Codecov」一步消费它。job 级 env 会把该 secret
-    # 注入下面**整棵进程树**——包括 pytest 执行的仓库测试代码与 pip 刚装上的第三方包，
+    # 注入下面**整棵进程树**——包括 pytest 执行的仓库测试代码与 uv 刚装上的第三方包，
     # 任何一个被劫持即可读到 token。现收敛为「消费点局部传参」（与本文件顶部 macOS brew
     # 同一口径）：仅下面的探测步骤与上传步骤各自 step 级 env 拿得到，其余步骤看不到。
     strategy:
@@ -320,7 +304,7 @@ jobs:
           # 无 package.json / lock 文件，开启 npm 缓存会直接报错，故不设置 cache
 
       # 可选能力的前置探测（MIN-2263）：只输出「是否配置了 token」这一布尔值，
-      # token 本体仅存在于本步骤进程与下面的上传步骤，不进入 pytest / pip 的进程树。
+      # token 本体仅存在于本步骤进程与下面的上传步骤，不进入 pytest / uv 的进程树。
       - name: Detect Codecov token
         id: codecov
         if: matrix.python-version == needs.setup.outputs.python_min

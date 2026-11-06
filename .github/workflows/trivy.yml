@@ -7,8 +7,8 @@
 # trivy —— 镜像层漏洞扫描：advisory only（**不是检查**，勿当检查读）
 # -----------------------------------------------------------------------------
 # 定位与本仓另一条漏洞审计的分工，二者覆盖面互不重叠：
-#   · ci.yml 的 `deps-audit` job：`pip-audit -r requirements.txt`，按 OSV 审计
-#     **镜像与 CI 实际消费的那份依赖清单**，是 required check 的一部分
+#   · ci.yml 的 `deps-audit` job：通过 pip-audit 审计从 uv.lock 临时导出的
+#     **运行时及 dev/build 依赖闭包、声明与约束下限**，是 required check 的一部分
 #     （在 ci-summary 的 needs 里）。出现新公告时按 AGENTS.md「安全下限」条目抬高下限。
 #   · 本 workflow：把 Dockerfile 真构建一遍，再扫**镜像里全部层**（含 apt 装进镜像的
 #     ffmpeg / nodejs / 基础镜像 libssl 等 Python 清单之外的东西）。覆盖面更广但更粗，

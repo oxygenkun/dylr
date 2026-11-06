@@ -1,13 +1,9 @@
 # 提交时运行 Ruff、配置语法、文件大小检查。
-# 安装：uv run --locked --extra dev pre-commit install
-# 手动执行：uv run --locked --extra dev pre-commit run --all-files
-
-default_language_version:
-  python: python3
+# 安装：uv run --locked --extra dev prek install
+# 手动执行：uv run --locked --extra dev prek run --all-files
 
 repos:
-  - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
+  - repo: builtin
     hooks:
       - id: check-yaml
       - id: check-toml
