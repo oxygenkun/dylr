@@ -132,3 +132,17 @@ class TestReconnectAtEofDroppedForHls:
             "standalone 的 build_ffmpeg_cmd 与 run_ffmpeg 两处命令必须同步移除"
             f"-reconnect_at_eof（m3u8 输入），实际守卫数: {len(guards)}"
         )
+
+
+class TestLiveInputPacing:
+    # 直播输入不得加 -re：它按时间戳节流（本用于文件实时回放），直播流断点/时间戳回跳时
+    # ffmpeg 会空等——进程还在、输出文件不再增长。2026-11-03 真机：50s 上限只落 34.6s
+    # （视频包止于 27.7s、音频 36s）；移除后用同一房间复验。
+
+    def test_re_flag_absent_from_both_command_builders(self) -> None:
+        for path in (_MAIN_PATH, _STANDALONE_PATH):
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            literals = [
+                node.value for node in ast.walk(tree) if isinstance(node, ast.Constant) and isinstance(node.value, str)
+            ]
+            assert "-re" not in literals, f"{path.name} 仍在使用 -re 钳制直播输入"

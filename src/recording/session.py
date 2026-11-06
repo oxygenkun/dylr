@@ -119,7 +119,7 @@ def direct_download_stream(
                 headers.update(header_params)
             headers["User-Agent"] = get_record_user_agent(platform) or MOBILE_UA
 
-            with httpx.Client(timeout=15, verify=policy.should_verify_stream_tls(platform)) as client:
+            with httpx.Client(timeout=15, verify=policy.should_verify_stream_tls(platform), trust_env=False) as client:
                 with client.stream("GET", source_url, headers=headers, follow_redirects=True) as response:
                     if response.status_code != 200:
                         logger.error(
@@ -1000,7 +1000,8 @@ def _build_ffmpeg_input_args(
         "1",
         "-reconnect_at_eof",
         "1",
-        "-re",
+        # 直播输入不加速率钳制：-re 按时间戳节流，HLS 断点/回跳时会让 ffmpeg 空等，
+        # 表现为「进程还在、输出文件不再增长」（2026-11-03 实测 50s 只落 34.6s）。
         "-i",
         real_url,
         "-bufsize",

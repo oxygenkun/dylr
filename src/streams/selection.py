@@ -252,6 +252,7 @@ def _probe_client(timeout: int, proxy_addr: str | None, verify: bool) -> httpx.C
         timeout=timeout,
         proxy=proxy_addr,
         verify=verify,
+        trust_env=False,
         event_hooks={
             "request": [lambda request: targets.validate_http_target(str(request.url), proxy_addr)],
             "response": [_read_redirect_body],

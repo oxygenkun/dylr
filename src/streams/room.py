@@ -49,7 +49,7 @@ async def get_sec_user_id(
 
     try:
         proxy_addr = network_urls.normalize_proxy_url(proxy_addr)
-        async with httpx.AsyncClient(proxy=proxy_addr, timeout=15, verify=policy.verify_tls) as client:
+        async with httpx.AsyncClient(proxy=proxy_addr, timeout=15, verify=policy.verify_tls, trust_env=False) as client:
             response = await client.get(url, headers=headers, follow_redirects=True)
             redirect_url = response.url
             if "reflow/" in str(redirect_url):
@@ -108,7 +108,7 @@ async def get_unique_id(url: str, proxy_addr: str | None = None, headers: dict[s
 
     try:
         proxy_addr = network_urls.normalize_proxy_url(proxy_addr)
-        async with httpx.AsyncClient(proxy=proxy_addr, timeout=15, verify=policy.verify_tls) as client:
+        async with httpx.AsyncClient(proxy=proxy_addr, timeout=15, verify=policy.verify_tls, trust_env=False) as client:
             sec_user_id = extract_sec_user_id(url) if is_user_homepage_url(url) else ""
             if not sec_user_id:
                 response = await client.get(url, headers=headers, follow_redirects=True)

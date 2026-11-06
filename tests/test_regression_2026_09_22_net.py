@@ -369,7 +369,7 @@ class TestMin2216DependencyMissing:
         assert first == "" and second == "", "返回契约不变（调用方按空响应处理）"
         hits = [line for line in lines if "缺少可选依赖" in line]
         assert len(hits) == 1, f"必须 warn-once，实得 {len(hits)} 条: {hits}"
-        assert "h2" in hits[0] and "pip install httpx[http2]" in hits[0], hits[0]
+        assert "h2" in hits[0] and "uv sync --locked" in hits[0], hits[0]
         assert any("已告警过" in line for line in lines), "第二条应降级为 debug 而非静默丢弃"
 
     @pytest.mark.asyncio
@@ -388,7 +388,7 @@ class TestMin2216DependencyMissing:
             logger.remove(handler_id)
         # return_cookies 形态的失败契约是 ("", {})，不能被新分支改坏
         assert result == ("", {})
-        assert lines and "socksio" in lines[0] and "httpx[socks]" in lines[0], lines
+        assert lines and "socksio" in lines[0] and "uv sync --locked" in lines[0], lines
 
     @pytest.mark.asyncio
     async def test_module_not_found_is_also_a_dependency_failure(self, monkeypatch: pytest.MonkeyPatch) -> None:

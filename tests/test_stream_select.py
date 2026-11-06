@@ -1807,6 +1807,7 @@ class _ProxyContractClient(_StreamAsGet):
         timeout: int = 10,
         proxy: str | None = None,
         verify: bool = True,
+        trust_env: bool = False,
         # 实参类型必须与 httpx.Client 的 event_hooks 声明兼容（typeshed 要 Mapping[str, list[Callable]]，
         # 写 list[object] 会在下一行透传给真客户端时报 arg-type）；Any 只用于这一处打桩签名，
         # 判据本身仍走 ast 收窄。
@@ -1815,7 +1816,9 @@ class _ProxyContractClient(_StreamAsGet):
         _ProxyContractClient.instantiated += 1
         _ProxyContractClient.proxies.append(proxy)
         _ProxyContractClient.response_hook_counts.append(len((event_hooks or {}).get("response") or []))
-        real = _REAL_SYNC_CLIENT(timeout=timeout, proxy=proxy, verify=verify, event_hooks=event_hooks)
+        real = _REAL_SYNC_CLIENT(
+            timeout=timeout, proxy=proxy, verify=verify, trust_env=trust_env, event_hooks=event_hooks
+        )
         real.close()
 
     def close(self) -> None:

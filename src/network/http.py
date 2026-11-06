@@ -79,12 +79,15 @@ def _build_client(
     verify: bool,
     http2: bool,
 ) -> httpx.AsyncClient:
+    # 代理只认显式入参：trust_env 会解析 NO_PROXY，`[::1]` 这类括号写法会让 httpx 在
+    # 构造客户端时抛 InvalidURL，且会绕过「是否使用代理ip」让请求偷偷走环境代理。
     return httpx.AsyncClient(
         proxy=proxy_addr,
         timeout=timeout,
         verify=verify,
         http2=http2,
         limits=_CLIENT_LIMITS,
+        trust_env=False,
         event_hooks={"request": [_request_guard(proxy_addr)], "response": [_bounded_response_read]},
     )
 
@@ -229,11 +232,6 @@ def _missing_dependency_name(err: BaseException) -> str:
     return match.group(1) if match else ""
 
 
-def _install_hint(module: str) -> str:
-    extra = {"h2": "http2", "socksio": "socks"}.get(module)
-    return f"httpx[{extra}]" if extra else (module or "httpx[http2,socks]")
-
-
 def _log_dependency_missing(err: BaseException, url: str) -> None:
     module = _missing_dependency_name(err)
     scope = module or type(err).__name__
@@ -253,12 +251,11 @@ def _log_dependency_missing(err: BaseException, url: str) -> None:
     logger.warning(
         i18n.tr(
             "request 缺少可选依赖，请求根本没有发出（本轮按空响应返回，非风控）: {masked_url} - {type_name}: {e}"
-            " - 缺失模块 {module}，请执行 pip install {install}",
+            " - 缺失模块 {module}，请执行 uv sync --locked",
             masked_url=masked_url,
             type_name=type(err).__name__,
             e=utils.mask_credentials(str(err)),
             module=module,
-            install=_install_hint(module),
         )
     )
 

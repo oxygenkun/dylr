@@ -32,6 +32,35 @@ def _stub_dns_as_public(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 # ────────────────────────────────────────────────────────────
+# _build_client: 代理来源
+# ────────────────────────────────────────────────────────────
+
+
+class TestBuildClient:
+    @pytest.mark.asyncio
+    async def test_ignores_environment_proxy(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # 回归：环境里的 NO_PROXY=`[::1]` 会让 httpx 在构造客户端时抛 InvalidURL；且环境代理
+        # 会绕过「是否使用代理ip=否」。客户端只认显式 proxy 入参。
+        monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:7890")
+        monkeypatch.setenv("NO_PROXY", "[::1]")
+        monkeypatch.setenv("no_proxy", "[::1]")
+        client = async_http._build_client(None, 10, True, False)
+        try:
+            assert client.trust_env is False
+            assert client._mounts == {}
+        finally:
+            await client.aclose()
+
+    @pytest.mark.asyncio
+    async def test_explicit_proxy_still_mounted(self) -> None:
+        client = async_http._build_client("http://127.0.0.1:7890", 10, True, False)
+        try:
+            assert client._mounts
+        finally:
+            await client.aclose()
+
+
+# ────────────────────────────────────────────────────────────
 # _get_client: 客户端缓存与复用
 # ────────────────────────────────────────────────────────────
 

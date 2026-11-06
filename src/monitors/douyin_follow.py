@@ -75,7 +75,7 @@ def fetch_follow_feed(cookie: str, proxy: str) -> Any:
     }
     query = urlencode(params)
     url = FOLLOW_ENDPOINT + "?" + query + "&a_bogus=" + ab_sign(query, USER_AGENT)
-    with httpx.Client(proxy=proxy or None, timeout=15, http2=True, follow_redirects=True) as client:
+    with httpx.Client(proxy=proxy or None, timeout=15, http2=True, follow_redirects=True, trust_env=False) as client:
         response = client.get(
             url, headers={"user-agent": USER_AGENT, "cookie": cookie, "referer": "https://www.douyin.com/follow"}
         )
