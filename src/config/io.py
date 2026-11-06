@@ -7,10 +7,15 @@ import re
 import shutil
 import time
 
+import tomlkit
 from loguru import logger
+from tomlkit.items import Table
 
+from src.api import config as web_config
+from src.api.config import _looks_like_secret_value, is_sensitive_item
 from src.config import files as config_files
 from src.config.booleans import parse_config_bool
+from src.config.reader import tolerant_config_parser
 from src.config.store import ConfigError, ConfigStore, format_value
 from src.recording import state
 from src.recording.process import _get_error_line
@@ -134,8 +139,6 @@ ROOM_WRITE_FAILED = "write_failed"
 
 def append_room_line(url_config_file: str, url: str, quality: str = "", name: str = "") -> str:
     """把一行直播间配置追加到 URL_config.ini；已存在时按启用状态返回 exists/disabled，绝不。"""
-    from src.api import config as web_config
-
     clean_name = re.sub(r"[,，\r\n]+", " ", name or "").strip()[:80]
     try:
         line = web_config.format_url_line(url, quality, clean_name)
@@ -261,11 +264,6 @@ def _backup_mask_secrets() -> bool:
 
 def _redact_ini_secrets(text: str) -> str:
     """备份内容的凭据脱敏：按「节/键名命中 **或** 值本身形如凭据」两道判据把敏感值替换为 ***。"""
-    try:
-        from src.api.config import _looks_like_secret_value, is_sensitive_item
-        from src.config.reader import tolerant_config_parser
-    except ImportError:
-        return text
     parser = tolerant_config_parser()
     try:
         parser.read_string(text.lstrip("\ufeff"))
@@ -291,13 +289,6 @@ def _redact_ini_secrets(text: str) -> str:
 
 def _redact_toml_secrets(text: str) -> str:
     """TOML 备份的凭据脱敏：判据与 INI 版一致，保留节/键结构。"""
-    try:
-        import tomlkit
-        from tomlkit.items import Table
-
-        from src.api.config import _looks_like_secret_value, is_sensitive_item
-    except ImportError:
-        return text
     try:
         doc = tomlkit.parse(text)
     except Exception as e:

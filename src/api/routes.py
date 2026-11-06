@@ -60,7 +60,9 @@ from src.api.models import (
     RoomToggle,
     RoomUpdate,
 )
+from src.app.log_archive import archive_runtime_logs
 from src.config import io as config_io
+from src.danmaku.monitor import get_hub
 from src.recording import state
 from src.recording import status as recorder_status
 from src.support import i18n as i18n_module
@@ -235,8 +237,6 @@ _status_inflight_since = 0.0
 
 def _log_internal_error(code: str, exc: BaseException | None = None, level: str = "error") -> None:
     try:
-        from loguru import logger
-
         if level == "warning":
             logger.opt(exception=exc).warning("{}", code)
         else:
@@ -508,8 +508,6 @@ def create_app(
 
         state.recording_enabled = req.enable
         if not req.enable:
-            from src.app.log_archive import archive_runtime_logs
-
             _ = archive_runtime_logs(reopen_streams=True)
         return {"ok": True, "recording_enabled": req.enable}
 
@@ -803,8 +801,6 @@ def create_app(
 
     @_route(app, ["GET"], "/api/language")
     def get_language() -> dict[str, object]:
-        from src.support import i18n as i18n_module
-
         return {
             "language": i18n_module.get_language(),
             "available": i18n_module.available_languages(),
@@ -812,8 +808,6 @@ def create_app(
 
     @_route(app, ["PUT"], "/api/language")
     def set_language(req: LanguageUpdate) -> dict[str, object]:
-        from src.support import i18n as i18n_module
-
         if not req.language.strip() or not i18n_module.is_recognized_language(req.language):
             raise HTTPException(400, i18n_module.tr("不支持的语言: {lang}", lang=req.language))
         normalized = i18n_module.normalize_language(req.language)
@@ -906,8 +900,6 @@ def create_app(
     @_route(app, ["GET"], "/api/danmaku")
     def get_danmaku(since: int = 0) -> dict[str, object]:
         try:
-            from src.danmaku.monitor import get_hub
-
             return get_hub().snapshot(since)
         except Exception as e:
             _log_internal_error(_DANMAKU_ERROR_CODE, e, level="warning")

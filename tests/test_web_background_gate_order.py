@@ -8,21 +8,18 @@
 # 顺序属纯接线问题：静态类型检查看不见，功能用例（起不起来服务）也看不见，只有把
 # 「背景化」做成可观测的桩，才能在它被挪回检查之前时变红。
 #
-# 用例不打真服务、不联网：`import main` / `import uvicorn` / `from src.api.routes import
-# create_app` 三处都在拒绝路径**之后**才被真正使用，统一换成 sys.modules 替身；
-# 而 read_web_config（取配置）与 is_loopback_bind_host（判据本体）走 src/api/config.py
-# 的真实实现——在测试里重写这两段就等于假绿。
+# 用例不打真服务、不联网：把 web.state / web.recorder 换成只提供路径属性的桩，
+# _enter_background_mode 换成哨兵；而 read_web_config（取配置）与 is_loopback_bind_host
+# （判据本体）走 src/api/config.py 的真实实现——在测试里重写这两段就等于假绿。
 
 import ast
 import io
 import sys
-import types
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-import src.recording as recording_package
 from src import web
 
 _REJECT_MARKER = "拒绝启动"
@@ -50,7 +47,7 @@ class _RecordingLogger:
 
 
 class _FakeEngineModule:
-    # 代替 `main` 模块对象：web.run() 在安全闸门之前只读这四个路径属性
+    # 代替 state / engine 模块对象：web.run() 在安全闸门之前只读这四个路径属性
     # （config_file 是 read_web_config 的入参，script_path 决定 logs/ 落点）。
     # 其余属性/方法留到放行分支才有意义，这里给最小可调用形态即可。
     def __init__(self, root: Path, config_file: Path) -> None:
@@ -111,11 +108,8 @@ def _drive_web_main(
     cfg = _write_web_config(tmp_path, host)
     engine = _FakeEngineModule(tmp_path, cfg)
 
-    monkeypatch.setitem(sys.modules, "src.recording.engine", engine)
-    monkeypatch.setattr(recording_package, "engine", engine, raising=False)
-    monkeypatch.setattr(recording_package, "state", engine)
-    monkeypatch.setitem(sys.modules, "uvicorn", types.SimpleNamespace(Server=object, Config=object))
-    monkeypatch.setitem(sys.modules, "src.api.routes", types.SimpleNamespace(create_app=lambda **kwargs: None))
+    monkeypatch.setattr(web, "state", engine)
+    monkeypatch.setattr(web, "recorder", engine)
     monkeypatch.setattr(web, "logger", _RecordingLogger(res.warnings))
     monkeypatch.setattr(web, "_enter_background_mode", fake_enter_background_mode)
     monkeypatch.setattr(sys, "stdout", res.console)

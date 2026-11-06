@@ -10,6 +10,7 @@ import threading
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import cast
+from urllib.parse import urlparse
 
 from src.config.booleans import parse_config_bool
 from src.config.reader import TEXT_ENCODING
@@ -195,8 +196,6 @@ def _check_url_target(
     allow_local_targets: bool,
     hint: str = "",
 ) -> None:
-    from urllib.parse import urlparse
-
     u = raw_url.strip()
     if not u:
         return

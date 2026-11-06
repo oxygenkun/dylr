@@ -15,8 +15,10 @@ from pydantic import BeforeValidator, TypeAdapter, ValidationError
 from tomlkit.items import Table
 
 from src.config.booleans import FALSE_TOKENS, TRUE_TOKENS
+from src.config.reader import tolerant_config_parser, warn_duplicate_options
 from src.support import i18n
 from src.support.logger import logger
+from src.support.utils import atomic_write_text
 
 type Scalar = bool | int | float | str
 
@@ -333,8 +335,6 @@ class ConfigStore:
 
     def write(self) -> bool:
         """原子写回 TOML；读取曾失败时拒绝写入，避免用默认值覆盖坏文件。"""
-        from src.support.utils import atomic_write_text
-
         with self._lock:
             if self._read_error is not None:
                 return False
@@ -355,8 +355,6 @@ def migrate_ini_to_toml(ini_path: str | Path, toml_path: str | Path) -> bool:
     target = Path(toml_path)
     if target.exists() or not ini.is_file():
         return False
-    from src.config.reader import tolerant_config_parser, warn_duplicate_options
-
     parser = tolerant_config_parser()
     parser.read(ini, encoding="utf-8-sig")
     warn_duplicate_options(ini)
@@ -370,8 +368,6 @@ def migrate_ini_to_toml(ini_path: str | Path, toml_path: str | Path) -> bool:
             except ConfigValueError:
                 table[key] = raw
         doc[section] = table
-    from src.support.utils import atomic_write_text
-
     if not atomic_write_text(target, tomlkit.dumps(doc), encoding="utf-8"):
         return False
     try:

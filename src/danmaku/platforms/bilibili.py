@@ -6,11 +6,13 @@ import re
 import struct
 from typing import Any
 
+import brotli
 from loguru import logger
 
 from src.danmaku.base import DanmakuBase, DanmakuMessage, DanmakuMessageType, spawn_danmaku_task
 from src.danmaku.compression import MAX_DECOMPRESSED_BYTES, decompress_zlib
 from src.network.websocket import WebSocketClient
+from src.streams import spider
 from src.support import i18n
 
 HEADER_LEN = 16
@@ -32,8 +34,6 @@ def _bili_danmaku_host_allowed(host: str) -> bool:
 
 def _decompress_brotli(data: bytes, limit: int = MAX_DECOMPRESSED_BYTES, chunk: int = 4096) -> bytes:
     """分块处理 Brotli 输入，并限制累计输出。"""
-    import brotli
-
     obj = brotli.Decompressor()
     out = bytearray()
     for i in range(0, len(data), chunk):
@@ -175,8 +175,6 @@ class BilibiliDanmaku(DanmakuBase):
         if self._ws is not None:
             spawn_danmaku_task(self._ws.fail(i18n.tr("进房认证被拒（AUTH_REPLY 非 0 或超时未回应）")))
         try:
-            from src.streams import spider
-
             spider.invalidate_bili_buvid_cache()
         except Exception:
             pass

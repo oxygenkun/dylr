@@ -65,6 +65,7 @@ def parse_proxy_url(value: str) -> ProxyInfo | None:
 
 
 def _windows_proxy_values() -> list[str]:
+    # winreg 仅 Windows 提供，导入期无条件加载会让其它平台直接失败。
     import winreg
 
     try:

@@ -33,17 +33,16 @@ def test_read_config_value_missing_key_write_failure_ok(tmp_path: Path, monkeypa
     store = _store(tmp_path, '["录制设置"]\nlanguage = "zh_cn"\n')
     monkeypatch.setattr(state, "config_file", str(store.path))
 
-    import src.support.utils as utils_module
+    import src.config.store as store_module
 
-    real_write = utils_module.atomic_write_text
+    real_write = store_module.atomic_write_text
 
     def _deny_write(path: str, *args: object, **kwargs: object) -> bool:
         if Path(path) == store.path:
             return False
         return real_write(str(path), *args, **kwargs)
 
-    monkeypatch.setattr(config_io, "atomic_write_text", _deny_write, raising=False)
-    monkeypatch.setattr("src.support.utils.atomic_write_text", _deny_write)
+    monkeypatch.setattr(store_module, "atomic_write_text", _deny_write)
 
     captured: list[str] = []
     handler_id = logger.add(lambda msg: captured.append(str(msg)), level="WARNING")

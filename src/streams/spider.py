@@ -1,9 +1,12 @@
 import asyncio
+import base64
+import binascii
 import hashlib
 import json
 import os
 import random
 import re
+import secrets
 import threading
 import time
 import urllib.parse
@@ -12,6 +15,8 @@ from operator import itemgetter
 from typing import cast
 
 import httpx
+from Crypto.Cipher import AES
+from Crypto.Util.Padding import pad
 
 from src import JS_SCRIPT_PATH
 from src.config import files as config_files
@@ -20,6 +25,7 @@ from src.network import http, policy, targets
 from src.network import urls as network_urls
 from src.network.credentials import DEFAULT_TTL as _CREDENTIAL_TTL
 from src.network.credentials import credential_cache, fetch_cookies
+from src.recording import state
 from src.runtime import javascript
 from src.runtime.javascript import ProgramError
 from src.streams.errors import trace_error_decorator, trace_error_decorator_or_none
@@ -2999,12 +3005,6 @@ def get_looklive_secret_data(text: str | dict[str, str]) -> tuple[str, str]:
     )
     nonce = b"0CoJUm6Qyw8W8jud"
     public_key = "010001"
-    import base64
-    import binascii
-    import secrets
-
-    from Crypto.Cipher import AES
-    from Crypto.Util.Padding import pad
 
     def create_secret_key(size: int) -> bytes:
         charset = "1234567890abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!@#$%^&*()_+-=[]{}|;:,.<>?"
@@ -5178,8 +5178,6 @@ async def get_taobao_stream_url(
             new_cookie_str = network_urls.format_cookies(merged_cookie)
             headers["Cookie"] = new_cookie_str
             try:
-                from src.recording import state
-
                 _cfg_path = f"{script_path}/config/config.toml"
                 _old_cookie = config_files.read_ini_value(_cfg_path, "Cookie", "taobao_cookie")
                 if _old_cookie != new_cookie_str:

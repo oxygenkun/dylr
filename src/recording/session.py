@@ -18,6 +18,7 @@ from loguru import logger
 from src import get_danmaku_collector
 from src.app.graceful_shutdown import shutdown_manager
 from src.config.io import update_anchor_name
+from src.danmaku.monitor import get_hub
 from src.monitors.registry import follow_monitor
 from src.network import policy
 from src.network import urls as network_urls
@@ -43,6 +44,8 @@ from src.streams.selection import (
     mark_ffmpeg_reject,
     select_source_url,
 )
+from src.streams.stream import code_to_zh
+from src.streams.stream import is_downgrade as _is_downgrade
 from src.support import i18n, utils
 from src.support.logger import set_room_context
 
@@ -1126,8 +1129,6 @@ def start_record(
             record_quality_zh, record_url, anchor_name = url_data
             record_quality = get_quality_code(record_quality_zh)
             record_host = host_of(record_url)
-            from src.streams.stream import code_to_zh
-            from src.streams.stream import is_downgrade as _is_downgrade
 
             proxy_address = state.proxy_addr
             platform = "未知平台"
@@ -1244,8 +1245,6 @@ def start_record(
                                     state.recording.discard(_stale_record_name)
                                     state.recording_time_list.pop(_stale_record_name, None)
                                 try:
-                                    from src.danmaku.monitor import get_hub
-
                                     get_hub().room_stopped(_stale_record_name, "主播改名")
                                 except Exception:
                                     pass

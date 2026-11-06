@@ -15,7 +15,11 @@ import zipfile
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from loguru import logger
+
+from src.config.booleans import parse_config_bool
 from src.runtime.resources import RESOURCES
+from src.support import i18n
 
 
 def runtime_key() -> str:
@@ -131,11 +135,6 @@ def install_runtime(name: str, root: Path) -> None:
 
 
 def ensure_runtime(name: str, root: str) -> bool:
-    from loguru import logger
-
-    from src.config.booleans import parse_config_bool
-    from src.support import i18n
-
     flag = "-v" if name == "node" else "-version"
 
     def available() -> bool:

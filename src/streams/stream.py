@@ -7,6 +7,7 @@ from loguru import logger
 
 from src.network.http import is_reachable
 from src.streams.errors import trace_error_decorator
+from src.streams.selection import MOBILE_UA, _is_h265, get_record_user_agent
 from src.streams.spider import get_bilibili_stream_data, get_douyu_stream_data
 from src.support import i18n
 
@@ -336,8 +337,6 @@ def get_quality_index(quality: str | int | None) -> tuple[str, int]:
 
 
 def _probe_headers(platform: str) -> dict[str, str]:
-    from src.streams.selection import MOBILE_UA, get_record_user_agent
-
     return {"User-Agent": get_record_user_agent(platform) or MOBILE_UA}
 
 
@@ -396,8 +395,6 @@ async def get_douyin_stream_url(
         flv_url_list: list[str] = []
         use_hevc_flv = quality_index == 0 and bool(hevc_flv_url) and not m3u8_is_hevc
         if use_hevc_flv and hevc_flv_url:
-            from src.streams.selection import _is_h265
-
             if flv_url and flv_url != hevc_flv_url and not _is_h265(flv_url):
                 flv_url_list.append(flv_url)
             flv_url = hevc_flv_url

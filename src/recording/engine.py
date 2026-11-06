@@ -15,6 +15,7 @@ import uuid
 from loguru import logger
 
 from src import initialize_runtime
+from src.api.config import update_config_line
 from src.app.graceful_shutdown import shutdown_manager
 from src.app.log_archive import archive_runtime_logs
 from src.app.startup_cleanup import purge_stale_bytecode_caches
@@ -29,6 +30,7 @@ from src.config.io import (
     update_file,
 )
 from src.config.store import ConfigError, ConfigStore, ensure_config_migrated
+from src.danmaku.monitor import get_hub
 from src.monitors.registry import douyin_dm_monitor, follow_monitor
 from src.network import policy
 from src.network.http import close_clients
@@ -193,8 +195,6 @@ def _sync_ssl_disable_platforms(config_parser: ConfigStore) -> set[str]:
     if appended:
         merged = kept + appended
         new_value = ",".join(merged)
-        from src.api.config import update_config_line
-
         if not update_config_line(state.config_file, "录制设置", "禁用SSL证书验证的平台(逗号分隔)", new_value):
             logger.warning(
                 i18n.tr(
@@ -725,8 +725,6 @@ def main(non_interactive: bool = False) -> None:
                                     ]
                                 if _room_state.get("name"):
                                     try:
-                                        from src.danmaku.monitor import get_hub
-
                                         get_hub().room_stopped(_room_state["name"], "房间已停止录制")
                                     except Exception:
                                         pass

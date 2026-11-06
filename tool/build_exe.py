@@ -27,9 +27,11 @@
 #     dist/dylr-v{ver}-{os}-{arch}{suffix}.zip  压缩包（普通构建 suffix 为空，--dual 为 -lite/-full）
 #
 import argparse
+import configparser
 import http.client
 import os
 import platform
+import py_compile
 import re
 import shutil
 import signal
@@ -44,7 +46,8 @@ from typing import cast
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.runtime.installer import install_runtime  # noqa: E402 -- 直接执行脚本前须先加入项目根目录。
+from src.api import config as web_config  # noqa: E402 -- 直接执行脚本前须先加入项目根目录。
+from src.runtime.installer import install_runtime  # noqa: E402
 
 APP_NAME = "dylr"
 DIST_DIR = PROJECT_ROOT / "dist"
@@ -174,8 +177,6 @@ def preflight_syntax_check() -> None:
     # 曾出现源码首行编码注释被破坏（丢失行首 '#'）导致三平台 CI 全部在 PyInstaller
     # Analysis 阶段报 IndentationError，且报错混在长日志里不易定位；提前编译可在几秒内以明确的
     # 文件名+行号失败。
-    import py_compile
-
     targets = sorted((PROJECT_ROOT / "src").rglob("*.py"))
     for path in targets:
         if not path.is_file():
@@ -249,10 +250,6 @@ def _sanitized_config_text(text: str, *, fallback_header: str = "") -> str:
     # 正则：那会造出第二份「什么算敏感」的事实源，两侧迟早漂移。
     # 用 configparser 而非逐行正则：ini 的 section/key 认法（`=` 与 `:` 均可、键名大小写不敏感）
     # 与运行时读取完全一致，不会出现「面板认为敏感、打包器不认为」的缝。
-    import configparser
-
-    from src.api import config as web_config
-
     parser = configparser.ConfigParser(interpolation=None)
     # 保留键名原样大小写，避免写回时把键名改成小写形态。
     # 类型注记：ConfigParser 里 optionxform 是方法，实例赋值 str 会触发 mypy
@@ -323,8 +320,6 @@ def assert_no_credentials_in_release() -> None:
     # SEV-2213 的「产生了就拦住」一侧：make_zip **之前**校验发布目录那两份文件确实不含敏感键的真实值，
     # 命中即非零退出——与 .dockerignore 同源口径。zip 一旦生成就可能已被 copy/上传，事后再删已无意义；
     # 判据也不是「文件是否存在」（文件**必须**存在，用户要能在 exe 同级编辑），而是逐键比对源值。
-    from src.api import config as web_config
-
     assert RELEASE_DIR.is_dir(), f"{RELEASE_DIR} 不存在，无从校验"
     cfg_dst = RELEASE_DIR / "config"
 
@@ -367,8 +362,6 @@ def assert_no_credentials_in_release() -> None:
 def _read_ini_pairs(path: Path) -> list[tuple[str, str, str]]:
     # 读 ini 为 (节, 键, 值) 三元组列表；解析失败返回空（由 assert_no_credentials_in_release 的
     # 成品侧检查兜底，此函数自身不参与放行判定）。
-    import configparser
-
     parser = configparser.ConfigParser(interpolation=None)
     parser.optionxform = str  # type: ignore[method-assign,assignment]  # 同上：保留键名原样大小写
     try:

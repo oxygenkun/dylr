@@ -2346,7 +2346,7 @@ class TestRecordingToggle:
     ) -> None:
         # 停止录制（enable=False）是手动停止路径，须触发运行日志归档；
         # 开始录制（enable=True）不触发。归档进程仍继续运行，故 reopen_streams=True。
-        import src.app.log_archive as la
+        from src.api import routes as wa
 
         calls: list[bool] = []
 
@@ -2354,7 +2354,7 @@ class TestRecordingToggle:
             calls.append(reopen_streams)
             return []
 
-        monkeypatch.setattr(la, "archive_runtime_logs", fake_archive)
+        monkeypatch.setattr(wa, "archive_runtime_logs", fake_archive)
         token = _login(app_env.client)
         headers = {"Authorization": f"Bearer {token}"}
         resp = app_env.client.post("/api/recording/toggle", json={"enable": True}, headers=headers)

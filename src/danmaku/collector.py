@@ -7,7 +7,7 @@ import time
 from typing import Any, cast
 
 from src.danmaku.base import DanmakuBase, DanmakuMessage, DanmakuMessageType, spawn_danmaku_task
-from src.danmaku.monitor import DanmakuMonitorHub
+from src.danmaku.monitor import DanmakuMonitorHub, get_hub
 from src.danmaku.srt_writer import SrtWriter
 from src.support import i18n, utils
 from src.support.logger import logger
@@ -70,8 +70,6 @@ class DanmakuCollector:
         """惰性解析监控枢纽：未显式注入时取进程级单例（失败静默返回 None，监控缺位不影响录制）。"""
         if self._monitor is None:
             try:
-                from src.danmaku.monitor import get_hub
-
                 self._monitor = get_hub()
             except Exception:
                 return None

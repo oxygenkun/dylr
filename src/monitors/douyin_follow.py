@@ -7,6 +7,8 @@ from urllib.parse import urlencode, urlsplit
 
 import httpx
 
+from src.streams.ab_sign import ab_sign
+
 USER_AGENT = (
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
 )
@@ -61,8 +63,6 @@ def parse_follow_feed(payload: Any) -> dict[str, Any]:
 
 
 def fetch_follow_feed(cookie: str, proxy: str) -> Any:
-    from src.streams.ab_sign import ab_sign
-
     params = {
         "device_platform": "webapp",
         "aid": "6383",

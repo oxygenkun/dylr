@@ -374,7 +374,7 @@ def test_api_danmaku_endpoint_returns_hub_snapshot(tmp_path: Path, monkeypatch: 
     from src.api import routes as wa
 
     hub = DanmakuMonitorHub(log_path=None)
-    monkeypatch.setattr(dm, "get_hub", lambda: hub)
+    monkeypatch.setattr(wa, "get_hub", lambda: hub)
 
     cfg = tmp_path / "config.ini"
     cfg.write_text(

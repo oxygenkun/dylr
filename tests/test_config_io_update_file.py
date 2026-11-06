@@ -17,7 +17,6 @@ import shutil
 import threading
 import types
 from pathlib import Path
-from typing import Any
 
 import pytest
 from pytest import MonkeyPatch
@@ -270,20 +269,6 @@ class TestSecretRedaction:
     def test_unparseable_content_is_returned_unchanged(self) -> None:
         # 脱敏失败宁可留明文也不能丢备份
         raw = "this is not an ini file [[[\n"
-        assert config_io._redact_ini_secrets(raw) == raw
-
-    def test_missing_web_config_symbol_falls_back(self, monkeypatch: MonkeyPatch) -> None:
-        import builtins
-
-        real_import = builtins.__import__
-
-        def deny(name: str, *args: Any, **kwargs: Any) -> Any:
-            if name == "src.api.config":
-                raise ImportError("blocked")
-            return real_import(name, *args, **kwargs)
-
-        monkeypatch.setattr(builtins, "__import__", deny)
-        raw = "[Cookie]\ndouyin_cookie = abc\n"
         assert config_io._redact_ini_secrets(raw) == raw
 
 

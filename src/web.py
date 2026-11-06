@@ -6,9 +6,16 @@ import threading
 from datetime import datetime
 from typing import cast
 
+import uvicorn
+
+from src.api.config import is_loopback_bind_host, read_web_config
+from src.api.routes import create_app
+from src.network.http import close_clients
+from src.recording import engine as recorder
+from src.recording import state
 from src.support import i18n
 from src.support.console import configure_encoding
-from src.support.logger import logger
+from src.support.logger import logger, rebind_console_sink
 
 _KERNEL32: ctypes.CDLL | None = None
 _USER32: ctypes.CDLL | None = None
@@ -105,8 +112,6 @@ def _enter_background_mode(logs_dir: str, host: str, port: int) -> None:
     sys.stdout = log_stream
     sys.stderr = log_stream
     try:
-        from src.support.logger import rebind_console_sink
-
         rebind_console_sink()
     except Exception:
         pass
@@ -133,19 +138,11 @@ def _enter_background_mode(logs_dir: str, host: str, port: int) -> None:
 
 def _is_loopback_host(host: str) -> bool:
     """判断 host 是否为回环地址（仅本机可访问）。"""
-    from src.api.config import is_loopback_bind_host
-
     return is_loopback_bind_host(host)
 
 
 def run() -> None:
     """Web 面板模式：启动录制引擎守护线程与 uvicorn HTTP 服务（由 src.main 按配置调用）。"""
-    import uvicorn
-
-    from src.api.config import read_web_config
-    from src.api.routes import create_app
-    from src.recording import state
-
     config_file = state.config_file
     url_config_file = state.url_config_file
     downloads_root = state.default_path
@@ -193,7 +190,6 @@ def run() -> None:
 
     _auto_start = os.environ.get("DOUYIN_WEB_AUTO_START_RECORDING", "").strip().lower() in ("1", "true", "yes")
     state.recording_enabled = _auto_start
-    from src.recording import engine as recorder
 
     recorder.initialize_process()
     recorder_thread = threading.Thread(
@@ -233,8 +229,6 @@ def run() -> None:
         except Exception as e:
             print(i18n.tr("[web] 清理 ffmpeg 进程失败: {type_name}: {e}", type_name=type(e).__name__, e=e))
         try:
-            from src.network.http import close_clients
-
             close_clients()
         except Exception as e:
             print(i18n.tr("[web] 清理 HTTP 连接池失败: {type_name}: {e}", type_name=type(e).__name__, e=e))

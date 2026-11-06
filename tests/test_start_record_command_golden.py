@@ -413,9 +413,9 @@ def _setup_case(main: ModuleType, monkeypatch: pytest.MonkeyPatch, case: dict[st
     monkeypatch.setattr(recording, "converts_mp4", lambda *a, **k: None)
 
     # 退出时房间清理：hub 调用 no-op
+    monkeypatch.setattr(recording, "get_hub", lambda: MagicMock())
     import src.danmaku.monitor as _dm
 
-    monkeypatch.setattr(_dm, "get_hub", lambda: MagicMock())
     # conftest 已把 _hub 设为 hermetic；此处再兜底，防止 finally 真连
     if hasattr(_dm, "_hub"):
         monkeypatch.setattr(_dm, "_hub", MagicMock(), raising=False)

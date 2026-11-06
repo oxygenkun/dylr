@@ -3,6 +3,7 @@
 
 def main() -> None:
     """启动录制；`[Web] web_enable` 为真时同时启动管理面板。"""
+    # 导入保持在函数内：`import src.main` 不得拉起录制引擎或 Web 面板，编码配置也必须先于其它模块生效。
     from src.support.console import configure_encoding
 
     configure_encoding()

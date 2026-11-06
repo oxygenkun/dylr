@@ -9,9 +9,11 @@ from email.header import Header
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from typing import cast
+from urllib.parse import urlsplit, urlunsplit
 
 from loguru import logger
 
+from src.network.targets import host_rejection_reason
 from src.support import i18n
 
 no_proxy_handler: urllib.request.ProxyHandler = urllib.request.ProxyHandler({})
@@ -63,10 +65,6 @@ def render_push_content(template: str, room_name: str, push_time: str) -> str:
 
 def _checked_push_url(url: str) -> str:
     """推送地址准入校验（M-07）：只放行 http/https，并拒绝「内部用途名字」。"""
-    from urllib.parse import urlsplit
-
-    from src.network.targets import host_rejection_reason
-
     parts = urlsplit(url.strip())
     if parts.scheme.lower() not in ("http", "https"):
         raise ValueError(i18n.tr("推送地址协议不受支持（仅允许 http/https）: {scheme}", scheme=parts.scheme or "-"))
@@ -91,8 +89,6 @@ def _mask_secret(secret: str) -> str:
 def _mask_url(url: str, *, mask_last_segment: bool = False) -> str:
     """脱敏推送地址：丢弃 query 与疑似密钥路径段，仅供日志展示、不影响实际请求。"""
     try:
-        from urllib.parse import urlsplit, urlunsplit
-
         parts = urlsplit(url)
         segs = [s for s in parts.path.split("/") if s]
         masked_segs: list[str] = []

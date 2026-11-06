@@ -8,6 +8,7 @@ JS_SCRIPT_PATH = Path(__file__).resolve().parent / "javascript"
 
 
 def initialize_runtime() -> None:
+    # 运行时探测只在入口调用；导入期保持 src 包轻量，不拉起日志与外部程序检查。
     from src.runtime.node import check_node
     from src.support.logger import script_path
 
@@ -25,7 +26,7 @@ if TYPE_CHECKING:
 
 
 def get_danmaku_class(platform: str) -> type[DanmakuBase] | None:
-    """按平台名返回弹幕协议实现。"""
+    """按平台名返回弹幕协议实现；平台实现按需加载，避免 `import src` 即拉起 protobuf 与 websocket。"""
     from src.danmaku.platforms.bilibili import BilibiliDanmaku
     from src.danmaku.platforms.douyin import DouyinDanmaku
     from src.danmaku.platforms.douyu import DouyuDanmaku
@@ -51,7 +52,7 @@ def get_danmaku_collector(
     room_name: str | None = None,
     write_srt: bool = True,
 ) -> DanmakuCollector | None:
-    """工厂函数：平台不支持或 danmaku_args 为空时返回 None（导入放在函数内，避免循环依赖）。"""
+    """工厂函数：平台不支持或 danmaku_args 为空时返回 None；采集器与平台实现一并按需加载。"""
     from src.danmaku.collector import DanmakuCollector
 
     cls = get_danmaku_class(platform)

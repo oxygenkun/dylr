@@ -8,6 +8,7 @@ from enum import Enum
 from typing import Any
 
 from src.support import i18n
+from src.support.logger import logger
 
 
 class DanmakuMessageType(Enum):
@@ -32,8 +33,6 @@ def _log_task_exception(task: asyncio.Task[None]) -> None:
         return
     exc = task.exception()
     if exc is not None:
-        from src.support.logger import logger
-
         logger.warning(i18n.tr("[弹幕]后台协程异常: {type_name}: {exc}", type_name=type(exc).__name__, exc=exc))
 
 
@@ -59,8 +58,6 @@ class DanmakuBase(ABC):
 
     def _on_reconnect(self, reason: str) -> None:
         """重连是**中间态**（max_reconnect 次数内会自动恢复），不能复用 on_close——后者的语义是。"""
-        from src.support.logger import logger
-
         logger.debug(i18n.tr("[{cls}]弹幕连接断开，正在重连: {reason}", cls=type(self).__name__, reason=reason))
 
     @abstractmethod
