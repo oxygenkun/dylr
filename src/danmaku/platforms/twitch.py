@@ -3,7 +3,7 @@ from __future__ import annotations
 import random
 import re
 import urllib.request
-from typing import Any, Union
+from typing import Any
 
 from src.danmaku.base import DanmakuBase, DanmakuMessage, DanmakuMessageType
 from src.network.urls import normalize_proxy_url
@@ -91,7 +91,7 @@ class TwitchDanmaku(DanmakuBase):
         if self._ws is not None:
             await self._ws.close()
 
-    def decode_message(self, data: Union[bytes, str]) -> None:
+    def decode_message(self, data: bytes | str) -> None:
         """解析服务端下行文本（bytes 或 str）：逐行处理，收到 PING 立刻回 PONG，。"""
         if isinstance(data, bytes):
             text = data.decode("utf-8", errors="ignore")

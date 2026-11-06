@@ -12,7 +12,6 @@
 # 沿用 tests/test_config_io.py 的 newline="" 读写口径：断言的是**文件字节形态**（含 CRLF），
 # 否则「行尾被顺手改成 LF」这类永久破坏看不出来。
 # 各分支的判据与失效形态见下方 import 之后的对照表。
-import configparser
 import os
 import shutil
 import threading
@@ -59,7 +58,7 @@ def _write_text(path: Path, text: str, encoding: str = "utf-8-sig") -> None:
 
 
 def _read_text(path: Path, encoding: str = "utf-8-sig") -> str:
-    with open(path, "r", encoding=encoding, newline="") as f:
+    with open(path, encoding=encoding, newline="") as f:
         return f.read()
 
 
@@ -112,7 +111,7 @@ class TestUpdateFile:
         entered = 0
 
         class _CountingLock:
-            def __enter__(self) -> "_CountingLock":
+            def __enter__(self) -> _CountingLock:
                 nonlocal entered
                 entered += 1
                 return self

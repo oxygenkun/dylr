@@ -10,6 +10,7 @@
 from collections.abc import Callable
 from typing import cast
 from unittest.mock import patch
+from urllib.request import Request
 
 from loguru import logger
 
@@ -116,7 +117,7 @@ class FakeResponse:
     def __init__(self, body: bytes) -> None:
         self.body = body
 
-    def __enter__(self) -> "FakeResponse":
+    def __enter__(self) -> FakeResponse:
         return self
 
     def __exit__(self, *exc: object) -> None:
@@ -130,7 +131,7 @@ class FakeResponse:
 # 定义在 FakeResponse 之后——本文件未启用 future annotations，签名里的类必须先存在。
 # 签名用 ... 是因为真实调用点为 opener.open(req, timeout=N)，位置/关键字参数都在变。
 def _fail_response(body: bytes) -> Callable[..., FakeResponse]:
-    def fake_open(req: object, timeout: int = 10) -> FakeResponse:
+    def fake_open(req: Request, timeout: int = 10) -> FakeResponse:
         return FakeResponse(body)
 
     return fake_open
@@ -146,8 +147,8 @@ class TestDingtalk:
 
         # 从 Request 对象上取 data（即待发送的请求体）留存，随后在用例里解析断言；
         # 返回 errcode=0 的伪造响应，使 dingtalk 走「成功」分支。
-        def fake_open(req: object, timeout: int = 10) -> FakeResponse:
-            captured["data"] = getattr(req, "data")
+        def fake_open(req: Request, timeout: int = 10) -> FakeResponse:
+            captured["data"] = req.data
             return FakeResponse(b'{"errcode": 0}')
 
         with patch("src.notifications.msg_push.opener.open", side_effect=fake_open):
@@ -164,8 +165,8 @@ class TestDingtalk:
     def test_at_mobiles_included_when_number_given(self) -> None:
         captured: dict[str, object] = {}
 
-        def fake_open(req: object, timeout: int = 10) -> FakeResponse:
-            captured["data"] = getattr(req, "data")
+        def fake_open(req: Request, timeout: int = 10) -> FakeResponse:
+            captured["data"] = req.data
             return FakeResponse(b'{"errcode": 0}')
 
         with patch("src.notifications.msg_push.opener.open", side_effect=fake_open):

@@ -9,7 +9,7 @@ import time
 import urllib.parse
 import uuid
 from operator import itemgetter
-from typing import Optional, cast
+from typing import cast
 
 import httpx
 
@@ -244,7 +244,7 @@ def _loads_dict(text: object) -> dict[str, object]:
     return _safe_loads(s) or {}
 
 
-def _safe_loads(text: str) -> Optional[dict[str, object]]:
+def _safe_loads(text: str) -> dict[str, object] | None:
     try:
         parsed = cast(object, json.loads(text))
     except json.JSONDecodeError as e:
@@ -367,7 +367,7 @@ async def get_play_url_list(m3u8: str, proxy: OptionalStr = None, header: Option
     bandwidth_pattern = _BANDWIDTH_PATTERN
     bandwidth_list = cast(list[str], bandwidth_pattern.findall(resp))
     if bandwidth_list and len(bandwidth_list) == len(play_url_list):
-        url_to_bandwidth = {url: int(bandwidth) for bandwidth, url in zip(bandwidth_list, play_url_list)}
+        url_to_bandwidth = {url: int(bandwidth) for bandwidth, url in zip(bandwidth_list, play_url_list, strict=True)}
         play_url_list = sorted(play_url_list, key=lambda url: url_to_bandwidth[url], reverse=True)
     return play_url_list
 
@@ -545,7 +545,7 @@ async def get_douyin_web_stream_data(
                         raise Exception(f"HTML scraping also failed after API error: {api_error}")
                     logger.debug("HTML scraping fallback succeeded")
                 except Exception as e2:
-                    raise Exception(f"Douyin web data fetch error (API: {api_error}) (HTML fallback: {e2}).")
+                    raise Exception(f"Douyin web data fetch error (API: {api_error}) (HTML fallback: {e2}).") from None
         if room_data is None:
             raise Exception(f"Douyin web data fetch error: {api_error}")
 
@@ -663,7 +663,7 @@ async def get_douyin_app_stream_data(
             room_data2["anchor_name"] = _dig_str(owner, "nickname")
             return room_data2
         except Exception as e:
-            raise Exception(f"Douyin app data fetch error, because {e}.")
+            raise Exception(f"Douyin app data fetch error, because {e}.") from None
 
     async def resolve_from_homepage() -> dict[str, object]:
         unique_id = await get_unique_id(url, proxy_addr=proxy_addr)
@@ -781,7 +781,7 @@ async def get_tiktok_stream_data(
                 json_str = json_str_matches[0]
             except Exception:
                 _warn_if_builtin_guest()
-                raise ConnectionError("Please check if your network can access the TikTok website normally")
+                raise ConnectionError("Please check if your network can access the TikTok website normally") from None
             return _loads_dict(json_str)
 
         if _attempt < 2:
@@ -1028,16 +1028,16 @@ async def get_huya_app_stream_url(
         if not stream_name:
             continue
 
-        def _normalize(base: object, anti: object, suffix: str) -> str:
+        def _normalize(base: object, anti: object, suffix: str, name: object) -> str:
             """直接使用接口返回的原始防盗链参数，统一降为 http（实测 https 403），并对所有。"""
             if not (isinstance(base, str) and isinstance(anti, str) and base and anti):
                 return ""
-            url = f"{base}/{stream_name}.{suffix}?{anti}"
+            url = f"{base}/{name}.{suffix}?{anti}"
             url = url.replace("https://", "http://")
             return url.replace("&ctype=tars_mp", "&ctype=huya_webh5").replace("&fs=bhct", "&fs=bgct")
 
-        m3u8_url = _normalize(s_hls_url, hls_anti_code, "m3u8")
-        flv_url = _normalize(s_flv_url, flv_anti_code, "flv")
+        m3u8_url = _normalize(s_hls_url, hls_anti_code, "m3u8", stream_name)
+        flv_url = _normalize(s_flv_url, flv_anti_code, "flv", stream_name)
         if m3u8_url or flv_url:
             play_url_list.append({"cdn_type": cdn_type, "m3u8_url": m3u8_url, "flv_url": flv_url})
 
@@ -2214,7 +2214,7 @@ async def login_sooplive(username: str, password: str, proxy_addr: OptionalStr =
         logger.error(i18n.tr("An error occurred during login: {e}", e=e))
         raise Exception(
             "sooplive login failed, please check if the account password in the configuration file is correct."
-        )
+        ) from None
 
 
 @trace_error_decorator
@@ -2365,7 +2365,9 @@ async def _fetch_web_stream_data_global(
                 play_url_list.append(urllib.parse.urljoin(m3u8, line))
         bandwidth_pattern = _BANDWIDTH_PATTERN
         bandwidth_list = bandwidth_pattern.findall(resp)
-        url_to_bandwidth = {purl: int(bandwidth) for bandwidth, purl in zip(bandwidth_list, play_url_list)}
+        url_to_bandwidth = {
+            purl: int(bandwidth) for bandwidth, purl in zip(bandwidth_list, play_url_list, strict=False)
+        }
         return sorted(play_url_list, key=lambda purl: url_to_bandwidth.get(purl, 0), reverse=True)
 
     m3u8_url = "https://global-media.sooplive.com/live/" + bj_id + "/master.m3u8"
@@ -2436,7 +2438,9 @@ async def get_sooplive_stream_data(
                 play_url_list.append(url_prefix + i.strip())
         bandwidth_pattern = _BANDWIDTH_PATTERN
         bandwidth_list = bandwidth_pattern.findall(resp)
-        url_to_bandwidth = {purl: int(bandwidth) for bandwidth, purl in zip(bandwidth_list, play_url_list)}
+        url_to_bandwidth = {
+            purl: int(bandwidth) for bandwidth, purl in zip(bandwidth_list, play_url_list, strict=False)
+        }
         return sorted(play_url_list, key=lambda purl: url_to_bandwidth.get(purl, 0), reverse=True)
 
     if not anchor_name:
@@ -2844,7 +2848,7 @@ async def login_flextv(username: str, password: str, proxy_addr: OptionalStr = N
         logger.error(i18n.tr("FlexTV login request exception: {e}", e=e))
         raise Exception(
             "FlexTV login failed, please check if the account and password in the configuration file are correct."
-        )
+        ) from None
 
 
 async def get_flextv_stream_url(url: str, proxy_addr: OptionalStr = None, cookies: OptionalStr = None) -> str | None:
@@ -3483,7 +3487,7 @@ async def get_twitcasting_stream_url(
             raise RuntimeError(
                 "TwitCasting login failed, please check if the account and password in the "
                 "configuration file are correct"
-            )
+            ) from None
         logger.info("TwitCasting login successful! Starting to fetch data...")
         headers["Cookie"] = new_cookie
         anchor_name, live_status, live_title = await get_data(headers)
@@ -5440,7 +5444,7 @@ async def get_migu_stream_url(
         try:
             return await javascript.run_node_script_async(f"{JS_SCRIPT_PATH}/migu.js", url, timeout=30)
         except Exception:
-            raise ProgramError("Failed to execute JS code. Please check if the Node.js environment")
+            raise ProgramError("Failed to execute JS code. Please check if the Node.js environment") from None
 
     real_source_url = await _get_dd_calcu(source_url)
     if ".m3u8" in real_source_url:

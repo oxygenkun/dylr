@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # 2026-09-22 审查报告 / 组 B2（main.py 剩余条目）修复的回归锁。
 #
 # 判据是「失效形态本身」而不是调用形状：
@@ -35,7 +34,7 @@ from src.recording.scheduler import host_of
 from src.streams import dispatch as platform_dispatch
 from src.streams import selection as stream_select
 from src.streams import spider, stream
-from src.support import i18n, utils
+from src.support import i18n
 
 ROOT = Path(__file__).resolve().parents[1]
 MAIN_SRC = ROOT / "src/recording/engine.py"
@@ -260,7 +259,7 @@ class TestFlvConvertBeforeCommentEnd:
             "split_video_by_time": False,
             "_convert_after_record": lambda p, s: calls.append(p),
         }
-        exec(compile(src, "<flv-branch>", "exec"), namespace)  # noqa: S102
+        exec(compile(src, "<flv-branch>", "exec"), namespace)
         # comment_end=True 即「停止录制 / URL 被注释」导致的提前结束——修复前 FLV 在此路径
         # 直接 return，转码被跳过（已录内容永久留在 .flv）。
         namespace["_branch"](True)
@@ -568,7 +567,7 @@ class TestDiskLimitedRecoverable:
             "sys": _SysStub(),
             "_shutdown_postprocess_executor": lambda: state["_shutdown"].append(1),
         }
-        exec(compile(src, "<disk-block>", "exec"), ns)  # noqa: S102
+        exec(compile(src, "<disk-block>", "exec"), ns)
         # 收敛点必须在「返回值」而不是「被调用对象」上：cast(Any, fn)(...) 的结果仍是 Any，
         # warn_return_any 照样报 no-any-return。ns 是 dict[str, Any]（exec 注入，静态无从推断），
         # 故显式收窄为本函数声明的类型，不牺牲运行期行为。
@@ -808,7 +807,7 @@ class TestSubprocessUnwind:
             poll_results = [None]
             rc = 0
 
-        calls = _prime_check_subprocess(monkeypatch, _Popen, out_ts="")
+        _prime_check_subprocess(monkeypatch, _Popen, out_ts="")
         collector = _CollectorStub()
         monkeypatch.setattr(recording, "get_danmaku_collector", lambda **kw: collector)
         monkeypatch.setattr(state, "enable_danmaku", True)
@@ -1089,7 +1088,7 @@ class TestDirectDownloadUserAgent:
         class _Resp:
             status_code = 403
 
-            def __enter__(self) -> "_Resp":
+            def __enter__(self) -> _Resp:
                 return self
 
             def __exit__(self, *args: Any) -> None:
@@ -1102,7 +1101,7 @@ class TestDirectDownloadUserAgent:
             def __init__(self, **kwargs: Any) -> None:
                 captured.update(kwargs.get("headers") or {})
 
-            def __enter__(self) -> "_Client":
+            def __enter__(self) -> _Client:
                 return self
 
             def __exit__(self, *args: Any) -> None:

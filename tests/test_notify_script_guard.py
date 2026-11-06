@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # src/notifications/notify.py 录后自定义脚本钩子（run_script）的安全不变量回归锁（WP-C / M-5）。
 #
 # 四条必须锁住的行为（任意一条被改回旧形态即应变红）：
@@ -76,7 +75,7 @@ def short_timeouts(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture
-def log_capture() -> Generator[io.StringIO, None, None]:
+def log_capture() -> Generator[io.StringIO]:
     # 内存 sink 直接接管 loguru（caplog 抓不到：本仓不把 loguru 桥接到 stdlib logging）。
     # format 带 {level}：用例要区分「error 主路径」与「warning 降级留痕」两个级别。
     buf = io.StringIO()
@@ -104,7 +103,7 @@ class _FakeProc:
         self.communicate_timeouts: list[float | None] = []
         self._results: list[Any] = list(results or [])
 
-    def __class_getitem__(cls, item: object) -> type["_FakeProc"]:
+    def __class_getitem__(cls, item: object) -> type[_FakeProc]:
         # 仓内替身惯例（AGENTS「FakePopen 必须是类且定义 __class_getitem__」）：被测模块里
         # `subprocess.Popen[bytes]` 这类下标注解在 def 时求值，替身一旦被拿去喂注解就得可下标。
         return cls

@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import io
 import sys
-from typing import Iterator
+from collections.abc import Iterator
 
 import pytest
 from loguru import logger

@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 import threading
 import time
-from typing import Optional, TextIO
+from typing import TextIO
 
 from src.support import i18n
 from src.support.logger import logger
@@ -44,7 +44,7 @@ class SrtWriter:
     def __init__(
         self,
         base_filename: str,
-        segment_seconds: Optional[float] = 1800.0,
+        segment_seconds: float | None = 1800.0,
         display_duration: float = 1.5,
     ) -> None:
         """初始化写入器：base_filename 为录像文件去扩展名前缀（如 .../主播名_2026-08-12_21-00-00），。"""
@@ -53,17 +53,17 @@ class SrtWriter:
         self._display_duration = display_duration
 
         self._lock = threading.Lock()
-        self._t0: Optional[float] = None  # monotonic 基准（start() 锚定的录像起点）
+        self._t0: float | None = None  # monotonic 基准（start() 锚定的录像起点）
         self._current_seg = -1
         self._index = 0  # 当前片内序号
-        self._fp: Optional[TextIO] = None
-        self._last_end: Optional[float] = None  # 上一条结束时间，用于密集弹幕错开
+        self._fp: TextIO | None = None
+        self._last_end: float | None = None  # 上一条结束时间，用于密集弹幕错开
         self._last_open_attempt = 0.0  # WD-03：句柄打开失败的退避基准（monotonic）
         self._last_open_error = ""  # L-18：最近一次句柄打开失败的异常类型名（供重试失败告警）
         self._closed = False
         self._discarded_after_count = 0
 
-    def start(self, now: Optional[float] = None) -> None:
+    def start(self, now: float | None = None) -> None:
         """锚定时间轴 T0（录像起点）并立即创建第 0 片 SRT 文件（哪怕尚无弹幕）；。"""
         if now is None:
             now = time.monotonic()
@@ -104,7 +104,7 @@ class SrtWriter:
             return f"{self._base}.srt"
         return f"{self._base}_{seg:03d}.srt"
 
-    def write(self, user_name: str, message: str, now: Optional[float] = None) -> None:
+    def write(self, user_name: str, message: str, now: float | None = None) -> None:
         """写入一条弹幕 "user_name: message"：按 now（monotonic，缺省内部取）算出片号并按需切片，。"""
         if now is None:
             now = time.monotonic()

@@ -42,7 +42,7 @@ async def main() -> None:
     d = DouyuDanmaku(on_message=on_message, on_close=on_close, on_ready=lambda: print("[ready] 已连接，开始登录进房"))
     try:
         await asyncio.wait_for(d.start({"room_id": room_id}), timeout=20)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         print("[error] 连接超时")
         return
     await asyncio.sleep(duration)

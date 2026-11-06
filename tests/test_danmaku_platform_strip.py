@@ -69,7 +69,7 @@ def _value_segment(name: str) -> str:
 def _parse(raw: str) -> list[str]:
     # 用生产表达式原文编译执行，只把左侧的输入字符串换成用例值。
     namespace: dict[str, Any] = {"danmaku_platforms_str": raw, "state": types.SimpleNamespace()}
-    exec(compile(_assign_segment(), "<danmaku_platforms>", "exec"), namespace)  # noqa: S102
+    exec(compile(_assign_segment(), "<danmaku_platforms>", "exec"), namespace)
     value: Any = namespace["state"].danmaku_platforms
     assert isinstance(value, list), f"生产表达式应产出 list，实为 {type(value).__name__}"
     return [str(item) for item in value]

@@ -33,9 +33,9 @@ from __future__ import annotations
 import ast
 import time
 import types
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
-from typing import Any, Iterator, Literal, TypeGuard, cast
+from typing import Any, Literal, TypeGuard, cast
 from unittest.mock import patch
 
 import httpx
@@ -44,7 +44,6 @@ from loguru import logger
 
 import src.network.http as async_http
 import src.streams.selection as ss
-from src.api import config as web_config
 from src.network import targets
 from src.network.http import is_reachable
 from src.recording import state
@@ -153,7 +152,7 @@ class _FakeHead405HtmlClient:
     def __init__(self, *args: object, **kwargs: object) -> None:
         pass
 
-    def __enter__(self) -> "_FakeHead405HtmlClient":
+    def __enter__(self) -> _FakeHead405HtmlClient:
         return self
 
     def __exit__(self, *_args: object) -> Literal[False]:
@@ -222,7 +221,7 @@ def _m3u8_client_cls(get_statuses: list[int], get_types: list[str]) -> type[_M3u
         def __init__(self, *args: object, **kwargs: object) -> None:
             pass
 
-        def __enter__(self) -> "_C":
+        def __enter__(self) -> _C:
             return self
 
         def __exit__(self, *_args: object) -> Literal[False]:
@@ -307,7 +306,7 @@ class _FakeStream:
     def __init__(self, status_code: int) -> None:
         self.status_code = status_code
 
-    def __enter__(self) -> "_FakeStream":
+    def __enter__(self) -> _FakeStream:
         return self
 
     def __exit__(self, *_args: object) -> Literal[False]:
@@ -321,7 +320,7 @@ def _hls_segment_client_cls(segment_status: int, media_body: str = _HLS_MEDIA_BO
         def __init__(self, *args: object, **kwargs: object) -> None:
             pass
 
-        def __enter__(self) -> "_C":
+        def __enter__(self) -> _C:
             return self
 
         def __exit__(self, *_args: object) -> Literal[False]:
@@ -909,7 +908,7 @@ def test_huya_transient_flv_403_marks_backoff(clear_probe_backoff: None) -> None
         def __init__(self, *args: object, **kwargs: object) -> None:
             self._calls = 0
 
-        def __enter__(self) -> "_FlvTransient403Client":
+        def __enter__(self) -> _FlvTransient403Client:
             return self
 
         def __exit__(self, *_args: object) -> Literal[False]:
@@ -920,7 +919,7 @@ def test_huya_transient_flv_403_marks_backoff(clear_probe_backoff: None) -> None
 
         def stream(
             self, method: str, url: str, headers: dict[str, str] | None = None, follow_redirects: bool = True
-        ) -> "_StreamCtx":
+        ) -> _StreamCtx:
             code = self.get_codes[min(self._calls, len(self.get_codes) - 1)]
             self._calls += 1
             return _StreamCtx(_FakeResponse(code, ""))
@@ -1478,7 +1477,7 @@ def _media_playlist_client(seg_status: int, playlist_text: str = _HLS_MEDIA_BODY
         def __init__(self, *args: object, **kwargs: object) -> None:
             pass
 
-        def __enter__(self) -> "_C":
+        def __enter__(self) -> _C:
             return self
 
         def __exit__(self, *_args: object) -> Literal[False]:

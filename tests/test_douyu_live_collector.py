@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # 斗鱼真实房间端到端验证:get_douyu_info_data(免 get_token_js)取 room_id → DouyuDanmaku → SRT 产出。
 #
 # 用法:python tests/test_douyu_live_collector.py [房间URL] [秒数]

@@ -17,7 +17,6 @@ from src.streams.spider import (
     _extract_room_data_from_html,
     _get_str_response,
     _loads_dict,
-    _loads_dict_prefix,
     _safe_extract_id,
     extract_douyin_hevc_flv_url,
     extract_kuaishou_eid,
@@ -168,11 +167,6 @@ class TestGetDouyinWebStreamData:
     @pytest.mark.asyncio
     async def test_api_empty_response_fallback_html(self) -> None:
         # 异常路径：API两次返回空响应，回退到HTML抓取成功。
-        html_with_data = (
-            '{"state":1}\\"roomStore\\":{\\"roomInfo\\":{\\"room\\":{\\"status\\":2,'
-            '\\"title\\":\\"测试\\",\\"stream_url\\":{\\"hls_pull_url_map\\":{},\\"flv_pull_url\\":{}}}},'
-            '\\"has_commerce_goods\\"'
-        )
         # 构造一个能被正则匹配的HTML
         valid_html = (
             '<script nonce="abc">self.__pace_f.push([1,"{\\"state\\":1,'
@@ -716,7 +710,7 @@ def _unwrap(func: object) -> Any:
     # 取 trace_error_decorator 装饰前的原函数（装饰器经 functools.wraps 保留 __wrapped__）。
     # 断言「异常消息原文」必须走这条路——被装饰后异常会被吞成 {"is_live": False}，
     # 消息内容（本组用例的被测对象）根本看不到。
-    return cast(Any, getattr(func, "__wrapped__"))
+    return cast(Any, func).__wrapped__
 
 
 class _LogSpy:

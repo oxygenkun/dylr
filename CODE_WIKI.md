@@ -144,7 +144,7 @@
 | HTML + CSS + JavaScript | Web 管理面板前端 |
 | Docker | 容器化部署 |
 | JSON 翻译目录 | 中文原文与 `i18n/en_US.json` 英文译文 |
-| Ruff | 格式化、导入排序与文件读取错误检查 |
+| Ruff | 格式化与静态检查（规则以 `pyproject.toml` 为准） |
 | websockets | 弹幕 WebSocket 传输层（`src/network/websocket.py`，各平台弹幕共用） |
 | protobuf | 抖音弹幕协议解码（`src/proto/douyin_pb2`，protoc 生成模块） |
 | brotli | B站弹幕解压（protover=3 需 brotli 解压） |
@@ -1174,8 +1174,8 @@ async with websockets.connect(
 
 ### 代码规范
 
-- 格式化: `ruff format .`
-- 导入排序: `ruff check --fix .`
+- 格式化: `uv run --locked --extra dev ruff format .`
+- 静态检查: `uv run --locked --extra dev ruff check .`（加 `--fix` 应用安全修复）；具体规则见 `pyproject.toml`，修复与豁免约定见 [AGENTS.md](AGENTS.md#检查时机与命令)。
 
 
 
@@ -1301,6 +1301,12 @@ python tool/smoke_test.py -c tool/smoke_web.json -r smoke_report.html -f html
 - **修改内容** · `docs/agent-reference/project-structure.md`、`docs/agent-reference/session-learnings.md` — 目录树同步新增模块与测试文件；经验条目追加（ADS 夹具、保留设备名实测、用例数增量归因、offscreen 探针的退出形态、先测后改的冗余度量、锚点优于行号、`strict=True` 下的重复键）
 - **新增功能** · `CODE_WIKI.md`、`CODE_WIKI_EN.md` — 本「按模块分类的改动总览」章节（中英同结构、同条目数、逐条对应），以及逐批更新日志条目随改动追加并保持双语一一对应
 ## 更新日志
+
+### 2026-11-06 — 扩展 Ruff 静态检查规则
+
+- Ruff 在原有导入排序与未定义名称检查之外，增加常见缺陷、现代 Python 写法、冗余代码、调试器与 `noqa` 检查，并修复生产代码、工具和测试中的存量问题；长行仍由 formatter 尽量处理。
+- protoc 生成文件仅豁免生成器的编码声明与布尔比较；必须在路径初始化后导入的脚本使用逐行例外，不扩大目录豁免。规则事实源仍为 `pyproject.toml`，中英文开发指南同步。
+- 验证：全仓 Ruff lint 与格式检查通过（220 个 Python 文件），116 个修改的 Python 文件内存编译通过；测试函数与断言的静态盘点未减少。提交前完整 pytest 为 3075 passed / 10 skipped，无 warnings summary；总覆盖率 82.47%，75 个非豁免模块均达到覆盖率门槛。未做真机录制验证。
 
 ### 2026-11-06 — 统一启动入口（Web 面板由 `[Web] web_enable` 控制）并只保留中文架构文档
 

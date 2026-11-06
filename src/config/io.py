@@ -10,7 +10,7 @@ import time
 from loguru import logger
 
 from src.config import files as config_files
-from src.config.booleans import format_config_bool, parse_config_bool
+from src.config.booleans import parse_config_bool
 from src.config.store import ConfigError, ConfigStore, format_value
 from src.recording import state
 from src.recording.process import _get_error_line
@@ -26,7 +26,7 @@ def update_file(file_path: str, old_str: str, new_str: str, start_str: str | Non
         seen: set[str] = set()
         matched = False
         try:
-            with open(file_path, "r", encoding=state.text_encoding, newline="") as f:
+            with open(file_path, encoding=state.text_encoding, newline="") as f:
                 for text_line in f:
                     rewritten = config_files.rewrite_line_by_segment(text_line, old_str, new_str)
                     if rewritten is not None:
@@ -75,7 +75,7 @@ def update_anchor_name(url: str, new_name: str) -> bool:
         if not os.path.exists(state.url_config_file):
             return False
         try:
-            with open(state.url_config_file, "r", encoding=state.text_encoding, newline="") as f:
+            with open(state.url_config_file, encoding=state.text_encoding, newline="") as f:
                 lines = f.readlines()
         except (RuntimeError, UnicodeDecodeError, OSError) as e:
             logger.error(i18n.tr("读取 URL 配置失败，跳过主播名更新: {e}", e=e))
@@ -144,7 +144,7 @@ def append_room_line(url_config_file: str, url: str, quality: str = "", name: st
     target = web_config.normalize_url(url)
     with state.file_update_lock:
         try:
-            with open(url_config_file, "r", encoding=state.text_encoding, newline="") as f:
+            with open(url_config_file, encoding=state.text_encoding, newline="") as f:
                 data = f.read()
         except FileNotFoundError:
             data = ""
@@ -169,7 +169,7 @@ def delete_line(file_path: str, del_line: str, delete_all: bool = False) -> bool
     """从 file_path 中删除与 del_line 完全相同的行，delete_all=True 时删除全部匹配行；。"""
     with state.file_update_lock:
         try:
-            with open(file_path, "r", encoding=state.text_encoding, newline="") as f:
+            with open(file_path, encoding=state.text_encoding, newline="") as f:
                 lines = f.readlines()
         except (OSError, UnicodeDecodeError) as e:
             logger.error(i18n.tr("读取 URL 配置失败，跳过删除: {e}", e=e))
@@ -340,7 +340,7 @@ def backup_file(file_path: str, backup_dir_path: str, limit_counts: int = 6) -> 
         name = os.path.basename(file_path)
         if _backup_mask_secrets() and name in ("config.ini", "config.toml"):
             try:
-                with open(file_path, "r", encoding=state.text_encoding, errors="replace") as src_f:
+                with open(file_path, encoding=state.text_encoding, errors="replace") as src_f:
                     content = src_f.read()
                 redacted = _redact_toml_secrets(content) if name == "config.toml" else _redact_ini_secrets(content)
                 if not _atomic_write_text(backup_file_path, redacted):

@@ -4,7 +4,7 @@ import asyncio
 import json
 import re
 import struct
-from typing import Any, Union
+from typing import Any
 
 from loguru import logger
 
@@ -197,7 +197,7 @@ class BilibiliDanmaku(DanmakuBase):
         data = msg.encode("utf-8")
         return struct.pack(">IHHII", len(data) + HEADER_LEN, HEADER_LEN, 0, action, 1) + data
 
-    def decode_message(self, data: Union[bytes, str]) -> None:
+    def decode_message(self, data: bytes | str) -> None:
         """解析收到的字节流（处理粘包），逐帧解码并分发弹幕/在线消息。"""
         if isinstance(data, str):
             return

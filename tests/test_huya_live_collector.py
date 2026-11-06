@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # 虎牙真实房间端到端验证:app 路径(profileRoom)取弹幕参数 → collector → SRT 产出。
 #
 # 用法:python tests/test_huya_live_collector.py https://www.huya.com/660000  [秒数]

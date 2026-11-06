@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # src.recording.scheduler 单元测试：覆盖 ResizableSemaphore / PlatformBreaker / ConcurrencyScheduler。
 # 聚焦高并发录制调度的关键不变量：信号量可安全调容、熔断器状态机正确、
 # 全局并发容量随活跃任务数自适应缩放且带安全下限、按 key 错误预算隔离、录制并发软上限。

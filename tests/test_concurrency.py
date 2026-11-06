@@ -1,4 +1,3 @@
-# -*- encoding: utf-8 -*-
 #
 # 并发风控核心模式测试：验证线程锁、速率限制、凭证共享的正确性。
 #
@@ -23,6 +22,7 @@ import asyncio
 import threading
 import time
 import types
+from itertools import pairwise
 from typing import Any
 
 import pytest
@@ -158,7 +158,7 @@ class TestRateLimit:
 
         assert len(stamps) == 3
         assert stamps == sorted(stamps), f"请求时刻倒退: {stamps}"
-        for prev, nxt in zip(stamps, stamps[1:]):
+        for prev, nxt in pairwise(stamps):
             assert nxt - prev >= state.douyin_min_interval, (
                 f"两次抖音请求间隔 {nxt - prev} < {state.douyin_min_interval}"
             )
@@ -195,7 +195,7 @@ class TestRateLimit:
 
         assert len(stamps) == 5, f"有线程未走完限流临界区: {stamps}"
         ordered = sorted(stamps)
-        gaps = [b - a for a, b in zip(ordered, ordered[1:])]
+        gaps = [b - a for a, b in pairwise(ordered)]
         assert all(gap >= state.douyin_min_interval * 0.9 for gap in gaps), (
             f"并发调用未被串行化（相邻请求间隔 {[round(g, 4) for g in gaps]} < {state.douyin_min_interval}）："
             "限流的 with main.douyin_rate_lock 被移除或改名"

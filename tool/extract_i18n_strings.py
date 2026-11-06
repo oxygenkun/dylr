@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # i18n 待翻译串提取器：AST 扫描运行时代码（main/web/msg_push/i18n + src/ 全部 .py），
 # 提取 print() 的全部常量实参、logger.*() 与 i18n.tr() 的首参（常量串或 f-string 模板底稿），
 # 与英文目录（en_US.json）比对并打印缺失清单。

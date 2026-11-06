@@ -22,7 +22,7 @@
 import types
 from collections.abc import Generator
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import pytest
 
@@ -47,17 +47,18 @@ def _reset_web_api_state(wa: types.ModuleType) -> None:
         wa._tokens.clear()
     wa._invalidate_web_cfg_cache()
     with wa._status_lock:
-        setattr(wa, "_status_cache", None)
-        setattr(wa, "_status_cache_at", 0.0)
-        setattr(wa, "_status_inflight", False)
-        setattr(wa, "_status_inflight_since", 0.0)
+        mutable_api = cast(Any, wa)
+        mutable_api._status_cache = None
+        mutable_api._status_cache_at = 0.0
+        mutable_api._status_inflight = False
+        mutable_api._status_inflight_since = 0.0
     # SEV-2221 的主循环停摆探针状态（_main_loop_probe_lock / _main_loop_probe_count /
     # _main_loop_probe_at）已随该探针从 src/api/routes.py 撤下（见文件头 ④）。这里若继续 setattr，
     # 就是给一个不存在的模块全局赋值：用例照绿，却凭空塞进生产代码从不读的名字。
 
 
 @pytest.fixture
-def fake_main(monkeypatch: pytest.MonkeyPatch) -> Generator[types.ModuleType, None, None]:
+def fake_main(monkeypatch: pytest.MonkeyPatch) -> Generator[types.ModuleType]:
     from src.recording import status as recorder_status
 
     monkeypatch.setattr(recorder_status, "get_status", lambda: {"engine_alive": True, "monitoring": 1, "recording": []})
@@ -65,7 +66,7 @@ def fake_main(monkeypatch: pytest.MonkeyPatch) -> Generator[types.ModuleType, No
 
 
 @pytest.fixture(scope="function")
-def app_env(tmp_path: Path, fake_main: types.ModuleType) -> Generator[types.SimpleNamespace, None, None]:
+def app_env(tmp_path: Path, fake_main: types.ModuleType) -> Generator[types.SimpleNamespace]:
     from starlette.testclient import TestClient
 
     from src.api import routes as wa
@@ -129,7 +130,7 @@ class TestMainLoopAliveProbeWithdrawn:
     def test_status_omits_key_when_counter_is_bool(self, app_env: types.SimpleNamespace) -> None:
         # 误接线形态（保留原 SEV-2221 用例的洞见）：bool 是 int 子类，`main_loop_ticks = True`
         # 若被当 1 参与「是否增长」比较，判定会恒为「永不增长 → 停摆」，面板永久报红。
-        setattr(app_env.fake_main, "main_loop_ticks", True)
+        app_env.fake_main.main_loop_ticks = True
         try:
             token = _login(app_env.client)
             resp = app_env.client.get("/api/status", headers={"Authorization": f"Bearer {token}"})

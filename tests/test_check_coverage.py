@@ -51,7 +51,7 @@ def _report(percent_by_module: dict[str, float], *, backslash_keys: bool = False
 
 
 def _full_pass_report() -> dict[str, Any]:
-    return _report({module: 100.0 for module in _REGISTERED})
+    return _report(dict.fromkeys(_REGISTERED, 100.0))
 
 
 # ---------------------------------------------------------------------------
@@ -104,7 +104,7 @@ def test_new_src_module_is_gated_even_without_registered_threshold(tmp_path: Pat
 def test_unregistered_module_below_global_floor_exits_1(tmp_path: Path) -> None:
     root = _make_root(tmp_path, ("src/brand_new.py",))
     floor = float(check_coverage.GLOBAL_FLOOR)
-    percents = {module: 100.0 for module in _REGISTERED}
+    percents = dict.fromkeys(_REGISTERED, 100.0)
     percents["src/brand_new.py"] = floor - 1.0
     assert check_coverage.evaluate_report(_report(percents), root) == 1, "低于下限却放行：GLOBAL_FLOOR 未生效"
 
@@ -113,7 +113,7 @@ def test_unregistered_module_at_global_floor_passes(tmp_path: Path) -> None:
     # 与上一条分开成例：同一用例里两次判定会共用被 monkeypatch 改过的模块状态（见文件头）。
     # 恰好等于下限必须判达标（>= 语义），否则「按下限放水」这条规则本身就不可用。
     root = _make_root(tmp_path, ("src/brand_new.py",))
-    percents = {module: 100.0 for module in _REGISTERED}
+    percents = dict.fromkeys(_REGISTERED, 100.0)
     percents["src/brand_new.py"] = float(check_coverage.GLOBAL_FLOOR)
     assert check_coverage.evaluate_report(_report(percents), root) == 0, "恰好等于下限应判达标（>= 语义）"
 
@@ -123,7 +123,7 @@ def test_registered_module_still_uses_its_own_higher_threshold(tmp_path: Path) -
     root = _make_root(tmp_path)
     ttwid_threshold = check_coverage.MODULE_THRESHOLDS["src/streams/ttwid.py"]
     assert ttwid_threshold > check_coverage.GLOBAL_FLOOR, "用例前提失效：ttwid 阈值须高于全局下限"
-    percents = {module: 100.0 for module in _REGISTERED}
+    percents = dict.fromkeys(_REGISTERED, 100.0)
     percents["src/streams/ttwid.py"] = ttwid_threshold - 1.0
     assert check_coverage.evaluate_report(_report(percents), root) == 1
 
@@ -232,7 +232,7 @@ def test_missing_summary_counts_as_zero(tmp_path: Path) -> None:
 
 
 def test_find_module_coverage_rejects_tests_only_key(tmp_path: Path) -> None:
-    root = _make_root(tmp_path)
+    _make_root(tmp_path)
     report = _report({"tests/utils.py": 99.5})
     assert check_coverage._find_module_coverage(report, "src/support/utils.py") is None, (
         "tests/utils.py 顶替了 src/support/utils.py 的读数（6.7 的形态回来了）"
@@ -248,10 +248,7 @@ def test_tests_only_report_exits_1(tmp_path: Path) -> None:
 def test_windows_backslash_report_keys_match(tmp_path: Path) -> None:
     # 正向锁：收紧匹配不得把合法形态一起杀掉——coverage json 在 Windows 上就是反斜杠键。
     root = _make_root(tmp_path)
-    assert (
-        check_coverage.evaluate_report(_report({module: 100.0 for module in _REGISTERED}, backslash_keys=True), root)
-        == 0
-    )
+    assert check_coverage.evaluate_report(_report(dict.fromkeys(_REGISTERED, 100.0), backslash_keys=True), root) == 0
 
 
 def test_absolute_ci_report_keys_match(tmp_path: Path) -> None:

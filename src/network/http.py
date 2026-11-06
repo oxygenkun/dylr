@@ -44,7 +44,7 @@ async def _bounded_response_read(response: httpx.Response) -> None:
     collected: list[bytes] = []
     total = 0
     async with contextlib.aclosing(
-        cast(AsyncGenerator[bytes, None], response.aiter_bytes(_RESPONSE_CHUNK_SIZE))
+        cast(AsyncGenerator[bytes], response.aiter_bytes(_RESPONSE_CHUNK_SIZE))
     ) as byte_chunks:
         async for chunk in byte_chunks:
             total += len(chunk)

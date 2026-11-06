@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any
 
 JS_SCRIPT_PATH = Path(__file__).resolve().parent / "javascript"
 
@@ -24,7 +24,7 @@ if TYPE_CHECKING:
     from src.danmaku.collector import DanmakuCollector
 
 
-def get_danmaku_class(platform: str) -> Optional[type[DanmakuBase]]:
+def get_danmaku_class(platform: str) -> type[DanmakuBase] | None:
     """按平台名返回弹幕协议实现。"""
     from src.danmaku.platforms.bilibili import BilibiliDanmaku
     from src.danmaku.platforms.douyin import DouyinDanmaku
@@ -46,11 +46,11 @@ def get_danmaku_collector(
     platform: str,
     danmaku_args: Any,
     base_filename: str,
-    segment_seconds: Optional[float] = 1800.0,
-    only_fans: Optional[bool] = None,
-    room_name: Optional[str] = None,
+    segment_seconds: float | None = 1800.0,
+    only_fans: bool | None = None,
+    room_name: str | None = None,
     write_srt: bool = True,
-) -> Optional["DanmakuCollector"]:
+) -> DanmakuCollector | None:
     """工厂函数：平台不支持或 danmaku_args 为空时返回 None（导入放在函数内，避免循环依赖）。"""
     from src.danmaku.collector import DanmakuCollector
 

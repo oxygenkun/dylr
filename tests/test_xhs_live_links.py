@@ -416,7 +416,7 @@ async def test_share_params_are_stripped_before_page_request(monkeypatch: pytest
     url = f"{_LIVE_ROOM_URL}?timestamp=1700000000&share_source=copy_link&xsec_token=XYZ&xsec_source=pc_feed"
     fake = _fake_async_req({LIVE_ROOM_ID: _page("end")})
     with patch.object(sp.http, "request", new=fake):
-        result = await sp.get_xhs_stream_url(url)
+        await sp.get_xhs_stream_url(url)
     page_urls = [item["url"] for item in fake.sent if not item["redirect"]]
     assert page_urls, "未发起房间页请求"
     assert all("timestamp" not in u and "share_source" not in u for u in page_urls), page_urls
@@ -724,7 +724,7 @@ def test_xhs_link_creates_and_starts_recording_job(
     import types
 
     def _sleep_and_stop(_seconds: float) -> None:
-        setattr(state, "exit_recording", True)
+        state.exit_recording = True
 
     time_shim = types.SimpleNamespace(**{k: getattr(_time_mod, k) for k in dir(_time_mod) if not k.startswith("_")})
     time_shim.sleep = _sleep_and_stop

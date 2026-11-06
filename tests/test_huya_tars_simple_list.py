@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # 虎牙 Tars SIMPLE_LIST 长度字段回归。
 #
 # 背景：_tars.py 曾把 Tars 字节数组 SIMPLE_LIST 的长度写成/读成**固定 4 字节 int32**，而官方 Tars
@@ -18,7 +17,6 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from src.danmaku.platforms._tars import TarsInputStream
 
 # 官方编码的一条弹幕推送（WSCmd iCmdType=7 -> HYPushMessage uri=1400 -> HYMessage）。
 # 由 tars_dart 语义手工构造：Bytearray 长度均按「头+变宽值」布局，非固定 4 字节。
@@ -111,7 +109,7 @@ def official_join_parse(bs: bytes) -> dict:
     out: dict[str, bytes | int] = {}
     while p[0] < len(bs):
         b = bs[p[0]]
-        typ, tag = b & 0xF, (b >> 4) & 0xF
+        typ = b & 0xF
         if typ == 11:
             break
         t, tg = head()

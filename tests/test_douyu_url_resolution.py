@@ -11,7 +11,7 @@
 # anchor_name——尾斜杠形态的旧缺陷正是「房间号带 / 被拼进 betard 路径」，只看结果会被兜底掩盖。
 
 import json
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -133,7 +133,7 @@ async def test_non_numeric_resolved_rid_raises() -> None:
     # get_douyu_info_data 带 trace_error_decorator：异常会被吞成 {"is_live": False}。
     # 故直接测未装饰本体（functools.wraps 保留的 __wrapped__），再单独锁装饰后的兜底结果——
     # 两条合起来才是「抛得出来 + 不穿透主循环」的完整契约。
-    raw = getattr(spider.get_douyu_info_data, "__wrapped__")
+    raw = cast(Any, spider.get_douyu_info_data).__wrapped__
     with patch("src.network.http.request", new_callable=AsyncMock, side_effect=_fake_req):
         with pytest.raises(ValueError, match="非数字"):
             await raw("https://m.douyu.com/字母号")

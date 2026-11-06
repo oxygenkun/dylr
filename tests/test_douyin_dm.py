@@ -92,7 +92,7 @@ class FakeClient:
         self.users = users
         self.live = live
 
-    def __enter__(self) -> "FakeClient":
+    def __enter__(self) -> FakeClient:
         return self
 
     def __exit__(self, *_args: Any) -> None:

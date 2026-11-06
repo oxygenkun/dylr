@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # B站 wbi 签名修复的串联锁：get_bilibili_danmaku_info 返回 token，并能连 WS 收到弹幕。
 #
 # MT-02（2026-10-19，CODE_REVIEW_2026-10-18）：本文件原是「只有 main()、没有任何 test_ 函数」的
@@ -106,7 +105,7 @@ class _ChainFakeWs:
         if callable(on_ready):
             cast(Any, on_ready)()
 
-    async def send(self, data: "bytes | str") -> None:
+    async def send(self, data: bytes | str) -> None:
         self.sent.append(data)
 
     async def close(self) -> None:
@@ -163,10 +162,10 @@ async def test_danmaku_info_to_ws_chain_delivers_message(monkeypatch: pytest.Mon
 
     # 看门狗/进房两条后台协程经 spawn_danmaku_task 投递；这里包一层「委托真实实现 + 记账」，
     # 既保留真实异常落盘语义，又能在用例末尾断言「没有留下 pending 任务」。
-    spawned: list["asyncio.Task[None]"] = []
+    spawned: list[asyncio.Task[None]] = []
     real_spawn = bilibili.spawn_danmaku_task
 
-    def _record_spawn(coro: Any) -> "asyncio.Task[None]":
+    def _record_spawn(coro: Any) -> asyncio.Task[None]:
         task = cast(Any, real_spawn)(coro)
         spawned.append(task)
         return cast("asyncio.Task[None]", task)
@@ -319,7 +318,7 @@ async def _live_probe(url: str, seconds: float) -> None:
     # 连接稳定（等待弹幕或正常保活），不判失败。时长可经 argv[2] 覆盖（默认 30s，见 LIVE_SECONDS）。
     try:
         await asyncio.wait_for(client.start(info), timeout=seconds)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         print(f"OK 连接持续 {seconds:.0f}s,未崩溃(等待弹幕或超时)")
     print(f"DONE 收到 {len(got)} 条消息")
 

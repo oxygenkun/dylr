@@ -108,7 +108,7 @@ class TestRemoveDuplicateLines:
         test_file.write_text("line1\nline2\nline1\nline3\nline2\n", encoding="utf-8-sig")
         remove_duplicate_lines(test_file)
         content = test_file.read_text(encoding="utf-8-sig")
-        lines = [l for l in content.strip().split("\n") if l]
+        lines = [line for line in content.strip().split("\n") if line]
         assert len(lines) == 3
         assert "line1" in lines
         assert "line2" in lines
@@ -672,7 +672,7 @@ class _LockRecorder:
     def __init__(self) -> None:
         self.entered = 0
 
-    def __enter__(self) -> "_LockRecorder":
+    def __enter__(self) -> _LockRecorder:
         self.entered += 1
         return self
 
@@ -725,7 +725,7 @@ class TestUrlConfigWritePaths:
         with open(target, "w", encoding="utf-8-sig", newline="") as f:
             _ = f.write("https://a.example/1\r\nhttps://b.example/2\r\n")
         replace_url(target, "https://a.example/1", "https://c.example/3")
-        with open(target, "r", encoding="utf-8-sig", newline="") as f:
+        with open(target, encoding="utf-8-sig", newline="") as f:
             lines = f.readlines()
         assert lines == ["https://c.example/3\r\n", "https://b.example/2\r\n"]
 
@@ -743,7 +743,7 @@ class TestUrlConfigWritePaths:
         first_pass_line = "首轮残留行\n"
 
         class _HalfThenBoom:
-            def __enter__(self) -> "_HalfThenBoom":
+            def __enter__(self) -> _HalfThenBoom:
                 return self
 
             def __exit__(self, *exc_info: object) -> None:
@@ -871,7 +871,7 @@ class _HangingPopen:
 class _TimeoutPopen:
     # communicate 按真实语义在预算到点时抛 TimeoutExpired；顺带记账「有没有被二次调用」
     # ——再读一次管道就是 subprocess.run 的挂死形态，必须只发生一次。
-    instances: list["_TimeoutPopen"] = []
+    instances: list[_TimeoutPopen] = []
 
     def __init__(self, argv: list[str], **kwargs: Any) -> None:
         self.pid = 4242
@@ -895,7 +895,7 @@ class _TimeoutPopen:
 
 
 @pytest.fixture(autouse=True)
-def _reset_node_poppen_registry() -> Generator[None, None, None]:
+def _reset_node_poppen_registry() -> Generator[None]:
     _TimeoutPopen.instances = []
     yield
     _TimeoutPopen.instances = []

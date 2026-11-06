@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # 2026-09-22 审查报告 / 组 C（src/support/utils.py + src/api/config.py + src/config/io.py + msg_push.py）回归锁。
 #
 # 判据一律落在「失效形态本身」，而不是「调用了某个函数」：
@@ -32,7 +31,6 @@ from src.api import config as web_config_module
 from src.config import files as config_files
 from src.notifications import msg_push
 from src.runtime import javascript
-from src.support import i18n
 from src.support.utils import _SECRET_KEYS, mask_credentials
 
 # ────────────────────────────────────────────────────────────

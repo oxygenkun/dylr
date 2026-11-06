@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # 通知模块单测
 #
 # 覆盖 run_script 的超时保护：用户脚本挂起时必须被强制终止并回收管道，
@@ -35,7 +34,7 @@ def short_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture
-def log_capture() -> Generator[io.StringIO, None, None]:
+def log_capture() -> Generator[io.StringIO]:
     # 内存 sink：直接接管 loguru 消息（不依赖 caplog / stdlib logging 桥接），
     # 退出 fixture 时自动 remove 不污染全局 handler
     buf = io.StringIO()

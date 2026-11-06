@@ -30,7 +30,7 @@ _OUT_TS = str(Path(tempfile.gettempdir()) / "dvr_probe_out.ts")
 
 
 @pytest.fixture(scope="module")
-def main_mod() -> Generator[Any, None, None]:
+def main_mod() -> Generator[Any]:
     from src.recording import engine as main
 
     yield main
@@ -240,7 +240,6 @@ def test_live_network_capacity_fallback_and_scheduler_value(main_mod: Any, monke
     # （2026-08-23 实测：容量自适应 12/20 而旧显示固定打印配置值 3，严重误导）
     from src.recording.status import _live_network_capacity
 
-    main = main_mod
     monkeypatch.setattr(state, "max_request", 3)
 
     monkeypatch.setattr(state, "scheduler", None)
@@ -258,7 +257,7 @@ class _FakeStreamResponse:
         self.status_code = status_code
         self._chunks = chunks
 
-    def __enter__(self) -> "_FakeStreamResponse":
+    def __enter__(self) -> _FakeStreamResponse:
         return self
 
     def __exit__(self, *args: Any) -> None:
@@ -273,7 +272,7 @@ class _FakeHttpClient:
     def __init__(self, response: _FakeStreamResponse) -> None:
         self._response = response
 
-    def __enter__(self) -> "_FakeHttpClient":
+    def __enter__(self) -> _FakeHttpClient:
         return self
 
     def __exit__(self, *args: Any) -> None:
@@ -288,7 +287,6 @@ def test_direct_download_stream_rejects_non_200_as_failure(
 ) -> None:
     # CDN 拒绝（非 200）＝真-失败签名：吞异常返回 False、不写半截文件后假装完成；
     # 调用方（start_record 直下分支）依据「未被注释且无退出标志」将 False 记入熔断失败样本
-    main = main_mod
     monkeypatch.setattr(recording, "get_record_headers", lambda *a, **k: {})
     monkeypatch.setattr(recording, "get_record_user_agent", lambda *a, **k: "")
     # MID-66：httpx 同样是全进程共享的三方模块本体，改走浅拷贝替身
@@ -309,7 +307,6 @@ def test_direct_download_stream_writes_chunks_on_success(
     main_mod: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     # 正常拉流：逐块写入文件并返回 True（调用方据此记 record_success 样本）
-    main = main_mod
     monkeypatch.setattr(recording, "get_record_headers", lambda *a, **k: {})
     monkeypatch.setattr(recording, "get_record_user_agent", lambda *a, **k: "")
     # MID-06 后「200 + 零/极小响应体」不再算成功，替身体量必须过 `_MIN_VALID_RECORD_BYTES`

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- encoding: utf-8 -*-
 #
 # DouyinLiveRecorder 可执行文件打包脚本（本地 / GitHub Actions 通用）
 #
@@ -45,7 +44,7 @@ from typing import cast
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from src.runtime.installer import install_runtime
+from src.runtime.installer import install_runtime  # noqa: E402 -- 直接执行脚本前须先加入项目根目录。
 
 APP_NAME = "DouyinLiveRecorder"
 DIST_DIR = PROJECT_ROOT / "dist"
@@ -598,7 +597,7 @@ def _prepare_url_config() -> None:
 
 # 以独立进程组/会话启动子进程，便于冒烟结束一次性杀掉整棵进程树（含应用 spawn 的 ffmpeg
 # 子进程），避免子进程孤儿化被 runner 清理时刷屏
-def _launch(exe: Path, extra_env: "dict[str, str] | None" = None) -> subprocess.Popen[str]:
+def _launch(exe: Path, extra_env: dict[str, str] | None = None) -> subprocess.Popen[str]:
     # Unix 用 start_new_session=True（子进程成为新会话首领，PGID == 其 PID），Windows 用
     # creationflags=CREATE_NEW_PROCESS_GROUP（新进程组，配合 taskkill /T 递归终止）；两个参数均
     # 显式传递（非本平台的分支取默认 0/False），既满足类型检查又保持跨平台语义。

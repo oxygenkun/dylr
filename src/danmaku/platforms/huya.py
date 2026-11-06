@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import base64
-from typing import Any, Union
+from typing import Any
 
 from src.danmaku.base import DanmakuBase, DanmakuMessage, DanmakuMessageType, spawn_danmaku_task
 from src.danmaku.platforms._tars import TarsInputStream, TarsOutputStream
@@ -85,7 +85,7 @@ class HuyaDanmaku(DanmakuBase):
         if self._ws is not None:
             await self._ws.close()
 
-    def decode_message(self, data: Union[bytes, str]) -> None:
+    def decode_message(self, data: bytes | str) -> None:
         """解析 Tars 帧：识别 cmdType==7 的消息推送并解码 HYPushMessage。"""
         if isinstance(data, str):
             return
@@ -128,7 +128,7 @@ class HuyaDanmaku(DanmakuBase):
         """解析 HYMessage 弹幕：提取发送者昵称、内容与颜色并 emit。"""
         stream = TarsInputStream(msg)
 
-        def parse_sender(inner: "TarsInputStream") -> dict:
+        def parse_sender(inner: TarsInputStream) -> dict:
             """从 userInfo 结构体解析出发送者昵称，返回 {nick_name}。"""
             nick = inner.read_string(2)
             inner.finish_struct()
@@ -138,7 +138,7 @@ class HuyaDanmaku(DanmakuBase):
         content = stream.read_string(3)
         font_color = 0
 
-        def parse_format(f: "TarsInputStream") -> None:
+        def parse_format(f: TarsInputStream) -> None:
             """从 bulletFormat 结构体解析出弹幕字体颜色(int)。"""
             nonlocal font_color
             font_color = f.read_int(0)

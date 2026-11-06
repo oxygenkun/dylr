@@ -36,7 +36,7 @@ Install the hook once per clone. If a pre-commit hook is already installed, revi
 # Format code (line-length = 120)
 uv run --locked --extra dev ruff format .
 
-# Static checks (add --fix to sort imports)
+# Static checks (add --fix to apply safe fixes)
 uv run --locked --extra dev ruff check .
 
 # Collect and check coverage when preparing a commit
@@ -46,7 +46,7 @@ uv run --locked --extra dev python tool/check_coverage.py
 
 > **Comment convention**: see the code style rules in [AGENTS.md](../AGENTS.md).
 
-> **Quality gates**: Ruff formats code and sorts imports; pytest requires zero warnings. There is no permanent type-checker gate. Check timing and commands follow AGENTS.md; routine edits do not automatically run pytest or coverage.
+> **Quality gates**: Ruff formats code and checks common errors, import ordering, modern Python syntax, redundant code, leftover debuggers, and `noqa` validity; `pyproject.toml` defines the exact rules and exceptions. pytest requires zero warnings, and there is no permanent type-checker gate. See [AGENTS.md](../AGENTS.md) for check timing, safe fixes, and exceptions; routine edits do not automatically run pytest or coverage.
 
 > **Test note**: `tests/test_web_api.py`'s symlink-related cases (`TestListFiles::test_broken_symlink_skipped` / `test_symlink_outside_skipped`) auto-`pytest.skip` in environments where real symlinks cannot be created (Windows without Developer Mode, some sandboxes) — this is normal and does not indicate a code defect.
 

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # 斗鱼录制流地址验证:get_douyu_info_data → get_douyu_stream_url(getEncryption 签名,对齐 dart)。
 # 用法:python tests/test_douyu_stream_url.py [房间URL] [清晰度]
 

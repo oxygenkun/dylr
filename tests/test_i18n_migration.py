@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # i18n.tr() 形参迁移的静态防回归。
 #
 # 背景：logger/print 的 f-string 会在查目录之前先完成插值，目录里带占位符的 msgid 永远匹配不上，
@@ -18,6 +17,7 @@ import importlib.util
 import json
 import re
 from pathlib import Path
+from types import ModuleType
 from typing import TypeGuard
 
 # 项目根：本文件位于 tests/ 下，取上级目录；后续所有路径都相对它解析
@@ -38,7 +38,7 @@ LOGGER_METHODS = {
 }
 
 
-def _load_extractor() -> object:
+def _load_extractor() -> ModuleType:
     # 提取器是 tool/ 下的独立脚本（不在包内），按文件路径加载并复用其 SCAN_FILES /
     # scan_file / is_valuable：复制一份扫描口径一旦漂移，回归结论就会与真实提取器不同（假绿/假红）
     spec = importlib.util.spec_from_file_location("_extract_i18n_probe", ROOT / "tool" / "extract_i18n_strings.py")
@@ -49,14 +49,14 @@ def _load_extractor() -> object:
 
 
 _EX = _load_extractor()
-SCAN_FILES: list[Path] = getattr(_EX, "SCAN_FILES")
-is_valuable = getattr(_EX, "is_valuable")
-scan_file = getattr(_EX, "scan_file")
+SCAN_FILES: list[Path] = _EX.SCAN_FILES
+is_valuable = _EX.is_valuable
+scan_file = _EX.scan_file
 # 占位符还原（丢格式说明符/转换符、双引号转单引号）复用提取器实现：本文件与提取器
 # 必须给出同一个 msgid 形态，否则检查与目录登记两侧口径漂移
-extract_constant_or_template = getattr(_EX, "extract_constant_or_template")
+extract_constant_or_template = _EX.extract_constant_or_template
 # tr() 的模块别名集合取自提取器，避免两处硬编码各自漂移
-TR_CALLER_IDS: set[str] = getattr(_EX, "TR_CALLER_IDS")
+TR_CALLER_IDS: set[str] = _EX.TR_CALLER_IDS
 
 
 def _iter_files() -> list[Path]:

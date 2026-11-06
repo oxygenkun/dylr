@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # y123 容器部署补丁回归锁：Web 面板「启动即开录」只由环境变量
 # DOUYIN_WEB_AUTO_START_RECORDING 决定，且**只决定引擎线程拉起前的初值**。
 #
@@ -23,7 +22,7 @@ from typing import Any
 
 import pytest
 
-import src.recording
+import src.recording as recording_package
 from src import web
 
 _ENV_KEY = "DOUYIN_WEB_AUTO_START_RECORDING"
@@ -82,10 +81,8 @@ def _run_web_main(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, env_value: st
     engine = _FakeEngineModule(tmp_path, cfg)
 
     monkeypatch.setitem(sys.modules, "src.recording.engine", engine)
-    import src
-
-    monkeypatch.setattr(src.recording, "engine", engine, raising=False)
-    monkeypatch.setattr(src.recording, "state", engine)
+    monkeypatch.setattr(recording_package, "engine", engine, raising=False)
+    monkeypatch.setattr(recording_package, "state", engine)
     monkeypatch.setitem(sys.modules, "uvicorn", types.SimpleNamespace(Server=_FakeServer, Config=lambda *a, **kw: None))
     monkeypatch.setitem(sys.modules, "src.api.routes", types.SimpleNamespace(create_app=lambda **kwargs: None))
     # 退出链的 HTTP 连接池收尾：替身避免测试里创建真实 httpx 客户端。

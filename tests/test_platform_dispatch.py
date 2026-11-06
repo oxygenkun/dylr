@@ -275,7 +275,7 @@ _PLATFORM_NAME_LITERALS = (
 )
 
 
-def _resolver_platform_names(tree: "ast.Module") -> set[str]:
+def _resolver_platform_names(tree: ast.Module) -> set[str]:
     # 收集各平台处理函数写入 ctx.platform 的名称。
     names: set[str] = set()
     for node in ast.walk(tree):
@@ -294,7 +294,7 @@ def _resolver_platform_names(tree: "ast.Module") -> set[str]:
     return names
 
 
-def _literal_sequences_by_name(tree: "ast.Module") -> dict[str, list[str]]:
+def _literal_sequences_by_name(tree: ast.Module) -> dict[str, list[str]]:
     # 收集 `name = ["a", "b"]` / `name = ("a", "b")` 形式的字符串序列赋值
     found: dict[str, list[str]] = {}
     for node in ast.walk(tree):
@@ -317,7 +317,7 @@ def _literal_sequences_by_name(tree: "ast.Module") -> dict[str, list[str]]:
     return found
 
 
-def _platform_cookie_map_entries(tree: "ast.Module") -> dict[str, str]:
+def _platform_cookie_map_entries(tree: ast.Module) -> dict[str, str]:
     # 取 `platform_cookie = {...}.get(platform, "")` 里的字面量映射：{平台名字面量: 值表达式名}。
     # 值一律取「表达式里的名字」（如 shopee_cookie），字面量兜底（"" 等）原样回字符串——
     # 调用方据此区分「键加上了但没接到配置变量」这一形态。
@@ -341,7 +341,7 @@ def _platform_cookie_map_entries(tree: "ast.Module") -> dict[str, str]:
         if dict_node is None:
             continue
         entries: dict[str, str] = {}
-        for key, val in zip(dict_node.keys, dict_node.values):
+        for key, val in zip(dict_node.keys, dict_node.values, strict=True):
             if isinstance(key, ast.Constant) and isinstance(key.value, str):
                 if isinstance(val, ast.Attribute) and isinstance(val.value, ast.Name) and val.value.id == "state":
                     entries[key.value] = val.attr

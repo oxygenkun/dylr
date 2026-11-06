@@ -21,7 +21,7 @@ from src.recording import state
 
 
 @pytest.fixture(scope="module")
-def main_mod() -> Generator[Any, None, None]:
+def main_mod() -> Generator[Any]:
     from src.recording import engine as main
 
     yield main

@@ -11,7 +11,6 @@ from unittest.mock import patch
 
 import pytest
 
-from src.api import config as web_config
 from src.config import io as config_io
 from src.network import targets
 from src.notifications import notify
@@ -168,7 +167,7 @@ class FakeProcess:
         self.stopped = False
         self._active = False
 
-    def __enter__(self) -> "FakeProcess":
+    def __enter__(self) -> FakeProcess:
         return self
 
     def __exit__(self, *exc: Any) -> None:
@@ -287,7 +286,7 @@ class _FakeStreamResponse:
     def __init__(self, status_code: int = 206) -> None:
         self.status_code = status_code
 
-    def __enter__(self) -> "_FakeStreamResponse":
+    def __enter__(self) -> _FakeStreamResponse:
         return self
 
     def __exit__(self, *exc: Any) -> None:
@@ -304,7 +303,7 @@ class _RecordingClient:
         self.stream_status = 206
         self.last_stream_kwargs: dict = {}
 
-    def __enter__(self) -> "_RecordingClient":
+    def __enter__(self) -> _RecordingClient:
         return self
 
     def __exit__(self, *exc: Any) -> None:

@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # 2026-09-22 审查报告 / 组 A（src/streams/stream.py + src/streams/selection.py）修复的回归锁。
 #
 # 每条用例都对应报告里的一个编号，判据是「失效形态本身」而不是调用形状：

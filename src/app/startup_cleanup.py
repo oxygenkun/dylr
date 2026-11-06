@@ -48,7 +48,7 @@ def _tree_fingerprint(app_root: Path, scan_dirs: list[Path]) -> str:
     hasher = hashlib.sha256()
     for directory in scan_dirs:
         for source in sorted(directory.glob("*.py")):
-            hasher.update(f"{source.relative_to(app_root).as_posix()}\n".encode("utf-8"))
+            hasher.update(f"{source.relative_to(app_root).as_posix()}\n".encode())
             hasher.update(source.read_bytes())
     return hasher.hexdigest()
 

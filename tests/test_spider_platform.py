@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # src/streams/spider.py 批量平台函数测试：覆盖 60+ 直播平台的流地址解析函数（get_xxx_stream_url /
 # get_xxx_stream_data / get_xxx_room_info 等）。测试策略：用 AsyncMock 桩掉 src.network.http.request
 # （屏蔽真实网络），喂入各平台真实响应 JSON/HTML 形态，断言解析出的 anchor_name / is_live /
@@ -1597,9 +1596,11 @@ class TestGetFlexTvStreamUrl:
     async def test_error_raises(self) -> None:
         # 网络异常须向上抛（该层不兜底），由调用方处理；
         # 与多数平台 {is_live:False} 兜底不同。
-        with patch("src.network.http.request", new_callable=AsyncMock, side_effect=Exception("net")):
-            with pytest.raises(Exception):
+        error = OSError("net")
+        with patch("src.network.http.request", new_callable=AsyncMock, side_effect=error):
+            with pytest.raises(OSError, match="^net$") as caught:
                 await get_flextv_stream_url("https://www.ttinglive.com/user123/live")
+        assert caught.value is error
 
 
 class TestGetWinkTvStreamData:

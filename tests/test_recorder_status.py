@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # src.recording.status 单元测试（离线，不依赖网络/真实控制台）。
 #
 # 覆盖两条与并发/守护线程节拍相关的回归锁：
@@ -20,7 +19,7 @@ from src.recording.scheduler import ResizableSemaphore
 
 
 @pytest.fixture(scope="module")
-def main_mod() -> Generator[Any, None, None]:
+def main_mod() -> Generator[Any]:
     from src.recording import engine as main
 
     yield main

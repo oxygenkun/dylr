@@ -6,7 +6,7 @@ import queue
 import threading
 import time
 from collections import deque
-from typing import Any, Optional, TextIO
+from typing import Any, TextIO
 
 from src.support import i18n
 from src.support.logger import logger, script_path
@@ -56,7 +56,7 @@ def _note_rotate_failure(path: str, err: OSError) -> None:
 
 def _append_sidecar_line(files: dict[str, TextIO], path: str, line: str) -> None:
     """把一行 JSON 追加到边车文件并按需轮转（保留一代 .1 备份）。独立成模块级函数是**给测试留的注入口**。"""
-    fh: Optional[TextIO] = None
+    fh: TextIO | None = None
     try:
         fh = files.get(path)
         if fh is None:
@@ -96,9 +96,9 @@ def _close_sidecar_handle(files: dict[str, TextIO], path: str) -> None:
 class _SidecarWriter:
     def __init__(self, maxsize: int = _SIDECAR_QUEUE_MAXSIZE) -> None:
         """指令载体为 (op, path, line)；op ∈ {"line", "close"}。"""
-        self._queue: "queue.Queue[tuple[str, str, str]]" = queue.Queue(maxsize=maxsize)
+        self._queue: queue.Queue[tuple[str, str, str]] = queue.Queue(maxsize=maxsize)
         self._files: dict[str, TextIO] = {}
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
         self._start_lock = threading.Lock()
         self._dropped = 0
         self._cond = threading.Condition()
@@ -150,7 +150,7 @@ class _SidecarWriter:
         with self._cond:
             return self._cond.wait_for(lambda: self._outstanding == 0, timeout)
 
-    def open_handle(self, path: str) -> Optional[TextIO]:
+    def open_handle(self, path: str) -> TextIO | None:
         """当前是否仍持有某路径的打开句柄（仅供观测/断言，不做 IO）。"""
         return self._files.get(path)
 
@@ -188,7 +188,7 @@ class _SidecarWriter:
                     self._cond.notify_all()
 
 
-_sidecar: Optional[_SidecarWriter] = None
+_sidecar: _SidecarWriter | None = None
 _sidecar_lock = threading.Lock()
 
 
@@ -201,18 +201,18 @@ def _get_sidecar() -> _SidecarWriter:
 
 
 class DanmakuMonitorHub:
-    def __init__(self, log_path: Optional[str] = None) -> None:
+    def __init__(self, log_path: str | None = None) -> None:
         """初始化枢纽。log_path 为 JSONL 边车文件路径，None 表示禁用文件输出。"""
         self._lock = threading.Lock()
-        self._log_path: Optional[str] = self._prepare_log_path(log_path)
+        self._log_path: str | None = self._prepare_log_path(log_path)
         self._rooms: dict[str, dict[str, Any]] = {}
         self._recent: deque[dict[str, Any]] = deque(maxlen=_RECENT_BUFFER_SIZE)
         self._seq = 0
-        self._stats_thread: Optional[threading.Thread] = None
+        self._stats_thread: threading.Thread | None = None
         self._stats_stop = threading.Event()
 
     @property
-    def _file(self) -> Optional[TextIO]:
+    def _file(self) -> TextIO | None:
         """本枢纽边车路径当前是否仍有打开句柄（写线程独占，这里只读它的登记表）。"""
         if not self._log_path:
             return None
@@ -303,7 +303,7 @@ class DanmakuMonitorHub:
                 )
             )
 
-    def room_stopped(self, room: str, reason: Optional[str] = None) -> None:
+    def room_stopped(self, room: str, reason: str | None = None) -> None:
         """房间停止监控（main.py 的录制线程在 outer try 的 finally 里调用，覆盖录制态/轮询态/解析失败态）。"""
         if reason is None:
             reason = i18n.tr("房间已停止监控")
@@ -580,7 +580,7 @@ class DanmakuMonitorHub:
                 )
 
     @staticmethod
-    def _prepare_log_path(log_path: Optional[str]) -> Optional[str]:
+    def _prepare_log_path(log_path: str | None) -> str | None:
         """准备日志文件路径：创建父目录，失败则禁用文件输出并返回 None。"""
         if not log_path:
             return None
@@ -643,7 +643,7 @@ class DanmakuMonitorHub:
         return _get_sidecar().is_suspended(path)
 
 
-_hub: Optional[DanmakuMonitorHub] = None
+_hub: DanmakuMonitorHub | None = None
 _hub_lock = threading.Lock()
 
 

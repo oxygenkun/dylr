@@ -9,7 +9,6 @@
 # 的变异验证。
 import asyncio
 import gc
-import socket
 import sys
 import threading
 from typing import Any
@@ -106,7 +105,7 @@ class RecordingClient:
         self.is_closed = False
         self._error: BaseException | None = None
 
-    def fail_with(self, exc: BaseException) -> "RecordingClient":
+    def fail_with(self, exc: BaseException) -> RecordingClient:
         self._error = exc
         return self
 
@@ -260,7 +259,7 @@ class TestMin2220PerProxyCache:
         assert await ttwid_module.get_ttwid() == "ttwid=direct-only"
 
         async def _fail(proxy_addr: str | None = None) -> str:
-            raise socket.timeout()
+            raise TimeoutError()
 
         _patch_fetch(monkeypatch, _fail)
         assert await ttwid_module.get_ttwid("http://p:1") == ""

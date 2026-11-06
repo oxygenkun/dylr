@@ -3,8 +3,9 @@ import inspect
 import json
 import os
 import sys
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable, TextIO
+from typing import Any, TextIO
 
 SUPPORTED_LANGUAGES: dict[str, str] = {
     "zh_CN": "中文",

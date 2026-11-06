@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # 单入口回归锁：`python -m src.main` 按 config.toml 的 [Web] web_enable 决定是否同时启动面板。
 
 import sys

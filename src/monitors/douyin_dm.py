@@ -4,8 +4,9 @@ import json
 import re
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Callable, Optional
+from typing import Any
 
 import httpx
 
@@ -263,7 +264,7 @@ def parse_messages(payload: bytes) -> list[DmMessage]:
     return result
 
 
-def extract_live_share(message: DmMessage) -> Optional[LiveShare]:
+def extract_live_share(message: DmMessage) -> LiveShare | None:
     """从消息 content 提取直播分享；分享消息的特征是同时带 room_id 与 room_owner_sec_id。"""
     content = message.content
     room_id = str(content.get("room_id") or "").strip()
@@ -281,7 +282,7 @@ def extract_live_share(message: DmMessage) -> Optional[LiveShare]:
     )
 
 
-def live_url_for(unique_id: str) -> Optional[str]:
+def live_url_for(unique_id: str) -> str | None:
     """抖音号/短 ID 拼成网页直播间地址；只允许字母数字下划线，杜绝路径注入。"""
     identity = unique_id.strip()
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", identity):
@@ -301,7 +302,7 @@ class DouyinDmClient:
         )
         self._users: dict[str, tuple[float, dict[str, Any]]] = {}
 
-    def __enter__(self) -> "DouyinDmClient":
+    def __enter__(self) -> DouyinDmClient:
         return self
 
     def __exit__(self, *_args: Any) -> None:
@@ -375,7 +376,7 @@ class DouyinDmClient:
                     self._users[user["sec_uid"]] = (now, user)
         return {sec: self._users[sec][1] for sec in sec_user_ids if sec in self._users}
 
-    def get_live_room(self, web_rid: str) -> Optional[dict[str, Any]]:
+    def get_live_room(self, web_rid: str) -> dict[str, Any] | None:
         """校验直播间：web_rid 可以是数字 web_rid，也可以是抖音号（实测两者都接受）。"""
         response = self._client.get(
             LIVE_ENTER_URL,
@@ -448,7 +449,7 @@ class DouyinDmMonitor:
         self._client_factory = client_factory
         self._lock = threading.Lock()
         self._settings = _DmSettings()
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
         self._last_server_ids: dict[str, int] = {}
         self._seen_rooms: dict[str, float] = {}
         self._daily_date = ""

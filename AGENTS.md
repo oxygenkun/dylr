@@ -98,6 +98,7 @@ uv run --locked --extra dev python tool/check_coverage.py
 ```
 
 - 静态检查按需直接运行 Ruff 与翻译同步检查；prek 与 CI 保留各自的提交检查入口。Windows 检查使用 `PYTHONUTF8=1`。
+- Ruff 规则以 `pyproject.toml` 为事实源，覆盖常见错误、现代语法、导入与冗余代码；自动修复只默认使用安全修复，不批量执行 `--unsafe-fixes`。特殊场景仅按具体文件或行、具体规则豁免并说明原因，不用整目录忽略掩盖问题；生成代码不手改。
 
 ## 完成定义（Definition of Done）
 

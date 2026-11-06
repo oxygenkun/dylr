@@ -278,7 +278,7 @@ def _stub_make_zip_inputs(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, membe
     monkeypatch.setattr(build_exe, "RELEASE_DIR", release)
     monkeypatch.setattr(build_exe, "DIST_DIR", dist)
     monkeypatch.setattr(build_exe, "assert_no_credentials_in_release", lambda: None)
-    monkeypatch.setattr(build_exe, "_clean_runtime_artifacts_from_release", lambda: [])
+    monkeypatch.setattr(build_exe, "_clean_runtime_artifacts_from_release", list)
     monkeypatch.setattr(build_exe, "_zip_release_dir", _fake_archive_with(members))
 
 
@@ -357,7 +357,7 @@ def _stub_two_colliding_zips(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, or
 def test_dual_build_aborts_when_both_variants_land_on_one_zip(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     order: list[str] = []
     _stub_build_steps(monkeypatch, order, tmp_path)
-    victim = _stub_two_colliding_zips(monkeypatch, tmp_path, order)
+    _stub_two_colliding_zips(monkeypatch, tmp_path, order)
     monkeypatch.setattr(sys, "argv", ["tool/build_exe.py", "--dual"])
     with pytest.raises(SystemExit) as caught:
         build_exe.main()

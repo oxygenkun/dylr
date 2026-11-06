@@ -11,7 +11,6 @@
 #      （报告里称「400 文案」，实测状态码为 422）。
 # 全部用例驱动**真实函数**，测试内不重新实现任何判定逻辑。
 
-import configparser
 from pathlib import Path
 
 import pytest
@@ -31,7 +30,6 @@ _PUBLIC_IPS = ["114.114.114.114"]
 
 
 def _stub_dns(monkeypatch: pytest.MonkeyPatch, table: dict[str, list[str] | OSError]) -> None:
-    from src.api import config as wc
 
     def _resolve(host: str) -> list[str]:
         answer = table.get(host, _PUBLIC_IPS)

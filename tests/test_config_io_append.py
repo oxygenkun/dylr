@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-from src.api import config as web_config
 from src.config import io as config_io
 from src.network import targets
 from src.recording import state

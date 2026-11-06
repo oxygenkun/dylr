@@ -76,12 +76,12 @@ def remove_duplicate_lines(file_path: str | Path) -> None:
     text_encoding = "utf-8-sig"
     with state.file_update_lock:
         try:
-            with open(file_path, "r", encoding=text_encoding, newline="") as input_file:
+            with open(file_path, encoding=text_encoding, newline="") as input_file:
                 for line in input_file:
                     _ = unique_lines.setdefault(line.rstrip("\r\n"), line)
         except UnicodeDecodeError:
             unique_lines.clear()
-            with open(file_path, "r", encoding=text_encoding, errors="surrogateescape", newline="") as input_file:
+            with open(file_path, encoding=text_encoding, errors="surrogateescape", newline="") as input_file:
                 for line in input_file:
                     _ = unique_lines.setdefault(line.rstrip("\r\n"), line)
         out = "".join(unique_lines.values())
@@ -115,7 +115,7 @@ def replace_url(file_path: str | Path, old: str, new: str) -> None:
     """持锁精确替换 URL 配置字段并原子写回。"""
     with state.file_update_lock:
         try:
-            with open(file_path, "r", encoding="utf-8-sig", newline="") as f:
+            with open(file_path, encoding="utf-8-sig", newline="") as f:
                 lines = f.readlines()
         except (OSError, UnicodeDecodeError) as e:
             logger.warning(

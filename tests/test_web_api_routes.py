@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # 阶段2（Web 后端 FastAPI → Starlette）路由契约动态断言：取代 web_api_routes_baseline.json 的静态
 # 逐字节比对。静态基线既撞 SENSITIVE_APPROVAL 检查、又会因手工维护而漂移；本测试直接遍历 app.routes，
 # 断言 Starlette 应用注册的 24 条路由（method/path 精确集合）+ /web 静态挂载点不变，
@@ -17,7 +16,7 @@ from starlette.routing import Mount, Route
 
 
 @pytest.fixture
-def fake_main(monkeypatch: pytest.MonkeyPatch) -> Generator[types.ModuleType, None, None]:
+def fake_main(monkeypatch: pytest.MonkeyPatch) -> Generator[types.ModuleType]:
     from src.recording import state
 
     for key, value in {
@@ -50,7 +49,7 @@ def _write_web_section(cfg_path: Path) -> None:
 
 
 @pytest.fixture(scope="function")
-def app(fake_main: types.ModuleType, tmp_path: Path) -> Generator[Starlette, None, None]:
+def app(fake_main: types.ModuleType, tmp_path: Path) -> Generator[Starlette]:
     from src.api import routes as wa
 
     cfg = tmp_path / "config.ini"

@@ -48,7 +48,7 @@ class _FlappingUnderlying:
     async def close(self) -> None:
         self.closed += 1
 
-    def __aiter__(self) -> "_FlappingUnderlying":
+    def __aiter__(self) -> _FlappingUnderlying:
         return self
 
     async def __anext__(self) -> bytes:
@@ -265,7 +265,7 @@ def _scanned_python_files() -> list[Path]:
     for root, dirs, names in os.walk(_REPO_ROOT):
         dirs[:] = [d for d in dirs if d not in _SCAN_EXCLUDED_DIRS]
         for name in names:
-            if name.endswith(".py") or name.endswith(".pyi"):
+            if name.endswith((".py", ".pyi")):
                 files.append(Path(root) / name)
     return sorted(files)
 

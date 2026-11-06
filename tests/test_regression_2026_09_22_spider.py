@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # 2026-09-22 审查报告 / 组 E（src/streams/spider.py + src/danmaku/platforms/bilibili.py）修复的回归锁。
 #
 # 判据一律落在「失效形态本身」而不是「调用了某个函数」：
@@ -18,7 +17,6 @@
 # 与各平台解析逻辑一律走真实代码。
 
 import asyncio
-import contextlib
 import types
 from typing import Any, cast
 from unittest.mock import AsyncMock, Mock, patch
@@ -441,9 +439,8 @@ class TestDouyuBetardLogI18n:
         # 失效形态：用字符串拼接做首参 → 提取器（只看 JoinedStr / 常量）收不到该 msgid。
         # 判据：betard 分支里必须存在一个以 i18n.tr(...) 为首参、msgid 含 rid/reason 的 logger.warning。
         import ast
-        import io
 
-        with io.open(sp.__file__, encoding="utf-8") as source:
+        with open(sp.__file__, encoding="utf-8") as source:
             src = source.read()
         tree = ast.parse(src)
         found = False
@@ -657,7 +654,7 @@ class TestBaiduStableKey:
 def _raw(func: object) -> Any:
     # 取 trace_error_decorator 装饰前的原函数：这些用例的判据是「抛什么错 / 发不发请求」，
     # 装饰器会把异常统一吞成 {"is_live": False}，正好掩盖要锁的失效形态。
-    return cast(Any, getattr(func, "__wrapped__"))
+    return cast(Any, func).__wrapped__
 
 
 def _recording_req(bodies: dict[str, str], seen: list[str], default: str = "") -> AsyncMock:

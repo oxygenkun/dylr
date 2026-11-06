@@ -20,7 +20,7 @@ from src.streams.room import UnsupportedUrlError, extract_sec_user_id
 
 
 @pytest.fixture(autouse=True)
-def _clear_sec_uid_cache() -> Generator[None, None, None]:
+def _clear_sec_uid_cache() -> Generator[None]:
     # 进程级 sec_user_id->抖音号 缓存在测试间共享（同进程），清空以避免跨用例污染
     room._SEC_UID_UNIQUE_CACHE.clear()
     yield
@@ -56,7 +56,7 @@ class _FakeClient:
         self._handler = handler
         self.requests: list[tuple[str, dict[str, str]]] = []
 
-    async def __aenter__(self) -> "_FakeClient":
+    async def __aenter__(self) -> _FakeClient:
         return self
 
     async def __aexit__(self, *_args: Any) -> None:

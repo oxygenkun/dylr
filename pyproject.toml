@@ -135,8 +135,25 @@ extend-exclude = [
 line-ending = "auto"
 
 [tool.ruff.lint]
-# 检查导入排序、文件读取错误与未定义名称，不引入额外风格或类型检查规则。
-select = ["I", "E902", "F821", "F822", "F823"]
+select = [
+    "E",       # pycodestyle 错误
+    "F",       # Pyflakes
+    "I",       # 导入排序
+    "UP",      # 现代 Python 写法
+    "B",       # 常见缺陷
+    "C4",      # 推导式与容器构造
+    "PIE",     # 冗余代码
+    "W",       # pycodestyle 警告
+    "T10",     # 遗留调试器调用
+    "RUF100",  # 已失效的 noqa
+    "PGH004",  # noqa 必须指定规则编号
+]
+# formatter 尽量处理长行，不强拆 URL、日志及文案。
+ignore = ["E501"]
+
+[tool.ruff.lint.per-file-ignores]
+# protoc 生成代码，不手工修改；保留生成器的编码声明与布尔比较。
+"src/proto/douyin_pb2.py" = ["UP009", "E712"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["src", "tool"]

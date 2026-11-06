@@ -5,7 +5,6 @@ import threading
 import time
 
 from src.config.store import read_config_entry
-from src.network import http
 from src.network.credentials import DEFAULT_TTL as _CACHE_TTL_SECONDS
 from src.network.credentials import credential_cache, fetch_cookies, invalidate_cookies
 from src.support import i18n
@@ -25,7 +24,7 @@ def _app_root() -> str:
 _cached_ttwid: str = ""
 _cached_ttwid_at: float = 0.0
 _cached_ttwid_by_proxy: dict[str, tuple[str, float]] = {}
-_ttwid_scopes: "set[tuple[str, OptionalStr]]" = set()
+_ttwid_scopes: set[tuple[str, OptionalStr]] = set()
 _ttwid_lock = threading.RLock()
 
 _CONFIG_TTWID_KEY = "ttwid"

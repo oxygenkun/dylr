@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # i18n.tr() 回归：先查表再插值。
 #
 # 顺序不可交换：f"[{record_name}] xxx" 会先被求值成 "[房间A] xxx"，而目录的 msgid 是带占位符

@@ -295,7 +295,6 @@ class TestRecordingStateUnwind:
     # MID-01 / MID-12：任何出口都必须把录制状态与子进程收敛干净
 
     def test_giving_up_slot_wait_clears_recording_state(self, main_mod: Any, monkeypatch: pytest.MonkeyPatch) -> None:
-        main = main_mod
         monkeypatch.setattr(state, "recording", {"主播名"})
         monkeypatch.setattr(state, "recording_time_list", {"主播名": []})
         monkeypatch.setattr(state, "url_comments", {_DOUYIN_URL})
@@ -351,7 +350,7 @@ class _FakeStreamResponse:
         self.status_code = status_code
         self._chunks = chunks
 
-    def __enter__(self) -> "_FakeStreamResponse":
+    def __enter__(self) -> _FakeStreamResponse:
         return self
 
     def __exit__(self, *args: Any) -> None:
@@ -365,7 +364,7 @@ class _FakeHttpClient:
     def __init__(self, response: _FakeStreamResponse) -> None:
         self._response = response
 
-    def __enter__(self) -> "_FakeHttpClient":
+    def __enter__(self) -> _FakeHttpClient:
         return self
 
     def __exit__(self, *args: Any) -> None:
@@ -507,7 +506,7 @@ def _prime_start_record(
     def _spy_clear(record_name: str, record_url: str) -> None:
         real_clear(record_name, record_url)
         captured["clears"].append(record_name)
-        setattr(state, "exit_recording", True)
+        state.exit_recording = True
 
     monkeypatch.setattr(recording, "clear_record_info", _spy_clear)
     # 轮末等待用假时钟：sleep 只推进虚拟时间、绝不真睡（delay_default=0，靠 _spy_clear 置

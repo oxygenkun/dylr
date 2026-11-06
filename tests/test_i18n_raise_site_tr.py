@@ -11,7 +11,7 @@
 import ast
 import pathlib
 import re
-from typing import Iterator
+from collections.abc import Iterator
 
 from tests.test_i18n_catalog_coverage import _cached_catalog_key_sets
 

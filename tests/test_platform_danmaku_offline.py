@@ -68,10 +68,10 @@ class FakeWs:
     async def connect(self) -> None:
         self.connect_called += 1
 
-    async def send(self, data: "bytes | str") -> None:
+    async def send(self, data: bytes | str) -> None:
         self.sent.append(data)
 
-    def send_nowait(self, data: "bytes | str") -> None:
+    def send_nowait(self, data: bytes | str) -> None:
         self.nowait.append(data)
 
     async def close(self) -> None:

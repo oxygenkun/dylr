@@ -1,4 +1,3 @@
-# -*- encoding: utf-8 -*-
 # WP-A / S-1（严重）：Shopee 短链落地页的凭据外泄 + 内网 SSRF 回归锁。
 #
 # 病史（docs/worklog/CODE_REVIEW_2026-09-29_2.md 的 S-1，与已定稿的小红书 SEV-2214 同型）：
@@ -24,7 +23,6 @@ from typing import Any
 
 import pytest
 
-from src.api import config as web_config
 from src.network import targets
 from src.streams import spider as sp
 

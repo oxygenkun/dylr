@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # 真实房间端到端验证（双模：可独立直跑，也允许被 pytest 收集）：BilibiliDanmaku +
 # collector 线程 → SRT 产出。
 #

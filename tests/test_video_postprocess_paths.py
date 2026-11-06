@@ -164,7 +164,7 @@ class TestRunFfmpegChecked:
             def communicate(self, timeout: int | None = None) -> tuple[bytes, bytes]:
                 return b"boom", b""
 
-            def __enter__(self) -> "_Proc":
+            def __enter__(self) -> _Proc:
                 return self
 
             def __exit__(self, *exc: object) -> None:
@@ -197,7 +197,7 @@ class TestRunFfmpegChecked:
             def kill(self) -> None:
                 state["killed"] += 1
 
-            def __enter__(self) -> "_Proc":
+            def __enter__(self) -> _Proc:
                 return self
 
             def __exit__(self, *exc: object) -> None:
@@ -220,7 +220,7 @@ class TestRunFfmpegChecked:
             def communicate(self, timeout: int | None = None) -> tuple[bytes, bytes]:
                 return "ffmpeg ok \u4e2d\u6587".encode("gbk", errors="ignore"), b""
 
-            def __enter__(self) -> "_Proc":
+            def __enter__(self) -> _Proc:
                 return self
 
             def __exit__(self, *exc: object) -> None:

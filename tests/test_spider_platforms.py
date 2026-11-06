@@ -28,7 +28,7 @@ from src.streams.spider import (
 
 def _unwrap(func: object) -> Any:
     # 取装饰器保留的 __wrapped__ 原函数，断言精确返回/异常（同 test_spider_fixes 口径）
-    return cast(Any, getattr(func, "__wrapped__"))
+    return cast(Any, func).__wrapped__
 
 
 @pytest.fixture(autouse=True)
@@ -80,7 +80,7 @@ class TestSev07LoginContracts:
             def __init__(self, *args: object, **kwargs: object) -> None:
                 pass
 
-            async def __aenter__(self) -> "_BoomClient":
+            async def __aenter__(self) -> _BoomClient:
                 return self
 
             async def __aexit__(self, *exc: object) -> None:

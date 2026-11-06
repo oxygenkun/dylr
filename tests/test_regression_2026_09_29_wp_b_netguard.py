@@ -7,7 +7,6 @@ import pytest
 from loguru import logger
 
 import src.network.http as async_http
-from src.api import config as web_config
 from src.network import targets
 
 # 与 tests/test_http.py / tests/test_regression_2026_09_22_net.py 同一个 DNS seam：MIN-2219

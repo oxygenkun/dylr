@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # 端到端验证：用真实格式的 B站打包帧喂 BilibiliDanmaku + collector，确认 SRT 产出。
 # 全程离线（自己 struct.pack 造帧），覆盖「帧协议 → 解析 → collector → SrtWriter」全链路。
 #

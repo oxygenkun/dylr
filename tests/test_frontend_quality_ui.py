@@ -53,7 +53,7 @@ def _popen_session_kwargs() -> dict[str, Any]:
     return {"start_new_session": True}
 
 
-def _kill_process_tree(proc: "subprocess.Popen[Any]") -> None:
+def _kill_process_tree(proc: subprocess.Popen[Any]) -> None:
     # 回收 node --test 及其 worker 孙进程。整棵树杀不掉时只忽略不抛错——
     # 用例此时已经判定失败，收尾异常会掩盖真正的断言输出。
     if sys.platform == "win32":  # 平台门控一律用 sys.platform 字面量（mypy 跨平台检查要求）
@@ -137,7 +137,7 @@ def _pid_alive(pid: int) -> bool:
     # 彻底解耦：PID 出现在 tasklist 表格里 ⟺ 进程存活，与消息语言无关。
     if sys.platform == "win32":  # 平台门控一律用 sys.platform 字面量（mypy 跨平台检查要求）
         probe = subprocess.run(
-            ["tasklist", "/FI", "PID eq %d" % pid, "/NH"],
+            ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
             stdin=subprocess.DEVNULL,
             capture_output=True,
             timeout=30,

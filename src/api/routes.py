@@ -97,7 +97,7 @@ async def _read_json_body(request: Request) -> object:
     try:
         return await request.json()
     except Exception:
-        raise HTTPException(status_code=422, detail=i18n_module.tr("请求体不是合法 JSON"))
+        raise HTTPException(status_code=422, detail=i18n_module.tr("请求体不是合法 JSON")) from None
 
 
 def _route(app: Starlette, methods: list[str], path: str) -> Callable[[Callable[..., object]], Callable[..., object]]:
@@ -125,7 +125,7 @@ def _route(app: Starlette, methods: list[str], path: str) -> Callable[[Callable[
                 try:
                     kwargs[model_param] = model_cls.parse(payload)
                 except ValueError as exc:
-                    raise HTTPException(status_code=422, detail=str(exc))
+                    raise HTTPException(status_code=422, detail=str(exc)) from None
             for qname in query_names:
                 default, lo, hi = _QUERY_DEFAULTS.get(handler.__name__, {}).get(qname, ("", None, None))
                 raw = request.query_params.get(qname)
@@ -334,12 +334,12 @@ def create_app(
 
     app.add_exception_handler(HTTPException, _http_exception_to_json)
 
-    setattr(app.state, "config_file", config_file)
-    setattr(app.state, "url_config_file", url_config_file)
-    setattr(app.state, "downloads_root", os.path.realpath(downloads_root))
-    setattr(app.state, "logs_dir", logs_dir)
-    setattr(app.state, "bind_host", bind_host)
-    setattr(app.state, "bind_port", bind_port)
+    app.state.config_file = config_file
+    app.state.url_config_file = url_config_file
+    app.state.downloads_root = os.path.realpath(downloads_root)
+    app.state.logs_dir = logs_dir
+    app.state.bind_host = bind_host
+    app.state.bind_port = bind_port
 
     async def auth_middleware(
         request: Request,
@@ -485,7 +485,7 @@ def create_app(
     async def status_stream(request: Request) -> StreamingResponse:
         _MAX_CONSECUTIVE_ERRORS = 5
 
-        async def event_gen() -> AsyncGenerator[str, None]:
+        async def event_gen() -> AsyncGenerator[str]:
             consecutive_errors = 0
             while True:
                 if await request.is_disconnected():
@@ -896,7 +896,7 @@ def create_app(
         if not os.path.isfile(log_file):
             return {"lines": cast(list[str], [])}
         try:
-            with open(log_file, "r", encoding="utf-8", errors="ignore") as f:
+            with open(log_file, encoding="utf-8", errors="ignore") as f:
                 tail = deque(f, maxlen=lines)
             return {"lines": list(tail)}
         except Exception as e:

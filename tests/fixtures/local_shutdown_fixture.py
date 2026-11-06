@@ -25,10 +25,11 @@ os.environ["DOUYIN_SKIP_RUNTIME_CHECK"] = "1"
 os.environ["DOUYIN_LOG_NO_ENQUEUE"] = "1"
 os.environ["DOUYIN_DISABLE_LOG_ARCHIVE"] = "1"
 
-from src.app import graceful_shutdown
-from src.recording import engine as main
-from src.recording import session as recording
-from src.recording import state
+# Bootstrap argv, environment and import path before loading production modules.
+from src.app import graceful_shutdown  # noqa: E402
+from src.recording import engine as main  # noqa: E402
+from src.recording import session as recording  # noqa: E402
+from src.recording import state  # noqa: E402
 
 
 def run(output: Path) -> None:

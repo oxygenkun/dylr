@@ -404,9 +404,7 @@ def _setup_case(main: ModuleType, monkeypatch: pytest.MonkeyPatch, case: dict[st
                 "platform": platform,
             }
         )
-        # 用 setattr 而非 main.exit_recording = ...：main 已标注为 ModuleType，
-        # 直接属性赋值会被 mypy 判 attr-defined（该全局量在 main() 中才绑定）
-        setattr(state, "exit_recording", True)  # 直下路径无 check_subprocess，靠退出标志干净退出
+        state.exit_recording = True  # 直下路径无 check_subprocess，靠退出标志干净退出
         return True
 
     monkeypatch.setattr(recording, "direct_download_stream", _dl)
@@ -545,7 +543,7 @@ def test_start_record_command_golden(
     assert actual == expected, (
         f"命令与黄金基准不符（用例 {case['id']}）。\n"
         f"  期望: {expected}\n  实际: {actual}\n"
-        + (f"  期间日志:\n    " + "\n    ".join(cap.errors) + "\n" if cap.errors else "")
+        + ("  期间日志:\n    " + "\n    ".join(cap.errors) + "\n" if cap.errors else "")
         + "若属预期重构，请先 GOLDEN_REGEN=1 重新生成基准。"
     )
 

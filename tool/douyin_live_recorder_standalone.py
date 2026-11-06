@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 # =============================================================================
 # DouyinLiveRecorder 单文件整合版 (standalone)
 # =============================================================================
@@ -1213,7 +1212,7 @@ def resolve_douyu(url: str, proxy: str | None = None, cookies: str = "") -> Stre
         post = (
             f"enc_data={sign['enc_data']}&tt={sign['ts']}"
             f"&did={sign['did']}&auth={sign['auth']}&cdn=&rate=-1&hevc=0&fa=0&ive=0"
-        ).encode("utf-8")
+        ).encode()
         play = _fetch_json(
             f"https://www.douyu.com/lapi/live/getH5PlayV1/{rid}",
             headers=post_headers,

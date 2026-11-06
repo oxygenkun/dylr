@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # src/api/routes.py 测试：Web 面板 Starlette 应用的安全与健壮性回归。聚焦七类契约 ——
 # ① 鉴权中间件（启用认证时所有 /api/* 须 401，禁用时开放）；② 登录限流（防 XFF 伪造绕过、
 # 失败计数与成功重置、密码变更吊销 token）；③ 写接口的注入/越权防护（quality 含换行被 422、
@@ -23,7 +22,7 @@ import threading
 import types
 from collections.abc import Generator
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import pytest
 from httpx import Response
@@ -42,7 +41,6 @@ def _stub_public_dns(monkeypatch: pytest.MonkeyPatch) -> None:
     # 把「域名 → IP」这一步固定为公网可解析：房间地址校验（SEV-03）在写入前会解析 host，
     # 不桩化会让本文件的用例随宿主 DNS 可用性漂移。114.114.114.114 是真实公网 DNS 地址，
     # 不在任何回环/私网/保留段内（TEST-NET 段在 3.14 的 ipaddress 里算私网，不可用作本桩）。
-    from src.api import config as wc
 
     def _fake_resolve(host: str) -> list[str]:
         return ["114.114.114.114"]
@@ -51,7 +49,7 @@ def _stub_public_dns(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture
-def fake_main(monkeypatch: pytest.MonkeyPatch) -> Generator[types.ModuleType, None, None]:
+def fake_main(monkeypatch: pytest.MonkeyPatch) -> Generator[types.ModuleType]:
     from src.recording import state
 
     for key, value in {
@@ -101,15 +99,15 @@ def _reset_web_api_state(wa: types.ModuleType) -> None:
         wa._GLOBAL_LOGIN_FAILURES.clear()
     wa._invalidate_web_cfg_cache()
     with wa._status_lock:
-        # 模块全局一律经 setattr 写：types.ModuleType 的静态注解不接受任意属性赋值
-        setattr(wa, "_status_cache", None)
-        setattr(wa, "_status_cache_at", 0.0)
-        setattr(wa, "_status_inflight", False)
-        setattr(wa, "_status_inflight_since", 0.0)
+        mutable_api = cast(Any, wa)
+        mutable_api._status_cache = None
+        mutable_api._status_cache_at = 0.0
+        mutable_api._status_inflight = False
+        mutable_api._status_inflight_since = 0.0
 
 
 @pytest.fixture(scope="function")
-def app_env(tmp_path: Path, fake_main: types.ModuleType) -> Generator[types.SimpleNamespace, None, None]:
+def app_env(tmp_path: Path, fake_main: types.ModuleType) -> Generator[types.SimpleNamespace]:
     from src.api import routes as wa
 
     # 模块级全局不随 tmp_path / function 作用域重建，必须显式清（判据见 _reset_web_api_state）
@@ -2252,7 +2250,7 @@ class TestDeleteRoomReportsTruth:
         self._write_crlf(app_env.url_cfg, [url + ",主播: CRLF", "https://live.douyin.com/keep"])
         # delete_line 走真实实现（它读 main.text_encoding / main.url_config_file / 锁）
         monkeypatch.setattr(config_io, "delete_line", config_io.delete_line)
-        setattr(fake_main, "url_config_file", str(app_env.url_cfg))
+        cast(Any, fake_main).url_config_file = str(app_env.url_cfg)
         token = _login(app_env.client)
         resp = app_env.client.delete(f"/api/rooms?url={url}", headers={"Authorization": f"Bearer {token}"})
         still_present = any(r["url"] == url for r in _parse_rooms(app_env))
@@ -2265,7 +2263,7 @@ class TestDeleteRoomReportsTruth:
         assert resp.status_code == 200, f"CRLF 文件上删除仍被静默吞掉: {resp.text}"
         assert not still_present
         # 未选中的行与其 CRLF 行尾都不受影响
-        with open(app_env.url_cfg, "r", encoding="utf-8-sig", newline="") as f:
+        with open(app_env.url_cfg, encoding="utf-8-sig", newline="") as f:
             kept = f.read()
         assert kept == "https://live.douyin.com/keep\r\n"
 
@@ -2279,8 +2277,8 @@ class TestDeleteRoomReportsTruth:
         url = "https://live.douyin.com/lf-room"
         app_env.url_cfg.write_text(url + ",主播: LF\n", encoding="utf-8-sig")
         monkeypatch.setattr(config_io, "delete_line", config_io.delete_line)
-        setattr(fake_main, "text_encoding", "utf-8-sig")
-        setattr(fake_main, "url_config_file", str(app_env.url_cfg))
+        cast(Any, fake_main).text_encoding = "utf-8-sig"
+        cast(Any, fake_main).url_config_file = str(app_env.url_cfg)
         token = _login(app_env.client)
         resp = app_env.client.delete(f"/api/rooms?url={url}", headers={"Authorization": f"Bearer {token}"})
         assert resp.status_code == 200, resp.text

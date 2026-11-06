@@ -18,7 +18,6 @@
 
 import ast
 from pathlib import Path
-from typing import Union
 
 ROOT = Path(__file__).resolve().parent.parent
 DEC_DICT = "trace_error_decorator"
@@ -45,10 +44,7 @@ def _iter_py_files() -> list[Path]:
     for p in ROOT.rglob("*.py"):
         parts = p.relative_to(ROOT).parts[:-1]
         if any(
-            part in _EXCLUDE_DIR_PARTS
-            or part.startswith(".")
-            or part.endswith("egg-info")
-            or part.startswith("pytest-cache-files")
+            part in _EXCLUDE_DIR_PARTS or part.startswith((".", "pytest-cache-files")) or part.endswith("egg-info")
             for part in parts
         ):
             continue
@@ -77,7 +73,7 @@ def _module_dict_aliases(tree: ast.Module) -> dict[str, ast.expr]:
     return aliases
 
 
-def _is_dict_annotation(node: Union[ast.expr, None], aliases: dict[str, ast.expr], depth: int = 0) -> bool:
+def _is_dict_annotation(node: ast.expr | None, aliases: dict[str, ast.expr], depth: int = 0) -> bool:
     # 注解是否「返回 dict（含 dict|None 联合）」。递归展开模块别名；深度兜底防自引用别名死循环。
     if node is None or depth > 6:
         return False

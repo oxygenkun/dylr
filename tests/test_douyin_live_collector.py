@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # 抖音真实房间端到端验证：web 路径取 room_id → collector(DouyinDanmaku) → SRT 产出。
 #
 # 用法：python tests/test_douyin_live_collector.py [房间URL] [秒数] [cookie(可选)]

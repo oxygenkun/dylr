@@ -4,7 +4,7 @@ import asyncio
 import queue
 import threading
 import time
-from typing import Any, Optional, Type, cast
+from typing import Any, cast
 
 from src.danmaku.base import DanmakuBase, DanmakuMessage, DanmakuMessageType, spawn_danmaku_task
 from src.danmaku.monitor import DanmakuMonitorHub
@@ -29,20 +29,20 @@ _SRT_SHUTDOWN_JOIN_TIMEOUT = "join-timeout"
 class DanmakuCollector:
     def __init__(
         self,
-        danmaku_cls: Type[DanmakuBase],
+        danmaku_cls: type[DanmakuBase],
         danmaku_args: Any,
         base_filename: str,
-        segment_seconds: Optional[float] = 1800.0,
-        only_fans: Optional[bool] = None,
-        room_name: Optional[str] = None,
-        platform_name: Optional[str] = None,
+        segment_seconds: float | None = 1800.0,
+        only_fans: bool | None = None,
+        room_name: str | None = None,
+        platform_name: str | None = None,
         write_srt: bool = True,
-        monitor: Optional[DanmakuMonitorHub] = None,
+        monitor: DanmakuMonitorHub | None = None,
     ) -> None:
         """仅记非显然语义：write_srt=False 表示只监控、不落 SRT 文件（弹幕监控开、录制关）；monitor 可。"""
         self._danmaku_cls = danmaku_cls
         self._danmaku_args = danmaku_args
-        self._srt: Optional[SrtWriter] = (
+        self._srt: SrtWriter | None = (
             SrtWriter(base_filename=base_filename, segment_seconds=segment_seconds) if write_srt else None
         )
         self._only_fans = only_fans
@@ -50,23 +50,23 @@ class DanmakuCollector:
         self._room_name = room_name or _cls_name
         self._platform_name = platform_name or _cls_name
         self._cls_name = _cls_name
-        self._monitor: Optional[DanmakuMonitorHub] = monitor
+        self._monitor: DanmakuMonitorHub | None = monitor
 
-        self._loop: Optional[asyncio.AbstractEventLoop] = None
-        self._thread: Optional[threading.Thread] = None
-        self._danmaku: Optional[DanmakuBase] = None
+        self._loop: asyncio.AbstractEventLoop | None = None
+        self._thread: threading.Thread | None = None
+        self._danmaku: DanmakuBase | None = None
         self._stop_event = threading.Event()
         self._started = False
         self._stop_called = False  # stop() 防重入标记：提前中断与尾收兜底可能重复触发
         self._msg_count = 0
-        self._start_task: "Optional[asyncio.Task[None]]" = None
-        self._shutdown_task: "Optional[asyncio.Task[None]]" = None
-        self._srt_queue: "queue.Queue[Optional[tuple[str, str, float]]]" = queue.Queue(maxsize=_SRT_QUEUE_MAXSIZE)
+        self._start_task: asyncio.Task[None] | None = None
+        self._shutdown_task: asyncio.Task[None] | None = None
+        self._srt_queue: queue.Queue[tuple[str, str, float] | None] = queue.Queue(maxsize=_SRT_QUEUE_MAXSIZE)
         self._srt_dropped = 0  # 因队列满被丢弃的弹幕条数（丢弃必须可观测，见下）
-        self._srt_writer: Optional[threading.Thread] = None
+        self._srt_writer: threading.Thread | None = None
         self._srt_stop = threading.Event()
 
-    def _monitor_hub(self) -> Optional[DanmakuMonitorHub]:
+    def _monitor_hub(self) -> DanmakuMonitorHub | None:
         """惰性解析监控枢纽：未显式注入时取进程级单例（失败静默返回 None，监控缺位不影响录制）。"""
         if self._monitor is None:
             try:
@@ -192,7 +192,7 @@ class DanmakuCollector:
         if self._thread is not None:
             self._join_thread(self._thread, timeout)
         if self._srt_writer is not None and self._srt is not None:
-            reason: Optional[str] = None
+            reason: str | None = None
             try:
                 self._srt_queue.put_nowait(None)
             except queue.Full:

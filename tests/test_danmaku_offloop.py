@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # DanmakuCollector 内部 SRT 写盘线程解耦回归。
 #
 # 旧实现：_on_message 在事件循环里同步调 srt.write，文件 I/O（Windows 上偶发的杀软索引、
@@ -13,11 +12,8 @@ import time
 from pathlib import Path
 from typing import Any, cast
 
-import pytest
-
 from src.danmaku.base import DanmakuMessage, DanmakuMessageType
 from src.danmaku.collector import DanmakuCollector
-from src.danmaku.monitor import DanmakuMonitorHub
 from src.danmaku.srt_writer import SrtWriter
 
 

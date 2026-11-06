@@ -27,7 +27,7 @@ class _FakeWs:
         self.closed += 1
         self.state = State.CLOSED
 
-    def __aiter__(self) -> "_FakeWs":
+    def __aiter__(self) -> _FakeWs:
         return self
 
     async def __anext__(self) -> bytes:
@@ -219,7 +219,7 @@ class _FlappingWs:
         self.closed += 1
         self.state = State.CLOSED
 
-    def __aiter__(self) -> "_FlappingWs":
+    def __aiter__(self) -> _FlappingWs:
         return self
 
     async def __anext__(self) -> bytes:

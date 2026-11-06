@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # 按名传入 i18n.tr() 的 msgid 必须命中英文目录（提取器盲区④的可机检化）。
 #
 # 为什么单独成文件：tool/extract_i18n_strings.py 与 tests/test_i18n_migration.py 的不变量③
@@ -12,7 +11,6 @@
 import ast
 import functools
 import importlib.util
-import json
 from pathlib import Path
 from typing import Any
 
@@ -44,11 +42,11 @@ def _load_probe(module_name: str, filename: str) -> Any:
 
 
 _EX = _load_probe("_catalog_extract_probe", "extract_i18n_strings.py")
-is_valuable = getattr(_EX, "is_valuable")
-template_of = getattr(_EX, "extract_constant_or_template")
+is_valuable = _EX.is_valuable
+template_of = _EX.extract_constant_or_template
 # 扫描面直接取提取器的 SCAN_FILES（根入口 + src/**），不另建第二份清单：
 # 本仓「清单复制即漂移」已有多处先例（见 .mjs 登记与 mypy exclude 的机检锁）
-SCAN_FILES: list[Path] = [p for p in getattr(_EX, "SCAN_FILES") if p.exists()]
+SCAN_FILES: list[Path] = [p for p in _EX.SCAN_FILES if p.exists()]
 
 
 def _parse(path: Path) -> tuple[ast.Module, str]:

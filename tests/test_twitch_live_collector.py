@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # Twitch 真实房间端到端验证:channel → collector(TwitchDanmaku) → SRT 产出。
 #
 # 用法:python tests/test_twitch_live_collector.py [频道名或URL] [秒数]

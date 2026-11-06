@@ -314,7 +314,7 @@ def _short_link_path_segment(record_url: str) -> str:
     try:
         path = urlsplit(record_url).path
     except ValueError:
-        raise ValueError(i18n.tr("URL 无法解析"))
+        raise ValueError(i18n.tr("URL 无法解析")) from None
     segments = [seg for seg in path.split("/") if seg]
     if not segments:
         raise ValueError(i18n.tr("路径为空，缺少房间号"))

@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import struct
-from typing import Any, Callable, Optional, Tuple
+from collections.abc import Callable
+from typing import Any
 
 INT1, INT2, INT4, INT8, FLOAT, DOUBLE, STRING1, STRING4 = 0, 1, 2, 3, 4, 5, 6, 7
 MAP, LIST, STRUCT_BEGIN, STRUCT_END, ZERO_TAG, SIMPLE_LIST = 8, 9, 10, 11, 12, 13
@@ -27,7 +28,7 @@ class TarsInputStream:
         if self._pos <= before:
             raise ValueError(f"tars parse stuck: pos={self._pos} (no progress from {before})")
 
-    def _peek_field(self) -> Optional[Tuple[int, int]]:
+    def _peek_field(self) -> tuple[int, int] | None:
         """预读下一个字段头但不移动游标，返回 (type, tag)；缓冲读完返回 None。"""
         if self._pos >= len(self._data):
             return None
@@ -38,7 +39,7 @@ class TarsInputStream:
             tag = self._data[self._pos + 1]
         return typ, tag
 
-    def _take_head(self) -> Tuple[int, int]:
+    def _take_head(self) -> tuple[int, int]:
         """消费并返回下一个字段头 (type, tag)；tag==15 时再吃一个字节作为扩展 tag。"""
         b = self._data[self._pos]
         self._pos += 1
@@ -92,7 +93,7 @@ class TarsInputStream:
         else:
             raise ValueError(f"Unknown tars type: {typ}")
 
-    def _goto(self, tag: int) -> Optional[Tuple[int, int]]:
+    def _goto(self, tag: int) -> tuple[int, int] | None:
         """定位到目标 tag 字段并消费其头字节，返回 (type, tag)；。"""
         while True:
             f = self._peek_field()
@@ -190,7 +191,7 @@ class TarsInputStream:
         self._skip(typ)
         return default
 
-    def read_struct(self, tag: int, parser: Callable[["TarsInputStream"], Any]) -> Any:
+    def read_struct(self, tag: int, parser: Callable[[TarsInputStream], Any]) -> Any:
         """读取 tag 位置的结构体：交由 parser 回调解析字段并消费 STRUCT_END，返回其结果；。"""
         found = self._goto(tag)
         if found is None:

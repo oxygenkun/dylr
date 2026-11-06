@@ -56,8 +56,8 @@ first_run: bool = True  # 首次运行标志
 global_proxy: bool = False  # 全局代理启用标志
 use_proxy: bool = False  # 是否使用代理 IP（由 recorder.main() 读取配置后覆盖）
 create_var: dict[str, threading.Thread] = {}  # 动态创建的线程登记表（字幕线程 / 房间线程）
-start_display_time: "datetime.datetime" = datetime.datetime.now()  # 显示信息开始时间
-process_start_time: "datetime.datetime" = datetime.datetime.now()
+start_display_time: datetime.datetime = datetime.datetime.now()  # 显示信息开始时间
+process_start_time: datetime.datetime = datetime.datetime.now()
 
 delay_default: int = 120  # 循环监测间隔时间（秒）
 video_record_quality: str = "原画"  # 录制视频画质

@@ -15,7 +15,7 @@ class ResizableSemaphore:
         self._capacity = max(0, int(value))
         self._used = 0
 
-    def __enter__(self) -> "ResizableSemaphore":
+    def __enter__(self) -> ResizableSemaphore:
         self.acquire()
         return self
 

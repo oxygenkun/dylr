@@ -1,16 +1,15 @@
 from __future__ import annotations
 
 import base64
-import functools
 import hashlib
 import hmac
 import os
 import re
 import secrets
 import threading
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from pathlib import Path
-from typing import Iterable, cast
+from typing import cast
 
 from src.config.booleans import parse_config_bool
 from src.config.reader import TEXT_ENCODING

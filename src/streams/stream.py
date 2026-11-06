@@ -1,7 +1,7 @@
 import json
 import re
 import urllib.parse
-from typing import TypedDict, TypeVar, cast
+from typing import TypedDict, cast
 
 from loguru import logger
 
@@ -10,13 +10,11 @@ from src.streams.errors import trace_error_decorator
 from src.streams.spider import get_bilibili_stream_data, get_douyu_stream_data
 from src.support import i18n
 
-_PadT = TypeVar("_PadT")
-
 
 class DouyinStreamUrl(TypedDict, total=False):
     anchor_name: str | None
     status: int
-    stream_url: "DouyinStreamInner"
+    stream_url: DouyinStreamInner
 
 
 class DouyinStreamInner(TypedDict, total=False):
@@ -26,17 +24,17 @@ class DouyinStreamInner(TypedDict, total=False):
 
 
 class TiktokStreamUrl(TypedDict, total=False):
-    LiveRoom: "TiktokLiveRoom"
+    LiveRoom: TiktokLiveRoom
 
 
 class TiktokLiveRoom(TypedDict, total=False):
-    liveRoomUserInfo: "TiktokUserInfo"
-    liveRoom: "TiktokLiveDetail"
+    liveRoomUserInfo: TiktokUserInfo
+    liveRoom: TiktokLiveDetail
     title: str
 
 
 class TiktokUserInfo(TypedDict, total=False):
-    user: "TiktokUser"
+    user: TiktokUser
 
 
 class TiktokUser(TypedDict, total=False):
@@ -47,11 +45,11 @@ class TiktokUser(TypedDict, total=False):
 
 class TiktokLiveDetail(TypedDict, total=False):
     title: str
-    streamData: "TiktokStreamDataOuter"
+    streamData: TiktokStreamDataOuter
 
 
 class TiktokStreamDataOuter(TypedDict, total=False):
-    pull_data: "TiktokPullData"
+    pull_data: TiktokPullData
 
 
 class TiktokPullData(TypedDict, total=False):
@@ -76,12 +74,12 @@ class KuaishouStreamUrl(TypedDict, total=False):
 
 
 class HuyaStreamUrl(TypedDict, total=False):
-    data: list["HuyaDataItem"]
+    data: list[HuyaDataItem]
 
 
 class HuyaDataItem(TypedDict, total=False):
-    gameLiveInfo: "HuyaGameLiveInfo"
-    gameStreamInfoList: list["HuyaStreamInfo"]
+    gameLiveInfo: HuyaGameLiveInfo
+    gameStreamInfoList: list[HuyaStreamInfo]
 
 
 class HuyaGameLiveInfo(TypedDict, total=False):
@@ -116,15 +114,15 @@ class DouyuFlvData(TypedDict, total=False):
 class YyStreamUrl(TypedDict, total=False):
     anchor_name: str
     title: str
-    avp_info_res: "YyAvpInfoRes"
+    avp_info_res: YyAvpInfoRes
 
 
 class YyAvpInfoRes(TypedDict, total=False):
-    stream_line_addr: dict[str, "YyCdnInfo"]
+    stream_line_addr: dict[str, YyCdnInfo]
 
 
 class YyCdnInfo(TypedDict, total=False):
-    cdn_info: "YyCdnDetail"
+    cdn_info: YyCdnDetail
 
 
 class YyCdnDetail(TypedDict, total=False):
@@ -149,11 +147,11 @@ class NeteaseStreamUrl(TypedDict, total=False):
     anchor_name: str
     title: str
     m3u8_url: str
-    stream_list: "NeteaseStreamList"
+    stream_list: NeteaseStreamList
 
 
 class NeteaseStreamList(TypedDict, total=False):
-    resolution: dict[str, "NeteaseResolution"]
+    resolution: dict[str, NeteaseResolution]
 
 
 class NeteaseResolution(TypedDict, total=False):
@@ -311,7 +309,7 @@ def is_downgrade(requested: str | None, actual: str | None) -> bool:
     return act_level > req_level
 
 
-def _pad_list(url_list: list[_PadT], min_length: int = 6) -> list[_PadT] | list[None]:
+def _pad_list[PadT](url_list: list[PadT], min_length: int = 6) -> list[PadT] | list[None]:
     if not url_list:
         return [None] * min_length
     while len(url_list) < min_length:

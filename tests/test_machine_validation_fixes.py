@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # 真机验证 4 项保守实施回归。
 #
 # 4 项原始变更详情见 CODE_WIKI v4.1.0-dev：
@@ -203,7 +202,7 @@ def test_ws_heartbeat_timeout_closes_connection(monkeypatch: pytest.MonkeyPatch)
                 }
             )
 
-        def __aiter__(self) -> "_FakeWs":
+        def __aiter__(self) -> _FakeWs:
             return self
 
         async def __anext__(self) -> bytes:

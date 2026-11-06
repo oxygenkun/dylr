@@ -2,6 +2,7 @@
 
 import sys
 import types
+from typing import Any, cast
 from urllib.parse import unquote, urlsplit
 
 import pytest
@@ -79,7 +80,7 @@ def test_credentials_round_trip_without_double_encoding(username: str, password:
 def test_proxy_info_is_immutable() -> None:
     info = ProxyInfo("127.0.0.1", 8080)
     with pytest.raises(AttributeError):
-        setattr(info, "host", "other")
+        cast(Any, info).host = "other"
 
 
 def test_lowercase_proxy_takes_precedence(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -115,7 +116,7 @@ def test_windows_registry_is_closed_on_all_paths(
     events: list[str] = []
 
     class RegistryKey:
-        def __enter__(self) -> "RegistryKey":
+        def __enter__(self) -> RegistryKey:
             events.append("open")
             return self
 

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 # 可复用的 Web / 接口冒烟测试工具（纯标准库，无第三方依赖）
 #
 # 功能：
@@ -150,7 +149,7 @@ def load_config(path: str) -> tuple[list[CheckConfig], str | None]:
     # `except (OSError, ValueError)` 转成退出码 2。必须前置挡住而非留给 run_check 运行时炸：
     # ① 崩栈是 rc=1，消费方会按可重试失败处理并误判成面板故障；② 校验晚于发请求会留下
     # 「前几条已打网络、第 N 条才崩」的半执行状态，报告工件与结论都不自洽。
-    with open(path, "r", encoding="utf-8-sig") as f:
+    with open(path, encoding="utf-8-sig") as f:
         cfg = cast(object, json.load(f))
     if isinstance(cfg, list):
         # 允许顶层直接写成 checks 列表（该形态没有 base_url 位，返回 None 由命令行补）
@@ -380,7 +379,7 @@ def write_html_report(results: list[CheckResult], summary: CheckResult, path: st
             + f"<td>{r['status']}</td>"
             + f"<td>{r['time_ms']}ms</td>"
             + f"<td>{detail}</td>"
-            + f"</tr>"
+            + "</tr>"
         )
         rows.append(row)
     html = (

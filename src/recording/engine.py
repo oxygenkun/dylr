@@ -262,7 +262,7 @@ def main(non_interactive: bool = False) -> None:
 
             state.ini_URL_content = ""
             if os.path.isfile(state.url_config_file):
-                with open(state.url_config_file, "r", encoding=state.text_encoding, errors="ignore") as file:
+                with open(state.url_config_file, encoding=state.text_encoding, errors="ignore") as file:
                     state.ini_URL_content = file.read().strip()
 
             if not state.ini_URL_content.strip():
@@ -541,7 +541,7 @@ def main(non_interactive: bool = False) -> None:
             _url_line_list: set[str] = set()
             _seen_urls: set[str] = set()
             state.url_tuples_list = []
-            with open(state.url_config_file, "r", encoding=state.text_encoding, errors="ignore") as file:
+            with open(state.url_config_file, encoding=state.text_encoding, errors="ignore") as file:
                 _url_lines = file.readlines()
             for origin_line in _url_lines:
                 try:

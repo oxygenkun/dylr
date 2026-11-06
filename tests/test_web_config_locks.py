@@ -35,7 +35,7 @@ _BLANK_SENSITIVE_DETAIL = "敏感配置项不得清空：如需移除请显式�
 
 
 @pytest.fixture
-def fake_main(monkeypatch: pytest.MonkeyPatch) -> Generator[types.ModuleType, None, None]:
+def fake_main(monkeypatch: pytest.MonkeyPatch) -> Generator[types.ModuleType]:
     from src.recording import state
 
     for key, value in {
@@ -54,7 +54,7 @@ def fake_main(monkeypatch: pytest.MonkeyPatch) -> Generator[types.ModuleType, No
 
 
 @pytest.fixture()
-def client(tmp_path: Path, fake_main: types.ModuleType) -> Generator[TestClient, None, None]:
+def client(tmp_path: Path, fake_main: types.ModuleType) -> Generator[TestClient]:
     # 每个用例一份独立 config.ini：断言「未被覆盖」时必须看到写入前的原文。
     from src.api import routes as wa
 

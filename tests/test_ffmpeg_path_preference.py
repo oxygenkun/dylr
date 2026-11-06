@@ -29,7 +29,6 @@ import pytest
 from loguru import logger
 
 import src.runtime.ffmpeg as ffmpeg_install
-from src.runtime import ffmpeg as ffmpeg_install
 
 MAIN_SOURCE = Path(__file__).resolve().parent.parent / "src/recording/engine.py"
 

@@ -9,9 +9,10 @@ import signal
 import subprocess
 import sys
 import threading
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Callable, cast
+from typing import cast
 
 from src.runtime.resources import RESOURCES
 from src.support import i18n
@@ -23,7 +24,7 @@ try:
     ProgramError = execjs.ExejsProgramError
 except ImportError:
     import execjs  # type: ignore[no-redef]
-    from execjs import ProgramError  # type: ignore[no-redef]
+    from execjs import ProgramError as ProgramError  # type: ignore[no-redef]
 
 
 _js_compile_cache: dict[str, tuple[float, object]] = {}
@@ -107,7 +108,7 @@ async def run_js_async(js_path: str, func_name: str, *args: object, timeout: flo
     """在线程池中执行签名函数，并限制等待时间。"""
 
     def _sync_call() -> object:
-        call_fn = cast("Callable[..., object]", getattr(get_compiled_js(js_path), "call"))
+        call_fn = cast("Callable[..., object]", get_compiled_js(js_path).call)
         kwargs: dict[str, float] = {"timeout": timeout} if _js_runtime_accepts_timeout(call_fn) else {}
         return cast(object, call_fn(func_name, *args, **kwargs))
 
@@ -122,7 +123,7 @@ _JS_EXECUTOR: object | None = None
 _JS_EXECUTOR_LOCK = threading.Lock()
 
 
-def _js_executor() -> "ThreadPoolExecutor":
+def _js_executor() -> ThreadPoolExecutor:
     global _JS_EXECUTOR
     with _JS_EXECUTOR_LOCK:
         if _JS_EXECUTOR is None:

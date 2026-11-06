@@ -3,9 +3,9 @@ import signal
 import subprocess
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from typing import Any, Callable
+from typing import Any
 
 
 class ShutdownRequested(RuntimeError):

@@ -36,7 +36,7 @@ uv run --locked --extra dev prek run --all-files
 # 格式化代码（line-length = 120）
 uv run --locked --extra dev ruff format .
 
-# 静态检查（需要自动整理导入时加 --fix）
+# 静态检查（加 --fix 可应用安全修复）
 uv run --locked --extra dev ruff check .
 
 # 准备提交时采集覆盖率并检查阈值
@@ -46,7 +46,7 @@ uv run --locked --extra dev python tool/check_coverage.py
 
 > **注释规范**：见 [AGENTS.md](../AGENTS.md) 的代码风格约定。
 
-> **质量检查**：Ruff 负责格式化和导入排序，pytest 要求 0 warnings；不配置常驻类型检查器。检查时机与命令以 AGENTS.md 为准；日常编辑不自动运行 pytest 或覆盖率检查。
+> **质量检查**：Ruff 负责格式化，并检查常见错误、导入排序、现代 Python 写法、冗余代码、遗留调试器和 `noqa` 的有效性；具体规则与例外以 `pyproject.toml` 为准。pytest 要求 0 warnings，不配置常驻类型检查器。检查时机、安全修复与豁免约定见 [AGENTS.md](../AGENTS.md)；日常编辑不自动运行 pytest 或覆盖率检查。
 
 > **测试说明**：`tests/test_web_api.py` 的符号链接相关用例（`TestListFiles::test_broken_symlink_skipped` / `test_symlink_outside_skipped`）在无法创建真实符号链接的环境（未开启开发者模式的 Windows、部分沙箱）会自动 `pytest.skip`，属正常现象，不代表代码缺陷。
 

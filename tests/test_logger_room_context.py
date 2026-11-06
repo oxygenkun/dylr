@@ -17,8 +17,9 @@ from __future__ import annotations
 import importlib
 import sys
 import threading
+from collections.abc import Iterator
+from itertools import pairwise
 from pathlib import Path
-from typing import Iterator
 
 import pytest
 from loguru import logger
@@ -105,11 +106,11 @@ def test_two_rooms_can_be_split_by_room_field(recorder_logger: Path) -> None:
     tag_b = [_streamget_col(_ROOM_B) in line for line in lines]
     assert sum(tag_a) == _PROBE_COUNT, f"{_ROOM_A} 的行数不符，房间字段串味或缺失"
     assert sum(tag_b) == _PROBE_COUNT, f"{_ROOM_B} 的行数不符，房间字段串味或缺失"
-    assert not any(a and b for a, b in zip(tag_a, tag_b)), "同一行同时命中两个房间，字段被覆盖"
+    assert not any(a and b for a, b in zip(tag_a, tag_b, strict=True)), "同一行同时命中两个房间，字段被覆盖"
     # 交织确实发生：存在相邻两行属于不同房间。若不锁住这一前提，「每个房间各自单独成段
     # 写入」的退化实现同样能通过上面两条计数断言（假绿）
     rooms = ["A" if a else "B" for a in tag_a]
-    assert any(x != y for x, y in zip(rooms, rooms[1:])), "两房间日志未交织，本用例未真正验证切分能力"
+    assert any(x != y for x, y in pairwise(rooms)), "两房间日志未交织，本用例未真正验证切分能力"
 
 
 def test_unbound_room_logs_still_land_with_empty_column(recorder_logger: Path) -> None:

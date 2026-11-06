@@ -2,9 +2,10 @@ from __future__ import annotations
 
 import asyncio
 from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Awaitable, Callable, Optional
+from typing import Any
 
 from src.support import i18n
 
@@ -25,7 +26,7 @@ class DanmakuMessage:
     color: str = "#FFFFFF"
 
 
-def _log_task_exception(task: "asyncio.Task[None]") -> None:
+def _log_task_exception(task: asyncio.Task[None]) -> None:
     """后台弹幕协程的统一异常落盘：裸 asyncio.ensure_future 的异常只在任务被 GC 时以。"""
     if task.cancelled():
         return
@@ -36,7 +37,7 @@ def _log_task_exception(task: "asyncio.Task[None]") -> None:
         logger.warning(i18n.tr("[弹幕]后台协程异常: {type_name}: {exc}", type_name=type(exc).__name__, exc=exc))
 
 
-def spawn_danmaku_task(coro: Awaitable[None]) -> "asyncio.Task[None]":
+def spawn_danmaku_task(coro: Awaitable[None]) -> asyncio.Task[None]:
     task = asyncio.ensure_future(coro)
     task.add_done_callback(_log_task_exception)
     return task
@@ -47,9 +48,9 @@ class DanmakuBase(ABC):
 
     def __init__(
         self,
-        on_message: Optional[Callable[[DanmakuMessage], None]] = None,
-        on_close: Optional[Callable[[str], None]] = None,
-        on_ready: Optional[Callable[[], None]] = None,
+        on_message: Callable[[DanmakuMessage], None] | None = None,
+        on_close: Callable[[str], None] | None = None,
+        on_ready: Callable[[], None] | None = None,
     ) -> None:
         self._on_message = on_message
         self._on_close = on_close

@@ -8,7 +8,7 @@ import subprocess
 import sys
 import types
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import pytest
 

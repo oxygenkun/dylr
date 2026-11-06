@@ -19,9 +19,8 @@ from src.streams import spider as sp
 
 
 def _unwrap(func: object) -> Any:
-    # 取 trace_error_decorator 装饰后的原函数：装饰器经 functools.wraps 保留
-    # __wrapped__，但静态类型不可见，统一经 getattr 取用（返回 Any 以便直接调用）
-    return cast(Any, getattr(func, "__wrapped__"))
+    # 绕过装饰器兜底，才能断言原函数的精确返回值与异常。
+    return cast(Any, func).__wrapped__
 
 
 def _subprocess_shim(run: Any = None, popen: Any = None) -> types.SimpleNamespace:

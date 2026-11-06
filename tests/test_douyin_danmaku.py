@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # src/danmaku/platforms/douyin.py 测试：抖音弹幕链路「凭据被平台拒绝 → 作废进程级缓存」的接线
 # （MID-33 的弹幕侧半边）。
 #
@@ -15,7 +14,8 @@
 # 真实代码——删掉 _note_ttwid_refusal 或其调用点即红（test_refusal_clears_real_ttwid_cache
 # 更是不打桩 invalidate，直接断言真实缓存被清）。
 
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 import pytest
 
@@ -33,7 +33,7 @@ class _StubWsClient:
     # WebSocketClient 替身：只替换「建立连接并回调」这一步，构造参数原样收下供断言；
     # connect() 按 script 依次触发对应回调，模拟真实的重连/耗尽上报节奏。
 
-    instances: list["_StubWsClient"] = []
+    instances: list[_StubWsClient] = []
 
     def __init__(self, **kwargs: Any) -> None:
         self.kwargs: dict[str, Any] = kwargs
@@ -52,7 +52,7 @@ class _StubWsClient:
         monkeypatch.setattr(douyin_module, "WebSocketClient", _StubWsClient)
 
     # 本替身收到的回调：on_reconnect / on_close（键名与 WebSocketClient 构造参数一致）。
-    def _callback(self, kind: str) -> "Callable[..., object] | None":
+    def _callback(self, kind: str) -> Callable[..., object] | None:
         value: Any = self.kwargs.get(kind)
         return value if callable(value) else None
 

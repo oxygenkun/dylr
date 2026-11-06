@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # M-18 回归锁：Web 面板「无认证 + 非回环」的安全拒绝必须发生在**任何 stdio 重定向 /
 # 控制台隐藏之前**（被测：web.py::main 与 _enter_background_mode 的先后接线）。
 #
@@ -23,7 +22,7 @@ from typing import Any
 
 import pytest
 
-import src.recording
+import src.recording as recording_package
 from src import web
 
 _REJECT_MARKER = "拒绝启动"
@@ -105,19 +104,16 @@ def _drive_web_main(
         res.background_calls.append((logs_dir, bg_host, bg_port))
         # 复刻真实背景化的副作用（stdio 换成日志文件流）：这样一旦闸门被挪回背景化之后，
         # 拒绝文案会落进 res.redirected、res.console 变空，两条断言同时红。
-        # 用 setattr 而非直接赋值：sys.stdout 在 typeshed 里是 TextIO，StringIO 不满足该声明。
-        setattr(sys, "stdout", res.redirected)
-        setattr(sys, "stderr", res.redirected)
+        monkeypatch.setattr(sys, "stdout", res.redirected)
+        monkeypatch.setattr(sys, "stderr", res.redirected)
         raise _BackgroundCalled
 
     cfg = _write_web_config(tmp_path, host)
     engine = _FakeEngineModule(tmp_path, cfg)
 
     monkeypatch.setitem(sys.modules, "src.recording.engine", engine)
-    import src
-
-    monkeypatch.setattr(src.recording, "engine", engine, raising=False)
-    monkeypatch.setattr(src.recording, "state", engine)
+    monkeypatch.setattr(recording_package, "engine", engine, raising=False)
+    monkeypatch.setattr(recording_package, "state", engine)
     monkeypatch.setitem(sys.modules, "uvicorn", types.SimpleNamespace(Server=object, Config=object))
     monkeypatch.setitem(sys.modules, "src.api.routes", types.SimpleNamespace(create_app=lambda **kwargs: None))
     monkeypatch.setattr(web, "logger", _RecordingLogger(res.warnings))

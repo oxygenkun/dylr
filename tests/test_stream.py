@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # src/streams/stream.py 测试：分两部分 —— ① 纯工具/画质映射函数（bitrate_to_quality / code_to_zh /
 # is_downgrade / _pad_list / get_quality_index 及四张画质常量表一致性）；② 核心平台流地址解析
 # （抖音/虎牙/斗鱼/快手/YY/网易/TikTok/B站 的 get_*_stream_url，以及通用入口 get_stream_url）。
@@ -26,9 +25,6 @@ from src.streams.stream import (
     QUALITY_LEVEL,
     QUALITY_MAPPING,
     QUALITY_MAPPING_BIT,
-    HuyaStreamUrl,
-    TiktokStreamUrl,
-    YyStreamUrl,
     _pad_list,
     bitrate_to_quality,
     code_to_zh,

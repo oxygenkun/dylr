@@ -1,4 +1,3 @@
-# -*- coding: utf-8 -*-
 # 2026-09-23 追加：CODE_REVIEW_2026-09-22.md 第十章「孪生副本」语义漂移 + §5.1 副本侧条目的回归锁。
 #
 # 被测对象是 tool/douyin_live_recorder_standalone.py —— 它按设计**不 import src/**，是
@@ -484,7 +483,7 @@ class TestFfmpegCommandLogMasking:
     def test_run_ffmpeg_writes_masked_log(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         # 替身 Popen 走被测模块命名空间 shim（AGENTS：禁改进程级 subprocess 本体）
         class _FakePopen:
-            def __class_getitem__(cls, item: Any) -> type["_FakePopen"]:
+            def __class_getitem__(cls, item: Any) -> type[_FakePopen]:
                 return cls
 
             def __init__(self, args: list[str], **kwargs: Any) -> None:
@@ -550,7 +549,7 @@ class TestStandaloneGracefulQuitChain:
                 events["stdin_closed"] = True
 
         class _FakePopen:
-            def __class_getitem__(cls, item: Any) -> type["_FakePopen"]:
+            def __class_getitem__(cls, item: Any) -> type[_FakePopen]:
                 return cls
 
             def __init__(self, args: list[str], **kwargs: Any) -> None:

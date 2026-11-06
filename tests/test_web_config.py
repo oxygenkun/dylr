@@ -3,7 +3,6 @@
 # 默认值含受信代理字段、画质选项的规范化/持久化、URL_config.ini 房间画质保序改写与主播名反查 URL。
 # 全程纯函数 + tmp_path，不触网、不依赖全局 config。
 
-import configparser
 from pathlib import Path
 
 import pytest
@@ -97,7 +96,6 @@ def _stub_offline_dns(monkeypatch: pytest.MonkeyPatch, table: dict[str, list[str
     # SEV-03 之后房间地址要过 socket.getaddrinfo。这里只替换「解析」这一步（网络层桩），
     # 回环/私网/保留/CGNAT 的分类与「任一结果内部即拒绝」的裁决全部走真实代码。
     # 表外域名默认解析到一个公网地址；需要构造「解析失败」的用例把值写成 OSError 实例。
-    from src.api import config as wc
 
     mapping: dict[str, list[str] | OSError] = {"__default__": ["114.114.114.114"]}
     mapping.update(table or {})
@@ -227,7 +225,6 @@ class TestDnsRebindingBoundary:
     # 该用例锁住这个事实（而不是假装能挡重绑定），提醒后续改动不要把它当完整防线。
 
     def test_ttl_zero_rebinding_passes_write_time_check(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        from src.api import config as wc
 
         answers: dict[str, list[str]] = {"host": ["114.114.114.114"]}
         monkeypatch.setattr(targets, "resolve_host_ips", lambda host: list(answers["host"]))

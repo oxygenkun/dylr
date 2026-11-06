@@ -1,18 +1,17 @@
 # src/streams/ttwid.py 的回归锁：出口分列的 TTL 缓存、配置预置 ttwid 读取、拉取拼装、singleflight 并发去重与预热。
 
 import asyncio
-import configparser
 import os
 import sys
 import time
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
 import src.streams.ttwid as ttwid_module
 from src.network import credentials
-from src.streams.ttwid import _app_root, _cached_ttwid, _fetch_ttwid, _read_config_ttwid, get_ttwid, warmup_ttwid
+from src.streams.ttwid import _app_root, _fetch_ttwid, _read_config_ttwid, get_ttwid, warmup_ttwid
 
 
 @pytest.fixture(autouse=True)
@@ -318,7 +317,7 @@ class TestTtwidTtl:
             calls.append(1)
             return {"ttwid": next(values)}
 
-        monkeypatch.setattr(ttwid_module.http, "request", _fake_req)
+        monkeypatch.setattr(credentials.http, "request", _fake_req)
 
         assert await get_ttwid() == "ttwid=first"
         ttwid_module.invalidate_ttwid()
@@ -341,7 +340,7 @@ class TestTtwidTtl:
         async def _fake_req(**kwargs: object) -> dict[str, str]:
             return cookies
 
-        monkeypatch.setattr(ttwid_module.http, "request", _fake_req)
+        monkeypatch.setattr(credentials.http, "request", _fake_req)
         assert await get_ttwid("127.0.0.1:10808") == "ttwid=with-proxy"
         ttwid_module.invalidate_ttwid("127.0.0.1:10808")
         assert "douyin_ttwid|127.0.0.1:10808" not in cc_generic_keys()

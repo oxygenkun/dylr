@@ -12,7 +12,6 @@ import pytest
 from pytest import MonkeyPatch
 
 from src.config import io as config_io
-from src.config.reader import tolerant_config_parser
 from src.recording import state
 
 
@@ -45,7 +44,7 @@ def _write_lines(path: Path, lines: list[str], encoding: str = "utf-8-sig") -> N
 def _read_raw(path: Path, encoding: str = "utf-8-sig") -> list[str]:
     # 同样按 newline="" 读回：断言「文件字节形态」而非 universal newlines 修饰后的视图，
     # 否则「行尾是否被改成 LF」这一子问题永远断不出来。
-    with open(path, "r", encoding=encoding, newline="") as f:
+    with open(path, encoding=encoding, newline="") as f:
         return f.readlines()
 
 

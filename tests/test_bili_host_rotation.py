@@ -60,10 +60,10 @@ class _StubWs:
             return
         self._fire("on_close", _EXHAUST_REASON)
 
-    async def send(self, data: "bytes | str") -> None:
+    async def send(self, data: bytes | str) -> None:
         return None
 
-    def send_nowait(self, data: "bytes | str") -> None:
+    def send_nowait(self, data: bytes | str) -> None:
         return None
 
     async def close(self) -> None:

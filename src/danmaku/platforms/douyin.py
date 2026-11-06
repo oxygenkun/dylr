@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 import time
 import urllib.parse
-from typing import Any, Union, cast
+from typing import Any, cast
 
 from src.danmaku.base import DanmakuBase, DanmakuMessage, DanmakuMessageType
 from src.danmaku.compression import MAX_DECOMPRESSED_BYTES, decompress_zlib
@@ -167,7 +167,7 @@ class DouyinDanmaku(DanmakuBase):
         if self._ws is not None:
             await self._ws.close()
 
-    def decode_message(self, data: Union[bytes, str]) -> None:
+    def decode_message(self, data: bytes | str) -> None:
         """解析 PushFrame：gzip 解压 payload 为 Response，分发弹幕/在线消息并回 ack。"""
         if isinstance(data, str):
             return
