@@ -238,18 +238,11 @@ def copy_external_binaries(include_runtime: bool = True) -> None:
     _prepare_config_dir()
 
 
-# 发布目录内**绝不允许**存在的凭据文件（SEV-2213）。与 .dockerignore 的 `config/config.ini` /
-# `config/URL_config.ini` 两条排除项同源——同一批文件、同一份敏感判定，只是作用在「外发 zip」通道上。
-CREDENTIAL_FILE_NAMES: tuple[str, ...] = ("config.ini", "config.toml", "URL_config.ini")
+RELEASE_CONFIG_FILES = {"config.ini", "URL_config.ini", "config.toml.example"}
 
 
 def _sanitized_config_text(text: str, *, fallback_header: str = "") -> str:
-    # 把 config.ini 文本按「敏感键置空」重写为可分发模板，保留注释与节结构（产物仍是用户
-    # 可直接编辑的模板，而非空文件）。
-    # 敏感判定复用 src/web_config（is_sensitive_item + _looks_like_secret_value），不另写一份
-    # 正则：那会造出第二份「什么算敏感」的事实源，两侧迟早漂移。
-    # 用 configparser 而非逐行正则：ini 的 section/key 认法（`=` 与 `:` 均可、键名大小写不敏感）
-    # 与运行时读取完全一致，不会出现「面板认为敏感、打包器不认为」的缝。
+    # 用结构化解析识别多行值，生成模板时丢弃原文件注释。
     parser = configparser.ConfigParser(interpolation=None)
     # 保留键名原样大小写，避免写回时把键名改成小写形态。
     # 类型注记：ConfigParser 里 optionxform 是方法，实例赋值 str 会触发 mypy
@@ -276,6 +269,7 @@ def _sanitized_config_text(text: str, *, fallback_header: str = "") -> str:
             ):
                 lines.append(f"{key} = ")
             else:
+                value = value.replace("\n", "\n\t")
                 lines.append(f"{key} = {value}")
         lines.append("")
     return "\n".join(lines).rstrip("\n") + "\n"
@@ -288,15 +282,10 @@ def _sanitized_url_config_text() -> str:
 
 
 def _prepare_config_dir() -> None:
-    # 把发布目录的 config/ 写成**脱敏模板**（SEV-2213 的「不产生」一侧）。
-    # 只对 CREDENTIAL_FILE_NAMES 里的两个文件脱敏；其余文件**原样复制、不过滤**——它们不属已知凭据面，
-    # 新增任何可能带凭据的配置文件名必须先登记进该元组，否则会直接进对外 zip。
     cfg_dst = RELEASE_DIR / "config"
     cfg_dst.mkdir(parents=True, exist_ok=True)
     cfg_src = PROJECT_ROOT / "config"
 
-    known = set(CREDENTIAL_FILE_NAMES)
-    # 1) 凭据文件：从仓库源读取后脱敏重写（源不存在时落空白模板，绝不跳过）
     ini_src = cfg_src / "config.ini"
     template = (
         _sanitized_config_text(ini_src.read_text(encoding="utf-8-sig", errors="replace"))
@@ -307,49 +296,40 @@ def _prepare_config_dir() -> None:
     _ = (cfg_dst / "URL_config.ini").write_text(_sanitized_url_config_text(), encoding="utf-8")
     print(f"[build] 已生成脱敏配置模板 config/config.ini + config/URL_config.ini -> {cfg_dst}")
 
-    # 2) 其余非凭据文件照常复制（保留「模板之外的附属文件也能带过去」行为）
-    if cfg_src.is_dir():
-        for item in sorted(cfg_src.iterdir()):
-            if item.name in known or not item.is_file():
-                continue
-            _ = shutil.copy2(item, cfg_dst / item.name)
-            print(f"[build] 已复制 config/{item.name} -> {cfg_dst / item.name}")
+    example = cfg_src / "config.toml.example"
+    if example.is_file():
+        shutil.copy2(example, cfg_dst / example.name)
 
 
 def assert_no_credentials_in_release() -> None:
-    # SEV-2213 的「产生了就拦住」一侧：make_zip **之前**校验发布目录那两份文件确实不含敏感键的真实值，
-    # 命中即非零退出——与 .dockerignore 同源口径。zip 一旦生成就可能已被 copy/上传，事后再删已无意义；
-    # 判据也不是「文件是否存在」（文件**必须**存在，用户要能在 exe 同级编辑），而是逐键比对源值。
     assert RELEASE_DIR.is_dir(), f"{RELEASE_DIR} 不存在，无从校验"
     cfg_dst = RELEASE_DIR / "config"
-
     problems: list[str] = []
 
-    # ① URL_config.ini：必须是注释样例（_sanitized_url_config_text 的口径），不得含有效房间行
-    url_cfg = cfg_dst / "URL_config.ini"
-    if url_cfg.is_file():
-        for n, line in enumerate(url_cfg.read_text(encoding="utf-8-sig", errors="replace").splitlines(), 1):
-            stripped = line.strip()
-            if stripped and not stripped.startswith("#"):
-                problems.append(f"config/URL_config.ini:{n} 含未注释的有效行（可能内嵌房间/token）：{stripped[:80]!r}")
+    if cfg_dst.is_dir():
+        for item in sorted(cfg_dst.iterdir()):
+            if item.name not in RELEASE_CONFIG_FILES or item.is_symlink() or not item.is_file():
+                problems.append(f"config/{item.name} 不属于发布配置模板")
 
-    # ② config.ini：逐键比对**仓库源文件的真实值**——命中即说明脱敏漏了该键。用「源值出现在发布文件里」
-    #    作判据而不是「键名敏感」：前者是实际泄漏的事实、后者只是推断，且这样也覆盖「键名不在敏感表里
-    #    但值确实是凭据」的漏网情形。
-    src_ini = PROJECT_ROOT / "config" / "config.ini"
+    url_cfg = cfg_dst / "URL_config.ini"
+    if url_cfg.is_file() and url_cfg.read_text(encoding="utf-8-sig") != _sanitized_url_config_text():
+        problems.append("config/URL_config.ini 与发布样例不一致")
+
     dst_ini = cfg_dst / "config.ini"
-    if src_ini.is_file() and dst_ini.is_file():
-        dst_text = dst_ini.read_text(encoding="utf-8-sig", errors="replace")
-        src_parser = _read_ini_pairs(src_ini)
-        for section, key, value in src_parser:
-            v = value.strip()
-            # 只拦「有实质内容且确实敏感」的值；空值/纯布尔运维参数不算凭据。
-            if len(v) < 4:
-                continue
-            if not (web_config.is_sensitive_item(section, key) or web_config._looks_like_secret_value(v)):
-                continue
-            if v in dst_text:
-                problems.append(f"config/config.ini 的 [{section}] {key} 真实值未被脱敏（长度 {len(v)}）")
+    if dst_ini.is_file():
+        parser = configparser.ConfigParser(interpolation=None)
+        parser.optionxform = str  # type: ignore[method-assign,assignment]
+        try:
+            parser.read_string(dst_ini.read_text(encoding="utf-8-sig"))
+        except configparser.Error:
+            problems.append("config/config.ini 无法解析")
+        else:
+            for section in parser:
+                for key, value in parser.items(section):
+                    if value.strip() and (
+                        web_config.is_sensitive_item(section, key) or web_config._looks_like_secret_value(value)
+                    ):
+                        problems.append(f"config/config.ini 的 [{section}] {key} 未脱敏")
 
     if problems:
         print("[build][FATAL] 发布目录内检出凭据（SEV-2213：外发 zip 不得包含配置凭据）：", file=sys.stderr)
@@ -357,18 +337,6 @@ def assert_no_credentials_in_release() -> None:
             print(f"  - {p}", file=sys.stderr)
         raise SystemExit(1)
     print("[build] 发布目录凭据校验通过：config/ 内无敏感键真实值")
-
-
-def _read_ini_pairs(path: Path) -> list[tuple[str, str, str]]:
-    # 读 ini 为 (节, 键, 值) 三元组列表；解析失败返回空（由 assert_no_credentials_in_release 的
-    # 成品侧检查兜底，此函数自身不参与放行判定）。
-    parser = configparser.ConfigParser(interpolation=None)
-    parser.optionxform = str  # type: ignore[method-assign,assignment]  # 同上：保留键名原样大小写
-    try:
-        parser.read(path, encoding="utf-8-sig")
-    except configparser.Error:
-        return []
-    return [(section, key, value) for section in parser.sections() for key, value in parser.items(section)]
 
 
 def _find_runtime_binary(root: Path, names: tuple[str, ...]) -> Path | None:

@@ -27,6 +27,47 @@ def _load_build_exe() -> Any:
 build_exe = _load_build_exe()
 
 
+def test_prepare_release_config_ignores_runtime_files(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    config = tmp_path / "config"
+    config.mkdir()
+    (config / "config.ini").write_text(
+        "[录制设置]\n界面选项 = false\n示例 = 第一行\n  第二行\n[Cookie]\n抖音cookie = false\n",
+        encoding="utf-8",
+    )
+    (config / "config.ini.migrated").write_text("[Cookie]\n抖音cookie = private\n", encoding="utf-8")
+    release = tmp_path / "release"
+    monkeypatch.setattr(build_exe, "PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr(build_exe, "RELEASE_DIR", release)
+
+    build_exe._prepare_config_dir()
+    assert not (release / "config" / "config.ini.migrated").exists()
+    template = (release / "config" / "config.ini").read_text(encoding="utf-8")
+    assert "界面选项 = false" in template
+    assert "第一行\n\t第二行" in template
+    build_exe.assert_no_credentials_in_release()
+
+
+@pytest.mark.parametrize(
+    ("name", "contents"),
+    [
+        ("config.ini", "[Cookie]\n抖音cookie = abc\n"),
+        ("config.ini", "[录制设置]\n配置值 = https://example.com/live?token=test\n"),
+        ("config.ini.migrated", "[Cookie]\n抖音cookie = private\n"),
+        ("URL_config.ini", "# https://example.com/live?token=test\n"),
+    ],
+)
+def test_release_config_guard_rejects_credentials(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str, contents: str
+) -> None:
+    config = tmp_path / "config"
+    config.mkdir()
+    (config / name).write_text(contents, encoding="utf-8")
+    monkeypatch.setattr(build_exe, "RELEASE_DIR", tmp_path)
+
+    with pytest.raises(SystemExit):
+        build_exe.assert_no_credentials_in_release()
+
+
 def test_verify_runtime_binaries_flags_every_missing_component(tmp_path: Path) -> None:
     problems = build_exe.verify_runtime_binaries(tmp_path)
     text = "\n".join(problems)

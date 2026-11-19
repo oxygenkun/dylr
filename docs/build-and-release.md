@@ -44,6 +44,8 @@ dist/dylr/
 
 `_internal/` 同时容纳源码包和 Python 依赖。隐藏导入补齐延迟加载的 i18n、h2、exejs 和 uvicorn 子模块；桌面库及开发工具按构建脚本排除，不能排除面板需要的 Starlette / uvicorn。
 
+发布包的 `config/` 包含脱敏的 INI 模板、注释形式的房间样例和 `config.toml.example`。压缩前检查模板，并拒绝发布目录中残留的运行时配置、迁移备份或其他配置文件。
+
 源码运行以项目根目录定位资源；冻结运行区分可写的 exe 同级数据与 `_internal/` 打包资源：
 
 - [paths.py](../src/config/paths.py) 定位配置、录制及备份，[logger.py](../src/support/logger.py) 定位日志。
