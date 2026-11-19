@@ -47,7 +47,7 @@ docker run -d -v ./config:/app/config -v ./downloads:/app/downloads \
 
 ## 拉取预构建多架构镜像（GHCR）
 
-发布工作流在每次推送 `v*` tag 时，由原生 amd64 与 arm64 两个 runner 各构建并推送一层，再按 manifest digest 合成多架构清单；同一条 `docker pull` 在 x86_64 与 arm64 主机上都会拿到本机架构的层。
+推送 `vX.Y.Z` 三段数字版本标签时，Docker Publish 使用原生 amd64 与 arm64 runner 分别构建，再按 digest 合成多架构清单。同一条 `docker pull` 在两种架构上都会拉取对应的镜像。
 
 ```bash
 # 镜像由当前仓库 owner（oxygenkun）发布，GHCR 命名空间一律小写
@@ -57,7 +57,7 @@ docker run -d -v ./config:/app/config -v ./downloads:/app/downloads \
   ghcr.io/oxygenkun/dylr:latest
 ```
 
-- 标签形态：`latest` 与 `vX.Y.Z`；`latest` 只随 `v*` tag 产出，不开放手动覆盖。
+- 每次构建同时发布 `latest` 和对应的 `vX.Y.Z` 标签。
 - 匿名拉取要求该 GHCR 包可见性为 **public**，需在仓库设置中人工开启。
 - 与 `docker-compose.yaml` 的 `image: oxygenkun/dylr:latest` 刻意不同源：compose 走 `pull_policy: build` 就地构建，不拉取 registry 同名镜像；用 GHCR 镜像请按上面 `docker run`。
 

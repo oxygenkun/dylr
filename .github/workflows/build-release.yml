@@ -1,9 +1,7 @@
 # =============================================================================
 # Build & Release —— 四平台（含 linux aarch64）可执行文件构建与 GitHub Release 发布
 # -----------------------------------------------------------------------------
-# 触发条件：
-#   1. push tag `v*`（如 v4.0.8.2）→ 构建四平台产物 + 自动创建 GitHub Release
-#   2. workflow_dispatch（手动）    → 默认仅构建并上传 artifact；勾选 create_release 输入后亦创建 Release
+# 仅手动触发：默认构建并上传 artifact；勾选 create_release 后亦创建 Release。
 #
 # 构建逻辑统一由仓库根目录 tool/build_exe.py 承担（本地 / CI 行为一致）：
 #   · --dual   PyInstaller 只跑一次，先产 lite（不含运行时）再产 full（含 ffmpeg+node）
@@ -37,9 +35,6 @@
 name: Build & Release
 
 on:
-  push:
-    tags:
-      - "v*"
   workflow_dispatch:
     inputs:
       create_release:

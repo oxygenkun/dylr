@@ -80,7 +80,7 @@ dist/dylr/
 
 ## 可执行文件发布
 
-[build-release.yml](../.github/workflows/build-release.yml) 支持推送 `v*` tag，或手动构建（可选 `create_release`）。流程如下：
+[build-release.yml](../.github/workflows/build-release.yml) 仅手动运行，可通过 `create_release` 选项同时发布 GitHub Release。流程如下：
 
 1. `prepare` 提取版本并校验 tag 一致，输出发布状态与环境常量。
 2. 发版路径通过单例 `release-create` 预创建 Release；手动发版先确保版本 tag 存在，避免多平台创建竞态。
@@ -94,7 +94,7 @@ dist/dylr/
 
 [Dockerfile](../Dockerfile) 将 Python 锁定依赖、独立 FFmpeg 构建和运行阶段分离；运行阶段使用镜像内的 FFmpeg / Node，不携带构建工具或桌面依赖。镜像 `APP_VERSION` 来自项目版本。
 
-[compose](../docker-compose.yaml) 只启动 `recorder` 服务，唯一入口与本地相同；监听、认证、端口和挂载操作见 [部署](deployment.md)。[docker-publish.yml](../.github/workflows/docker-publish.yml) 在版本 tag 发布时使用原生双 runner 构建多架构镜像，按 digest 合成，而不是用 QEMU 承担全量构建。镜像安全扫描维持 advisory，Python 依赖审计仍是阻断项。
+[compose](../docker-compose.yaml) 只启动 `recorder` 服务，唯一入口与本地相同；监听、认证、端口和挂载操作见 [部署](deployment.md)。推送 `v26.11.0` 这类 `vX.Y.Z` 三段数字版本标签时，GitHub Actions 只触发 [Docker Publish](../.github/workflows/docker-publish.yml)。工作流使用原生 amd64 和 arm64 runner 构建镜像，按 digest 合成并发布版本标签和 `latest`。镜像安全扫描维持 advisory，Python 依赖审计仍是阻断项。
 
 文档整体由 [.dockerignore](../.dockerignore) 排除，不因架构拆分进入镜像构建上下文。
 

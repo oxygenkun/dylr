@@ -202,7 +202,9 @@ def test_only_tag_push_can_publish_latest(data: dict[Any, Any]) -> None:
     triggers = _triggers(data)
     assert set(triggers) == {"push"}, f"发布链触发面只能有 tag push：{sorted(map(str, triggers))}"
     push = triggers["push"]
-    assert isinstance(push, dict) and push["tags"] == ["v*"], f"push 触发必须限定 v* tag：{push!r}"
+    assert push == {"tags": ["v[0-9]+.[0-9]+.[0-9]+"]}
+    executable_release = yaml.safe_load(WORKFLOW.with_name("build-release.yml").read_text(encoding="utf-8"))
+    assert set(_triggers(executable_release)) == {"workflow_dispatch"}
 
 
 def test_arch_jobs_run_on_matching_native_runners(data: dict[Any, Any]) -> None:

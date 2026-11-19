@@ -1,7 +1,7 @@
 # =============================================================================
 # Docker Publish —— GHCR 多架构镜像发布（linux/amd64 + linux/arm64）
 # -----------------------------------------------------------------------------
-# 触发：仅 push tag `v*`。latest 只允许由**不可变的 tag 推**出来，
+# 触发：仅推送三段数字版本标签 `vX.Y.Z`。latest 只允许由**不可变的 tag 推**出来，
 #   不留 workflow_dispatch 覆盖 latest 的口子（那等于把发布物变成可反复改写的别名）。
 #   依据：ARCHIVE/worklog/PROPOSAL_2026-10-02_linux-arm64-ffmpeg.md §二.5 与 §五.1。
 # 凭据：自动注入的 GITHUB_TOKEN + job 级 packages: write，不引入任何**手工配置**的 secret；
@@ -15,7 +15,7 @@
 #   「安装链只在 Dockerfile」这件事由结构锁钉住，防止有人把安装链挪进 job（那会同时绕过重试口径、
 #   并让「镜像里有什么」与「job 里装了什么」分家）。
 # 第三方动作 ref：一律浮动大版本标签。判据是 MIN-17 的区分线——本工作流的触发源是维护者推的
-#   `v*` tag（可信输入），与 build-release.yml 用 softprops/action-gh-release@v3 同一条线；
+#   `vX.Y.Z` tag，与 build-release.yml 用 softprops/action-gh-release@v3 同一条线；
 #   trivy-action 的 SHA 钉定先例属「cron 无人值守 + 外部可读输入」那一侧，不得外推到 tag 触发的发布链。
 #   取值核实（2026-10-03 本机只读请求；命令与 HTTP 读数见 unit-6-report.md）：
 #     docker/login-action@v3、docker/setup-buildx-action@v3、docker/build-push-action@v6
@@ -35,7 +35,7 @@ name: Docker Publish
 on:
   push:
     tags:
-      - "v*"
+      - "v[0-9]+.[0-9]+.[0-9]+"
 
 # 顶层只给读权限；packages: write 只在真要推镜像的三个 job 上按需授予（最小权限）。
 permissions:
