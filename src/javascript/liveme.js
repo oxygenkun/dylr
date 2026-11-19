@@ -345,7 +345,6 @@ function requestSign(signParams, cryptoJSPath) {
   }).join('');
 
   sKey += signParams.lm_s_id + signParams.lm_s_ts + lm_s_key;
-  console.log(`sKey: ${sKey}`);
   CryptoJS = require(cryptoJSPath);
   return CryptoJS.MD5(sKey).toString();
 }
@@ -371,7 +370,6 @@ function sign(videoid, cryptoJSPath, platform='web'){
         h5: 1
     };
     */
-    console.log("data_e:",data_e);
 
     data_i = {
         ...data_e,
@@ -381,11 +379,9 @@ function sign(videoid, cryptoJSPath, platform='web'){
         area: 'zh',
         vali: vali
       }
-    console.log("data_i:",data_i);
 
     // fake lm_s_sign param value
     let lm_s_sign = pC(data_i);
-    console.log(`fake lm_s_sign: ${lm_s_sign}`);
 
     //finnal request params
     /*
@@ -416,9 +412,7 @@ function sign(videoid, cryptoJSPath, platform='web'){
         "os": platform,
         ...data_i
     }
-    console.log("signParams: ", signParams);
     lm_s_sign = requestSign(signParams, cryptoJSPath);
-    console.log(`\x1b[32mfinal lm_s_sign: \x1b[0m${lm_s_sign}\n`);
     data = {
         ...signParams,
         lm_s_sign
