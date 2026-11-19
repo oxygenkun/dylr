@@ -20,10 +20,11 @@ from typing import Any
 
 import pytest
 
-from src.monitors.douyin_follow import DouyinFollowMonitor
+from src.config import settings
 from src.notifications import notify
-from src.recording import state
-from src.streams import dispatch as platform_dispatch
+from src.platforms.account.douyin.follow import DouyinFollowMonitor
+from src.recording import state as recording_state
+from src.recording.pipeline import dispatch as platform_dispatch
 
 
 @pytest.mark.parametrize(
@@ -42,9 +43,9 @@ def test_bark_dispatch(monkeypatch: pytest.MonkeyPatch, url: str, expected: str)
         calls.append(kwargs["level"])
         return {"success": ["test"], "error": []}
 
-    monkeypatch.setattr(state, "bark_level_overrides", {"live.douyin.com/123": "timeSensitive"})
-    monkeypatch.setattr(state, "live_status_push", "BARK")
-    monkeypatch.setattr(state, "bark_msg_level", "active")
+    monkeypatch.setattr(settings, "bark_level_overrides", {"live.douyin.com/123": "timeSensitive"})
+    monkeypatch.setattr(settings, "live_status_push", "BARK")
+    monkeypatch.setattr(settings, "bark_msg_level", "active")
     monkeypatch.setattr(notify, "bark", fake_bark)
     notify.push_message("test", url, "test")
     assert calls == [expected]
@@ -68,7 +69,7 @@ def test_follow_resolver_cache_and_fallback(monkeypatch: pytest.MonkeyPatch) -> 
         monitor._last_success = monitor._clock()
         monitor._revision = 1
     monkeypatch.setattr(platform_dispatch, "follow_monitor", monitor)
-    monkeypatch.setattr(state, "semaphore", threading.Semaphore(1))
+    monkeypatch.setattr(recording_state, "semaphore", threading.Semaphore(1))
     requests: list[str] = []
     rate_calls: list[bool] = []
 

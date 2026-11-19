@@ -14,24 +14,25 @@ from tomlkit.items import Table
 from src.api import config as web_config
 from src.api.config import _looks_like_secret_value, is_sensitive_item
 from src.config import files as config_files
+from src.config import lock as config_lock
+from src.config import paths as config_paths
 from src.config.booleans import parse_config_bool
 from src.config.reader import tolerant_config_parser
 from src.config.store import ConfigError, ConfigStore, format_value
-from src.recording import state
-from src.recording.process import _get_error_line
 from src.support import i18n, utils
+from src.support.errors import get_error_line
 
 
 def update_file(file_path: str, old_str: str, new_str: str, start_str: str | None = None) -> str | None:
     """把 file_path 中所有 old_str 替换为 new_str（start_str 非空时给命中行加该前缀，如 "#" 注释掉），。"""
     if old_str == new_str and start_str is None:
         return old_str
-    with state.file_update_lock:
+    with config_lock.file_update_lock:
         file_data: list[str] = []
         seen: set[str] = set()
         matched = False
         try:
-            with open(file_path, encoding=state.text_encoding, newline="") as f:
+            with open(file_path, encoding=config_paths.text_encoding, newline="") as f:
                 for text_line in f:
                     rewritten = config_files.rewrite_line_by_segment(text_line, old_str, new_str)
                     if rewritten is not None:
@@ -46,11 +47,11 @@ def update_file(file_path: str, old_str: str, new_str: str, start_str: str | Non
                     "错误信息: {type_name}: {e} 发生错误的行数: {get_error_line}",
                     type_name=type(e).__name__,
                     e=e,
-                    get_error_line=_get_error_line(e),
+                    get_error_line=get_error_line(e),
                 )
             )
-            if state.ini_URL_content:
-                _ = _atomic_write_text(file_path, state.ini_URL_content)
+            if config_files.ini_URL_content:
+                _ = _atomic_write_text(file_path, config_files.ini_URL_content)
                 return old_str
             return old_str
         if not file_data:
@@ -60,13 +61,13 @@ def update_file(file_path: str, old_str: str, new_str: str, start_str: str | Non
         joined = "".join(file_data)
         if not _atomic_write_text(file_path, joined):
             return old_str
-        state.ini_URL_content = joined
+        config_files.ini_URL_content = joined
         return new_str
 
 
 def _atomic_write_text(file_path: str, text: str) -> bool:
     """原子写文本：同目录临时文件写完后 os.replace 覆盖，读方只会看到旧/新完整内容之一。"""
-    ok = utils.atomic_write_text(file_path, text, encoding=state.text_encoding)
+    ok = utils.atomic_write_text(file_path, text, encoding=config_paths.text_encoding)
     if not ok:
         logger.warning(i18n.tr("原子写失败（已保留原文件）: {file_path}", file_path=file_path))
     return ok
@@ -76,11 +77,11 @@ def update_anchor_name(url: str, new_name: str) -> bool:
     """将 URL 配置文件中指定 URL 所在行的主播名字段更新为 new_name（行内无主播名字段时追加），。"""
     if not url or not new_name:
         return False
-    with state.file_update_lock:
-        if not os.path.exists(state.url_config_file):
+    with config_lock.file_update_lock:
+        if not os.path.exists(config_paths.url_config_file):
             return False
         try:
-            with open(state.url_config_file, encoding=state.text_encoding, newline="") as f:
+            with open(config_paths.url_config_file, encoding=config_paths.text_encoding, newline="") as f:
                 lines = f.readlines()
         except (RuntimeError, UnicodeDecodeError, OSError) as e:
             logger.error(i18n.tr("读取 URL 配置失败，跳过主播名更新: {e}", e=e))
@@ -97,10 +98,10 @@ def update_anchor_name(url: str, new_name: str) -> bool:
         if not changed:
             return False
         joined = "".join(out_lines)
-        if not _atomic_write_text(state.url_config_file, joined):
+        if not _atomic_write_text(config_paths.url_config_file, joined):
             logger.warning(i18n.tr("主播名写回 URL 配置失败（已忽略，下轮重试）"))
             return False
-        state.ini_URL_content = joined
+        config_files.ini_URL_content = joined
         return True
 
 
@@ -145,9 +146,9 @@ def append_room_line(url_config_file: str, url: str, quality: str = "", name: st
     except ValueError:
         return ROOM_INVALID
     target = web_config.normalize_url(url)
-    with state.file_update_lock:
+    with config_lock.file_update_lock:
         try:
-            with open(url_config_file, encoding=state.text_encoding, newline="") as f:
+            with open(url_config_file, encoding=config_paths.text_encoding, newline="") as f:
                 data = f.read()
         except FileNotFoundError:
             data = ""
@@ -164,15 +165,15 @@ def append_room_line(url_config_file: str, url: str, quality: str = "", name: st
         data += line + eol
         if not _atomic_write_text(url_config_file, data):
             return ROOM_WRITE_FAILED
-        state.ini_URL_content = data
+        config_files.ini_URL_content = data
         return ROOM_ADDED
 
 
 def delete_line(file_path: str, del_line: str, delete_all: bool = False) -> bool:
     """从 file_path 中删除与 del_line 完全相同的行，delete_all=True 时删除全部匹配行；。"""
-    with state.file_update_lock:
+    with config_lock.file_update_lock:
         try:
-            with open(file_path, encoding=state.text_encoding, newline="") as f:
+            with open(file_path, encoding=config_paths.text_encoding, newline="") as f:
                 lines = f.readlines()
         except (OSError, UnicodeDecodeError) as e:
             logger.error(i18n.tr("读取 URL 配置失败，跳过删除: {e}", e=e))
@@ -190,8 +191,8 @@ def delete_line(file_path: str, del_line: str, delete_all: bool = False) -> bool
         joined = "".join(out)
         if not _atomic_write_text(file_path, joined):
             return False
-        if file_path == state.url_config_file:
-            state.ini_URL_content = joined
+        if file_path == config_paths.url_config_file:
+            config_files.ini_URL_content = joined
         return True
 
 
@@ -202,7 +203,7 @@ def read_config_value(
     if store.has_option(section, option):
         return store.get(section, option)
     default_text = format_value(default_value) if isinstance(default_value, bool) else str(default_value)
-    with state.file_update_lock:
+    with config_lock.file_update_lock:
         if store.has_option(section, option):
             return store.get(section, option)
         try:
@@ -331,7 +332,7 @@ def backup_file(file_path: str, backup_dir_path: str, limit_counts: int = 6) -> 
         name = os.path.basename(file_path)
         if _backup_mask_secrets() and name in ("config.ini", "config.toml"):
             try:
-                with open(file_path, encoding=state.text_encoding, errors="replace") as src_f:
+                with open(file_path, encoding=config_paths.text_encoding, errors="replace") as src_f:
                     content = src_f.read()
                 redacted = _redact_toml_secrets(content) if name == "config.toml" else _redact_ini_secrets(content)
                 if not _atomic_write_text(backup_file_path, redacted):
@@ -380,15 +381,15 @@ def backup_file_start() -> None:
 
     while True:
         try:
-            if os.path.exists(state.config_file):
-                new_config_md5 = utils.check_md5(state.config_file)
-                if new_config_md5 != config_md5 and backup_file(state.config_file, state.backup_dir):
+            if os.path.exists(config_paths.config_file):
+                new_config_md5 = utils.check_md5(config_paths.config_file)
+                if new_config_md5 != config_md5 and backup_file(config_paths.config_file, config_paths.backup_dir):
                     config_md5 = new_config_md5
 
-            if os.path.exists(state.url_config_file):
-                new_url_config_md5 = utils.check_md5(state.url_config_file)
+            if os.path.exists(config_paths.url_config_file):
+                new_url_config_md5 = utils.check_md5(config_paths.url_config_file)
                 if new_url_config_md5 != url_config_md5:
-                    if backup_file(state.url_config_file, state.backup_dir):
+                    if backup_file(config_paths.url_config_file, config_paths.backup_dir):
                         url_config_md5 = new_url_config_md5
         except Exception as e:
             logger.error(i18n.tr("备份配置文件失败, 错误信息: {e}", e=e))

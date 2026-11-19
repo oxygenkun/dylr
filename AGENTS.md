@@ -2,14 +2,14 @@
 
 ## code style and dev environment
 - use modern python type hint (>=python3.14, prefering built-in type or keyword instead of types in typing module)
-- use `uv` to manage project and python dev tools
+- 项目与开发工具由 `uv` 管理；任何 python 运行都使用项目环境（`uv run --locked python ...`，按需加 `--extra dev` / `--extra build`），不直接调用系统解释器或手写 `.venv/bin/python`
 - 考虑函数、类的组织结构，保证代码整体布局有序
 - 测试应适配正式代码的设计，不要为测试增加兼容层或测试专用接口
 - 注释只解释代码难以表达的原因、约束和必要用法，保持简短；不复述代码，不记录修复流水账，不要求每个模块、函数都有说明，不设数量或密度下限。允许直接删除或改写重复、过时、错误的注释。Python 文档字符串遵循 PEP 257，统一使用 """..."""
 
 ## 项目结构
 
-[目录与文件职责参考](docs/agent-reference/project-structure.md)。`src/` 根层保留入口、包初始化与资源；运行时代码按职责放入子包：support 共用支撑、app 生命周期、config 配置、network 网络、recording 录制、streams 视频取流、danmaku 弹幕、monitors 账号监控、notifications 通知、runtime 外部程序与 JS 执行、api Web 后端。维护与构建工具统一在 `tool/`，前端静态资源在 `web/`；根目录 `config/` 是运行期数据，区别于源码包 `src/config/`。唯一入口为 `src.main:main`（`python -m src.main`），是否同时启动 Web 面板由 `[Web] web_enable` 决定；`src.web` 只是面板实现模块，不提供启动入口。
+[目录与文件职责参考](docs/agent-reference/project-structure.md)。`src/` 根层保留入口、包初始化与资源；运行时代码按职责放入子包：support 共用支撑、app 生命周期、config 配置、network 网络、recording 录制（含房间/账号信号源与选源流程）、platforms 平台协议、danmaku 弹幕业务、notifications 通知、runtime 外部程序与 JS 执行、api Web 后端。维护与构建工具统一在 `tool/`，前端静态资源在 `web/`；根目录 `config/` 是运行期数据，区别于源码包 `src/config/`。唯一入口为 `src.main:main`（`python -m src.main`），是否同时启动 Web 面板由 `[Web] web_enable` 决定；`src.web` 只是面板实现模块，不提供启动入口。
 
 README.md 面向使用与部署；[文档导航](docs/README.md) 统一路由开发指南、常见问题（Q & A）、架构专题与更新记录。实现说明按主题在 `docs/architecture/` 维护，不再维护根目录架构长文；目录清单只在目录参考维护，重复内容合并到对应专题，其余文档链接引用。`ARCHIVE/` 存放历史审查、提案、旧发布说明与不兼容的旧版本文档：默认不扫描、不全文检索、不作为事实源，仅在用户明确要求追溯历史时按精确路径读取单个文件。
 
@@ -125,7 +125,7 @@ uv run --locked --extra dev python tool/check_coverage.py
 - host 熔断 open→half-open 只放一个带租约探针，超时可重授，避免未上报轮次永久占住探针。计数增量维护，不在持锁热路径反复 sum(deque)。
 - start_record 先初始化 record_host，再在平台分派前 allow 预检；网络与录制信号量保持分工，录制槽必须在 Popen 前 acquire，启动及运行全部包在 try/finally 中释放。
 
-### 录制结果反馈约定（src/recording/session.py / src/streams/selection.py）
+### 录制结果反馈约定（src/recording/session.py / src/recording/pipeline/selection.py）
 
 ffmpeg 按退出码上报成功/失败，禁止轮末无条件成功。解析成功和直下成功也须反馈 host 样本；快速失败按实际 `-i` 地址标记退避，成功只清实际成功地址，白名单由 stream_select 维护，不扩大到斗鱼。
 

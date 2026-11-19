@@ -1,7 +1,7 @@
-# src/streams/stream.py 测试：分两部分 —— ① 纯工具/画质映射函数（bitrate_to_quality / code_to_zh /
+# src/recording/pipeline/stream.py 测试：分两部分 —— ① 纯工具/画质映射函数（bitrate_to_quality / code_to_zh /
 # is_downgrade / _pad_list / get_quality_index 及四张画质常量表一致性）；② 核心平台流地址解析
 # （抖音/虎牙/斗鱼/快手/YY/网易/TikTok/B站 的 get_*_stream_url，以及通用入口 get_stream_url）。
-# 测试策略：用 AsyncMock 桩掉 src.streams.stream.is_reachable（可用性网络探针），把「解析逻辑」
+# 测试策略：用 AsyncMock 桩掉 src.recording.pipeline.stream.is_reachable（可用性网络探针），把「解析逻辑」
 # 与「候选可达性探测」彻底隔离 —— 这样 m3u8 不可达降级、离线短路等分支可被确定性触发，而非依赖
 # 真实 CDN 响应。画质边界数字（LD≤600 / HD≤1000 / BD≤4000）取自码率上限表 QUALITY_MAPPING_BIT
 # （QUALITY_MAPPING 只有 OD=0…LD=5 的排序索引、不含码率，两者不可混引），用例既锁分段边界也防阈值回归。
@@ -10,8 +10,8 @@
 # 2026-09-20 补充（档位语义回归锁）：TestHuyaLegacyTierByRatioValue 锁「虎牙 exsphd 按数值而非
 # 出现顺序解释」；TestBilibiliQualityReadback 锁「qn 反向表一对多取更高档 + 表外 qn 不入白名单」；
 # TestKuaishouNumericQuality 锁「数字画质先过 QUALITY_MAPPING 解码再查码率表」；
-# B站用例另用 AsyncMock 桩 src.streams.stream.get_bilibili_stream_data（第二段网络入口）：patch 目标必须是
-# src.streams.stream 命名空间里的那份导入引用（src/streams/stream.py 顶部 from .spider import ...），改成 src.streams.spider.*
+# B站用例另用 AsyncMock 桩 src.recording.pipeline.stream.get_bilibili_stream_data（第二段网络入口）：patch 目标必须是
+# src.recording.pipeline.stream 命名空间里的那份导入引用（src/recording/pipeline/stream.py 顶部 from .spider import ...），改成 src.platforms.live.spider.*
 # 会让 get_bilibili_stream_url 仍打到真实现、用例静默走网络。
 
 from typing import TypedDict, cast
@@ -19,7 +19,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from src.streams.stream import (
+from src.recording.pipeline.stream import (
     BD_SUB_TIERS,
     QUALITY_CODE_TO_ZH,
     QUALITY_LEVEL,
@@ -264,11 +264,11 @@ class TestGetDouyinStreamUrl:
     @pytest.mark.asyncio
     async def test_offline_status_returns_not_live(self) -> None:
         # status != 2 → is_live=False，且离线分支必须短路、不得触发网络可用性校验。
-        from src.streams.stream import get_douyin_stream_url
+        from src.recording.pipeline.stream import get_douyin_stream_url
 
         json_data = {"anchor_name": "test_anchor", "status": 4}
         # 离线分支不应调用 is_reachable；mock 并断言未调用，防止回归。
-        with patch("src.streams.stream.is_reachable", new_callable=AsyncMock) as mock_status:
+        with patch("src.recording.pipeline.stream.is_reachable", new_callable=AsyncMock) as mock_status:
             result = await get_douyin_stream_url(json_data)
             # 边界覆盖：status 键缺失时，d.get("status", 4) 默认判为离线，同样短路。
             result_default = await get_douyin_stream_url({"anchor_name": "test_anchor"})
@@ -284,7 +284,7 @@ class TestGetDouyinStreamUrl:
     @pytest.mark.asyncio
     async def test_live_with_flv_and_m3u8(self) -> None:
         # status=2 + flv/m3u8 数据 → 正确选中画质并返回流地址。
-        from src.streams.stream import get_douyin_stream_url
+        from src.recording.pipeline.stream import get_douyin_stream_url
 
         json_data = {
             "anchor_name": "anchor_a",
@@ -295,7 +295,9 @@ class TestGetDouyinStreamUrl:
                 "hevc_flv_url": None,
             },
         }
-        with patch("src.streams.stream.is_reachable", new_callable=AsyncMock, return_value=True) as mock_status:
+        with patch(
+            "src.recording.pipeline.stream.is_reachable", new_callable=AsyncMock, return_value=True
+        ) as mock_status:
             result = await get_douyin_stream_url(json_data, video_quality="HD")
 
         assert result["is_live"] is True
@@ -315,7 +317,7 @@ class TestGetDouyinStreamUrl:
     @pytest.mark.asyncio
     async def test_live_only_flv_no_m3u8(self) -> None:
         # 仅有 FLV 无 m3u8 → 跳过可用性校验，不降级。
-        from src.streams.stream import get_douyin_stream_url
+        from src.recording.pipeline.stream import get_douyin_stream_url
 
         json_data = {
             "anchor_name": "anchor_b",
@@ -326,7 +328,9 @@ class TestGetDouyinStreamUrl:
                 "hevc_flv_url": None,
             },
         }
-        with patch("src.streams.stream.is_reachable", new_callable=AsyncMock, return_value=True) as mock_status:
+        with patch(
+            "src.recording.pipeline.stream.is_reachable", new_callable=AsyncMock, return_value=True
+        ) as mock_status:
             result = await get_douyin_stream_url(json_data, video_quality="OD")
 
         assert result["is_live"] is True
@@ -344,7 +348,7 @@ class TestGetDouyinStreamUrl:
     async def test_m3u8_unreachable_triggers_fallback(self) -> None:
         # m3u8 不可达（is_reachable=False）→ 触发降级到相邻画质；断言放宽到 (SD, HD)
         # 是因降级算法取「请求档之下最近的可用档」，锁定「确实发生了降级」而非具体落到哪一档。
-        from src.streams.stream import get_douyin_stream_url
+        from src.recording.pipeline.stream import get_douyin_stream_url
 
         json_data = {
             "anchor_name": "anchor_c",
@@ -358,7 +362,7 @@ class TestGetDouyinStreamUrl:
                 "hevc_flv_url": None,
             },
         }
-        with patch("src.streams.stream.is_reachable", new_callable=AsyncMock, return_value=False):
+        with patch("src.recording.pipeline.stream.is_reachable", new_callable=AsyncMock, return_value=False):
             result = await get_douyin_stream_url(json_data, video_quality="HD")
 
         assert result["is_live"] is True
@@ -370,7 +374,7 @@ class TestGetDouyinStreamUrl:
         # 2026-10-01 原画 hevc 房死锁回归锁：原画 + hevc_flv_url 时 flv_url 被替换为 h265，
         # 被替换的 h264 原画地址必须同步进 flv_url_list —— 选源层会剔除一切 codec=h265 候选，
         # 不保留则「HLS 采集关闭 / m3u8 缺席」的原画 hevc 房过滤后零可用候选、永不录制。
-        from src.streams.stream import get_douyin_stream_url
+        from src.recording.pipeline.stream import get_douyin_stream_url
 
         json_data = {
             "anchor_name": "hevc_anchor",
@@ -381,7 +385,7 @@ class TestGetDouyinStreamUrl:
                 "hevc_flv_url": "https://flv.example.com/a.flv?codec=h265",
             },
         }
-        with patch("src.streams.stream.is_reachable", new_callable=AsyncMock, return_value=True):
+        with patch("src.recording.pipeline.stream.is_reachable", new_callable=AsyncMock, return_value=True):
             result = await get_douyin_stream_url(json_data, video_quality="OD")
 
         assert result["is_live"] is True
@@ -394,7 +398,7 @@ class TestGetDouyinStreamUrl:
     async def test_hevc_fallback_list_survives_m3u8_probe_failure(self) -> None:
         # m3u8 探针失败触发相邻档降级：use_hevc_flv 时 flv_url 保持 h265、仅换 m3u8，
         # 替换发生前已捕获的 h264 原画备选不得丢失 —— 否则探针失败轮恰好退回死锁形态。
-        from src.streams.stream import get_douyin_stream_url
+        from src.recording.pipeline.stream import get_douyin_stream_url
 
         json_data = {
             "anchor_name": "hevc_anchor",
@@ -405,7 +409,7 @@ class TestGetDouyinStreamUrl:
                 "hevc_flv_url": "https://flv.example.com/a.flv?codec=h265",
             },
         }
-        with patch("src.streams.stream.is_reachable", new_callable=AsyncMock, return_value=False):
+        with patch("src.recording.pipeline.stream.is_reachable", new_callable=AsyncMock, return_value=False):
             result = await get_douyin_stream_url(json_data, video_quality="OD")
 
         assert result["flv_url"] == "https://flv.example.com/a.flv?codec=h265"
@@ -414,7 +418,7 @@ class TestGetDouyinStreamUrl:
     @pytest.mark.asyncio
     async def test_non_origin_quality_skips_hevc_substitution(self) -> None:
         # 对照组：非原画请求不触发 hevc 替换，flv_url 保持 h264；备选列表键恒存在但为空
-        from src.streams.stream import get_douyin_stream_url
+        from src.recording.pipeline.stream import get_douyin_stream_url
 
         json_data = {
             "anchor_name": "hevc_anchor",
@@ -425,7 +429,7 @@ class TestGetDouyinStreamUrl:
                 "hevc_flv_url": "https://flv.example.com/a.flv?codec=h265",
             },
         }
-        with patch("src.streams.stream.is_reachable", new_callable=AsyncMock, return_value=True):
+        with patch("src.recording.pipeline.stream.is_reachable", new_callable=AsyncMock, return_value=True):
             result = await get_douyin_stream_url(json_data, video_quality="HD")
 
         assert result["flv_url"] == "https://flv.example.com/hd.flv"
@@ -434,7 +438,7 @@ class TestGetDouyinStreamUrl:
     @pytest.mark.asyncio
     async def test_hevc_only_without_flv_pairs_has_empty_fallback(self) -> None:
         # flv_pull_url 为空（仅下发 hevc）：flv_url 直接取 hevc，无 h264 原件可保留，备选为空
-        from src.streams.stream import get_douyin_stream_url
+        from src.recording.pipeline.stream import get_douyin_stream_url
 
         json_data = {
             "anchor_name": "hevc_only",
@@ -445,7 +449,7 @@ class TestGetDouyinStreamUrl:
                 "hevc_flv_url": "https://flv.example.com/a.flv?codec=h265",
             },
         }
-        with patch("src.streams.stream.is_reachable", new_callable=AsyncMock, return_value=True):
+        with patch("src.recording.pipeline.stream.is_reachable", new_callable=AsyncMock, return_value=True):
             result = await get_douyin_stream_url(json_data, video_quality="OD")
 
         assert result["flv_url"] == "https://flv.example.com/a.flv?codec=h265"
@@ -454,7 +458,7 @@ class TestGetDouyinStreamUrl:
     @pytest.mark.asyncio
     async def test_hevc_equal_to_flv_entry_not_duplicated(self) -> None:
         # flv_pull_url 原画条目与 hevc 地址逐字相同（接口异常形态）：备选不得重复收同一条
-        from src.streams.stream import get_douyin_stream_url
+        from src.recording.pipeline.stream import get_douyin_stream_url
 
         json_data = {
             "anchor_name": "hevc_dup",
@@ -465,7 +469,7 @@ class TestGetDouyinStreamUrl:
                 "hevc_flv_url": "https://flv.example.com/a.flv?codec=h265",
             },
         }
-        with patch("src.streams.stream.is_reachable", new_callable=AsyncMock, return_value=True):
+        with patch("src.recording.pipeline.stream.is_reachable", new_callable=AsyncMock, return_value=True):
             result = await get_douyin_stream_url(json_data, video_quality="OD")
 
         assert result["flv_url"] == "https://flv.example.com/a.flv?codec=h265"
@@ -475,7 +479,7 @@ class TestGetDouyinStreamUrl:
     async def test_h265_marked_flv_entry_not_collected_as_fallback(self) -> None:
         # flv_pull_url 条目自带 codec=h265（约定外形态）：选源层对标记地址同样剔除，
         # 收进备选只会多一条告警、救不了选源 —— 备选必须保证是过滤后仍可用的候选
-        from src.streams.stream import get_douyin_stream_url
+        from src.recording.pipeline.stream import get_douyin_stream_url
 
         json_data = {
             "anchor_name": "hevc_marked",
@@ -486,7 +490,7 @@ class TestGetDouyinStreamUrl:
                 "hevc_flv_url": "https://flv.example.com/a.flv?codec=h265",
             },
         }
-        with patch("src.streams.stream.is_reachable", new_callable=AsyncMock, return_value=True):
+        with patch("src.recording.pipeline.stream.is_reachable", new_callable=AsyncMock, return_value=True):
             result = await get_douyin_stream_url(json_data, video_quality="OD")
 
         assert result["flv_url"] == "https://flv.example.com/a.flv?codec=h265"
@@ -541,7 +545,7 @@ class TestGetHuyaStreamUrl:
     async def test_enumerates_all_cdn_candidates_hs_first(self) -> None:
         # room 179966 实测：gameStreamInfoList 顺序为 [AL, X, HS]（AL 为 index0 且离线）。
         # 修复前固定取 index0=AL 导致 HLS 整轮不可达；修复后枚举全部候选、HS 排首位选中。
-        from src.streams.stream import get_huya_stream_url
+        from src.recording.pipeline.stream import get_huya_stream_url
 
         json_data = self._json(["AL", "TX", "HS"])
         result = cast("HuyaResult", await get_huya_stream_url(cast(dict[str, object], json_data)))
@@ -564,7 +568,7 @@ class TestGetHuyaStreamUrl:
     @pytest.mark.asyncio
     async def test_https_in_input_downgraded_to_http(self) -> None:
         # 房间页若返回 https 形式的 CDN URL，必须降为 http（https 实测 403）
-        from src.streams.stream import get_huya_stream_url
+        from src.recording.pipeline.stream import get_huya_stream_url
 
         json_data = {
             "data": [
@@ -593,7 +597,7 @@ class TestGetHuyaStreamUrl:
     async def test_empty_game_stream_info_list_returns_not_live(self) -> None:
         # gameStreamInfoList 为空（房间无 CDN 候选）→ 离线；
         # 验证空候选不抛错、契约返回 is_live=False。
-        from src.streams.stream import get_huya_stream_url
+        from src.recording.pipeline.stream import get_huya_stream_url
 
         json_data = {"data": [{"gameLiveInfo": {"nick": "anchor"}, "gameStreamInfoList": []}]}
         result = cast("HuyaResult", await get_huya_stream_url(cast(dict[str, object], json_data)))
@@ -605,7 +609,7 @@ class TestGetDouyuStreamUrl:
 
     @pytest.mark.asyncio
     async def test_offline_returns_not_live(self) -> None:
-        from src.streams.stream import get_douyu_stream_url
+        from src.recording.pipeline.stream import get_douyu_stream_url
 
         result = await get_douyu_stream_url({"anchor_name": "dy_off", "is_live": False})
         assert result["is_live"] is False
@@ -614,7 +618,7 @@ class TestGetDouyuStreamUrl:
     @pytest.mark.asyncio
     async def test_flv_url_carries_m3u8_candidate(self) -> None:
         # 同 token 的 .flv → .m3u8 改写：查询串原样保留，FLV/record_url 不受影响。
-        from src.streams.stream import get_douyu_stream_url
+        from src.recording.pipeline.stream import get_douyu_stream_url
 
         json_data = {"anchor_name": "dy_live", "is_live": True, "room_id": 100}
         flv_data = {
@@ -624,7 +628,9 @@ class TestGetDouyuStreamUrl:
                 "rate": 0,
             }
         }
-        with patch("src.streams.stream.get_douyu_stream_data", new_callable=AsyncMock, return_value=flv_data):
+        with patch(
+            "src.recording.pipeline.stream.get_douyu_stream_data", new_callable=AsyncMock, return_value=flv_data
+        ):
             result = await get_douyu_stream_url(json_data, video_quality="OD")
         assert result["is_live"] is True
         assert result["flv_url"] == "https://hw1a.douyucdn2.cn/live/100rPCLP.flv?wsAuth=abc&token=t"
@@ -634,22 +640,26 @@ class TestGetDouyuStreamUrl:
     @pytest.mark.asyncio
     async def test_flv_without_query_keeps_clean_m3u8(self) -> None:
         # 无查询串的 FLV 改写后不得残留悬空 "?"
-        from src.streams.stream import get_douyu_stream_url
+        from src.recording.pipeline.stream import get_douyu_stream_url
 
         json_data = {"anchor_name": "dy_live", "is_live": True, "room_id": 999}
         flv_data = {"data": {"rtmp_url": "https://x.douyucdn2.cn/live", "rtmp_live": "999x.flv", "rate": 0}}
-        with patch("src.streams.stream.get_douyu_stream_data", new_callable=AsyncMock, return_value=flv_data):
+        with patch(
+            "src.recording.pipeline.stream.get_douyu_stream_data", new_callable=AsyncMock, return_value=flv_data
+        ):
             result = await get_douyu_stream_url(json_data)
         assert result["m3u8_url"] == "https://x.douyucdn2.cn/live/999x.m3u8"
 
     @pytest.mark.asyncio
     async def test_non_flv_rtmp_live_has_no_m3u8(self) -> None:
         # rtmp_live 非 .flv 后缀（如 h265 流）不改写，避免伪造不可用的 m3u8 候选
-        from src.streams.stream import get_douyu_stream_url
+        from src.recording.pipeline.stream import get_douyu_stream_url
 
         json_data = {"anchor_name": "dy_h265", "is_live": True, "room_id": 888}
         flv_data = {"data": {"rtmp_url": "https://x.douyucdn2.cn/live", "rtmp_live": "888x.xsls?wsAuth=abc", "rate": 0}}
-        with patch("src.streams.stream.get_douyu_stream_data", new_callable=AsyncMock, return_value=flv_data):
+        with patch(
+            "src.recording.pipeline.stream.get_douyu_stream_data", new_callable=AsyncMock, return_value=flv_data
+        ):
             result = await get_douyu_stream_url(json_data)
         assert result["flv_url"] == "https://x.douyucdn2.cn/live/888x.xsls?wsAuth=abc"
         assert "m3u8_url" not in result
@@ -657,11 +667,13 @@ class TestGetDouyuStreamUrl:
     @pytest.mark.asyncio
     async def test_empty_rtmp_live_returns_no_urls(self) -> None:
         # rtmp_live 为空（风控/边界）：is_live=True 但无流地址，交由 select_source_url 告警
-        from src.streams.stream import get_douyu_stream_url
+        from src.recording.pipeline.stream import get_douyu_stream_url
 
         json_data = {"anchor_name": "dy_edge", "is_live": True, "room_id": 777}
         flv_data = {"data": {"rtmp_url": "", "rtmp_live": "", "rate": 0}}
-        with patch("src.streams.stream.get_douyu_stream_data", new_callable=AsyncMock, return_value=flv_data):
+        with patch(
+            "src.recording.pipeline.stream.get_douyu_stream_data", new_callable=AsyncMock, return_value=flv_data
+        ):
             result = await get_douyu_stream_url(json_data)
         assert result["is_live"] is True
         assert "flv_url" not in result and "m3u8_url" not in result
@@ -672,14 +684,14 @@ class TestGetTiktokStreamUrl:
 
     @pytest.mark.asyncio
     async def test_none_json_returns_not_live(self) -> None:
-        from src.streams.stream import get_tiktok_stream_url
+        from src.recording.pipeline.stream import get_tiktok_stream_url
 
         result = await get_tiktok_stream_url(None)
         assert result["is_live"] is False
 
     @pytest.mark.asyncio
     async def test_offline_user_status(self) -> None:
-        from src.streams.stream import get_tiktok_stream_url
+        from src.recording.pipeline.stream import get_tiktok_stream_url
 
         json_data = {
             "LiveRoom": {
@@ -702,7 +714,7 @@ class TestGetTiktokStreamUrl:
     async def test_live_with_stream_data(self) -> None:
         import json
 
-        from src.streams.stream import get_tiktok_stream_url
+        from src.recording.pipeline.stream import get_tiktok_stream_url
 
         stream_data = {
             "data": {
@@ -727,7 +739,7 @@ class TestGetTiktokStreamUrl:
                 },
             }
         }
-        with patch("src.streams.stream.is_reachable", new_callable=AsyncMock, return_value=True):
+        with patch("src.recording.pipeline.stream.is_reachable", new_callable=AsyncMock, return_value=True):
             result = await get_tiktok_stream_url(cast(dict[str, object], json_data), video_quality="OD")
 
         assert result["is_live"] is True
@@ -768,7 +780,7 @@ class TestGetTiktokStreamUrl:
         #    `if flv_url_list else {"url": ""}` 的兜底进不去 → flv_dict 为 None →
         #    .get("url") 抛 AttributeError，被 trace_error_decorator 伪装成「未开播」。
         # 现在索引前过滤 None 与空地址项，两条路径都走 {"url": ""} 兜底。
-        from src.streams.stream import get_tiktok_stream_url
+        from src.recording.pipeline.stream import get_tiktok_stream_url
 
         stream_data: dict[str, object] = {
             "data": {
@@ -778,7 +790,9 @@ class TestGetTiktokStreamUrl:
                 }
             }
         }
-        with patch("src.streams.stream.is_reachable", new_callable=AsyncMock, return_value=True) as mock_status:
+        with patch(
+            "src.recording.pipeline.stream.is_reachable", new_callable=AsyncMock, return_value=True
+        ) as mock_status:
             result = await get_tiktok_stream_url(cast(dict[str, object], self._json(stream_data)), video_quality="OD")
         # 修复前这里得到的是装饰器的 {"is_live": False} 兜底（AttributeError 被吞）
         assert result["is_live"] is True
@@ -832,7 +846,7 @@ class TestHuyaLegacyTierByRatioValue:
         # 原实现把 labels=["UHD","HD","SD","LD"] 与 reversed(findall) 做**位置式** zip：
         # 同一串 exsphd 换个顺序就得到完全不同的档位标签（请求超清实拉蓝光8M），
         # 且 actual_quality 被回写成请求值 → is_downgrade 恒 False、日志与面板双盲。
-        from src.streams.stream import get_huya_stream_url
+        from src.recording.pipeline.stream import get_huya_stream_url
 
         result = await get_huya_stream_url(cast(dict[str, object], self._json(exsphd)), video_quality="UHD")
         assert str(result["flv_url"]).endswith("&ratio=2000")
@@ -844,7 +858,7 @@ class TestHuyaLegacyTierByRatioValue:
     async def test_legacy_no_interpretable_ratio_falls_back_to_origin(self) -> None:
         # exsphd 只有 264_0（房间仅原画）：按 BD 分支口径不附加 ratio、回采 OD 并告警，
         # 而不是把 0 当成「UHD 的 ratio」拼进 URL
-        from src.streams.stream import get_huya_stream_url
+        from src.recording.pipeline.stream import get_huya_stream_url
 
         result = await get_huya_stream_url(cast(dict[str, object], self._json("264_0")), video_quality="UHD")
         assert "ratio=" not in str(result["flv_url"])
@@ -854,9 +868,9 @@ class TestHuyaLegacyTierByRatioValue:
     async def test_unregistered_ratio_is_named_by_value_and_warns(self) -> None:
         # MID-14：exsphd 携带表外 ratio（12000）时，降级档位名按数值就近取 BD8，
         # 不得回落到**请求档**（那是把降级伪装成按请求录）；且必须告警。
-        from src.streams.stream import get_huya_stream_url
+        from src.recording.pipeline.stream import get_huya_stream_url
 
-        with patch("src.streams.stream.logger.warning") as warn:
+        with patch("src.recording.pipeline.stream.logger.warning") as warn:
             result = await get_huya_stream_url(
                 cast(dict[str, object], self._json("264_0 264_12000 264_500", bit_rate=20000)),
                 video_quality="BD20",
@@ -871,7 +885,7 @@ class TestHuyaLegacyTierByRatioValue:
     async def test_nearest_code_prefers_lower_tier_on_tie(self) -> None:
         # 表外值就近取档：6000 与 4000/8000 等距，取**更低画质**（BD4）——
         # 宁可多打一条降级告警，也不把更低的实际档位伪装成高档
-        from src.streams.stream import huya_code_for_ratio
+        from src.recording.pipeline.stream import huya_code_for_ratio
 
         assert huya_code_for_ratio(6000) == "BD4"
         assert huya_code_for_ratio(12000) == "BD8"
@@ -884,7 +898,7 @@ class TestBilibiliQualityReadback:
 
     @staticmethod
     async def _resolve(current_qn: int, accept_qn: list[int], video_quality: str) -> dict[str, object]:
-        from src.streams.stream import get_bilibili_stream_url
+        from src.recording.pipeline.stream import get_bilibili_stream_url
 
         json_data = {
             "anchor_name": "bili",
@@ -893,7 +907,7 @@ class TestBilibiliQualityReadback:
             "room_url": "https://live.bilibili.com/1",
         }
         play = {"current_qn": current_qn, "accept_qn": accept_qn, "url": "https://bilivideo/x.m3u8"}
-        with patch("src.streams.stream.get_bilibili_stream_data", new_callable=AsyncMock, return_value=play):
+        with patch("src.recording.pipeline.stream.get_bilibili_stream_data", new_callable=AsyncMock, return_value=play):
             return await get_bilibili_stream_url(cast(dict[str, object], json_data), video_quality=video_quality)
 
     @pytest.mark.asyncio
@@ -927,7 +941,7 @@ class TestKuaishouNumericQuality:
 
     @pytest.mark.asyncio
     async def test_numeric_index_decoded_through_quality_mapping(self) -> None:
-        from src.streams.stream import get_kuaishou_stream_url
+        from src.recording.pipeline.stream import get_kuaishou_stream_url
 
         json_data = {
             "type": 2,
@@ -950,7 +964,7 @@ class TestKuaishouNumericQuality:
     @pytest.mark.asyncio
     async def test_named_quality_unchanged(self) -> None:
         # 对照：中文名入参（录制链实际形态）行为不变
-        from src.streams.stream import get_kuaishou_stream_url
+        from src.recording.pipeline.stream import get_kuaishou_stream_url
 
         json_data = {
             "type": 2,
@@ -973,7 +987,7 @@ class TestGetKuaishouStreamUrl:
     async def test_not_live(self) -> None:
         # type=0 且 is_live=False → 离线；
         # 锁住 type 路由与离线契约。
-        from src.streams.stream import get_kuaishou_stream_url
+        from src.recording.pipeline.stream import get_kuaishou_stream_url
 
         json_data = {"type": 0, "is_live": False, "anchor_name": "ks_anchor"}
         result = await get_kuaishou_stream_url(json_data)
@@ -983,7 +997,7 @@ class TestGetKuaishouStreamUrl:
     async def test_live_with_bitrate(self) -> None:
         # 在线且含 flv 码率候选 → 选中画质；
         # 验证按 video_quality 匹配清晰度。
-        from src.streams.stream import get_kuaishou_stream_url
+        from src.recording.pipeline.stream import get_kuaishou_stream_url
 
         json_data = {
             "type": 0,
@@ -1002,7 +1016,7 @@ class TestGetKuaishouStreamUrl:
 
     @pytest.mark.asyncio
     async def test_type1_not_live_returns_directly(self) -> None:
-        from src.streams.stream import get_kuaishou_stream_url
+        from src.recording.pipeline.stream import get_kuaishou_stream_url
 
         json_data = {"type": 1, "is_live": False, "anchor_name": "ks_offline"}
         result = await get_kuaishou_stream_url(json_data)
@@ -1014,7 +1028,7 @@ class TestGetYyStreamUrl:
 
     @pytest.mark.asyncio
     async def test_no_avp_info(self) -> None:
-        from src.streams.stream import get_yy_stream_url
+        from src.recording.pipeline.stream import get_yy_stream_url
 
         json_data = {"anchor_name": "yy_anchor"}
         result = await get_yy_stream_url(cast(dict[str, object], json_data))
@@ -1022,7 +1036,7 @@ class TestGetYyStreamUrl:
 
     @pytest.mark.asyncio
     async def test_live_with_cdn(self) -> None:
-        from src.streams.stream import get_yy_stream_url
+        from src.recording.pipeline.stream import get_yy_stream_url
 
         json_data = {
             "anchor_name": "yy_live",
@@ -1040,7 +1054,7 @@ class TestGetNeteaseStreamUrl:
 
     @pytest.mark.asyncio
     async def test_not_live_returns_directly(self) -> None:
-        from src.streams.stream import get_netease_stream_url
+        from src.recording.pipeline.stream import get_netease_stream_url
 
         json_data = {"is_live": False, "anchor_name": "netease_off"}
         result = await get_netease_stream_url(json_data)
@@ -1050,7 +1064,7 @@ class TestGetNeteaseStreamUrl:
 
     @pytest.mark.asyncio
     async def test_live_with_stream_list(self) -> None:
-        from src.streams.stream import get_netease_stream_url
+        from src.recording.pipeline.stream import get_netease_stream_url
 
         json_data = {
             "is_live": True,
@@ -1080,7 +1094,7 @@ class TestGetStreamUrl:
 
     @pytest.mark.asyncio
     async def test_not_live_returns_directly(self) -> None:
-        from src.streams.stream import get_stream_url
+        from src.recording.pipeline.stream import get_stream_url
 
         json_data = {"is_live": False, "anchor_name": "test"}
         result = await get_stream_url(json_data)
@@ -1090,7 +1104,7 @@ class TestGetStreamUrl:
 
     @pytest.mark.asyncio
     async def test_empty_play_url_list(self) -> None:
-        from src.streams.stream import get_stream_url
+        from src.recording.pipeline.stream import get_stream_url
 
         json_data = {"is_live": True, "anchor_name": "test", "play_url_list": []}
         result = await get_stream_url(json_data)
@@ -1100,7 +1114,7 @@ class TestGetStreamUrl:
 
     @pytest.mark.asyncio
     async def test_m3u8_type(self) -> None:
-        from src.streams.stream import get_stream_url
+        from src.recording.pipeline.stream import get_stream_url
 
         json_data = {
             "is_live": True,
@@ -1131,7 +1145,7 @@ class TestGetStreamUrl:
         # MID-20：play_url[key] 的 KeyError 会穿透到 main.py 的通用 except 并
         # record_error(host) 计入按 host 的熔断样本（AGENTS 2026-09-19：与其它平台
         # 「安静重试一轮」不等价，严重时自动注释用户房间地址）。缺键必须返回 ""。
-        from src.streams.stream import get_stream_url
+        from src.recording.pipeline.stream import get_stream_url
 
         json_data = {
             "is_live": True,
@@ -1147,7 +1161,7 @@ class TestGetStreamUrl:
     @pytest.mark.asyncio
     async def test_generic_url_key_probed_in_order(self) -> None:
         # 未指定 extra_key 时的取值顺序 url → play_url → m3u8_url → flv_url（MID-20）
-        from src.streams.stream import get_stream_url
+        from src.recording.pipeline.stream import get_stream_url
 
         json_data = {
             "is_live": True,
@@ -1171,7 +1185,7 @@ class TestGetStreamUrl:
         # except 并 record_error(host) 计入按 host 的熔断样本——AGENTS 2026-09-19 条目
         # 明确指出这与其他平台「异常只安静重试一轮」不等价，严重时会自动注释用户房间地址。
         # 输入形态：平台 JSON 把 play_url_list 下发成 dict（劫持/改版均可能）。
-        from src.streams.stream import get_stream_url
+        from src.recording.pipeline.stream import get_stream_url
 
         json_data = {"is_live": True, "anchor_name": "generic", "play_url_list": {"url": "https://x/a.m3u8"}}
         result = await get_stream_url(json_data)
@@ -1179,7 +1193,7 @@ class TestGetStreamUrl:
 
     @pytest.mark.asyncio
     async def test_flv_type(self) -> None:
-        from src.streams.stream import get_stream_url
+        from src.recording.pipeline.stream import get_stream_url
 
         json_data = {
             "is_live": True,
@@ -1196,7 +1210,7 @@ class TestGetStreamUrl:
 
     @pytest.mark.asyncio
     async def test_all_type(self) -> None:
-        from src.streams.stream import get_stream_url
+        from src.recording.pipeline.stream import get_stream_url
 
         json_data = {
             "is_live": True,

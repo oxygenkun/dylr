@@ -10,6 +10,25 @@
 
 ## 更新日志
 
+### 2026-11-19 — 平台适配与录制业务分层
+
+- 平台协议集中到 `platforms/live`、`platforms/account` 和 `platforms/danmaku`；录制选源与房间/账号信号源分别归 `recording/pipeline` 和 `recording/sources`，弹幕服务、计划和会话与平台协议分离。
+- 共享状态归属与声明式设置加载一并提交；调用方、回归用例和架构文档同步。测试夹具按 Python 3.14 的注解机制读取字段名，弹幕关闭用例等待协程明确启动。
+- 验证：完整 pytest **3099 passed / 10 skipped**，无 warnings summary；总覆盖率 **82.66%**，91 个非豁免模块均达到覆盖率门槛；全库 Ruff lint、格式和提交差异检查通过。
+- 未做平台真机录制和完整打包验证。
+
+### 2026-11-06 — 设置声明驱动自动加载
+
+- 录制、推送、账号、Cookie 与账号监控设置在 `config/settings.py` 中统一声明类型、TOML 键和默认值，由加载器复用配置读写与兜底规则自动读取；引擎只负责调用加载器和应用调度、语言、TLS 与监控服务。
+- 热加载以声明默认值回退，保留配置原文、数值边界、格式及旧 HTTPS 键迁移；配置测试改为驱动真实加载器，移除从引擎截取赋值表达式的测试。
+- 无提交需求，未运行 pytest、覆盖率与真机录制。
+
+### 2026-11-06 — 共享状态按职责合并迁移
+
+- 删除五个 `recording/state_*` 模块与按字段猜归属的测试辅助层；录制运行态和对应同步锁合并到 `recording/state.py`，设置快照迁到 `config/settings.py`，路径与配置写锁直接引用配置模块。
+- URL 文件恢复快照归配置读写层，抖音限流锁/时间戳归选源模块，颜色输出对象归控制台模块；CLI、状态接口和 Web 探活共用应用版本读取，保留各接口原有版本格式。
+- 调用方、回归用例及架构/目录文档同步迁移；无提交需求，未运行 pytest、覆盖率、打包或平台真机验证。
+
 ### 2026-11-06 — 项目更名为 dylr
 
 - `pyproject.toml` 项目名改为 `dylr`；作者、主页、仓库、Issue、Changelog 与 Sponsor 改指 `oxygenkun/dylr`。README、Dockerfile、compose、部署文档与 Codecov slug 同步更新；上游 `ihmily/DouyinLiveRecorder` 署名保留。

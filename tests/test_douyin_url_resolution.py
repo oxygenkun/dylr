@@ -15,8 +15,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from src.streams import room, spider
-from src.streams.room import UnsupportedUrlError, extract_sec_user_id
+from src.platforms.live import room, spider
+from src.platforms.live.room import UnsupportedUrlError, extract_sec_user_id
 
 
 @pytest.fixture(autouse=True)
@@ -69,9 +69,9 @@ class _FakeClient:
 
 
 def _patch_client(handler: Any) -> tuple[Any, Any]:
-    # 把 src.streams.room 中的 httpx.AsyncClient 替换为返回 _FakeClient 的工厂。
+    # 把 src.platforms.live.room 中的 httpx.AsyncClient 替换为返回 _FakeClient 的工厂。
     client = _FakeClient(handler)
-    return client, patch("src.streams.room.httpx.AsyncClient", lambda **_kwargs: client)
+    return client, patch("src.platforms.live.room.httpx.AsyncClient", lambda **_kwargs: client)
 
 
 # ---------------------------------------------------------------------------
@@ -120,7 +120,7 @@ class TestGetUniqueId:
         client, client_patch = _patch_client(handler)
         with (
             client_patch,
-            patch("src.streams.room.get_ttwid", new_callable=AsyncMock, return_value="ttwid=fake"),
+            patch("src.platforms.live.room.get_ttwid", new_callable=AsyncMock, return_value="ttwid=fake"),
         ):
             result = await room.get_unique_id(f"https://www.douyin.com/user/{SEC_UID}")
 
@@ -140,7 +140,7 @@ class TestGetUniqueId:
         client, client_patch = _patch_client(handler)
         with (
             client_patch,
-            patch("src.streams.room.get_ttwid", new_callable=AsyncMock, return_value="ttwid=fake"),
+            patch("src.platforms.live.room.get_ttwid", new_callable=AsyncMock, return_value="ttwid=fake"),
         ):
             _ = await room.get_unique_id(f"https://www.douyin.com/user/{SEC_UID}")
 
@@ -160,7 +160,7 @@ class TestGetUniqueId:
         _client, client_patch = _patch_client(handler)
         with (
             client_patch,
-            patch("src.streams.room.get_ttwid", new_callable=AsyncMock, return_value="ttwid=fake"),
+            patch("src.platforms.live.room.get_ttwid", new_callable=AsyncMock, return_value="ttwid=fake"),
         ):
             result = await room.get_unique_id(f"https://www.douyin.com/user/{SEC_UID}")
 
@@ -180,7 +180,7 @@ class TestGetUniqueId:
         _client, client_patch = _patch_client(handler)
         with (
             client_patch,
-            patch("src.streams.room.get_ttwid", new_callable=AsyncMock, return_value="ttwid=fake"),
+            patch("src.platforms.live.room.get_ttwid", new_callable=AsyncMock, return_value="ttwid=fake"),
         ):
             result = await room.get_unique_id(f"https://www.douyin.com/user/{SEC_UID}")
 
@@ -200,7 +200,7 @@ class TestGetUniqueId:
         _client, client_patch = _patch_client(handler)
         with (
             client_patch,
-            patch("src.streams.room.get_ttwid", new_callable=AsyncMock, return_value="ttwid=fake"),
+            patch("src.platforms.live.room.get_ttwid", new_callable=AsyncMock, return_value="ttwid=fake"),
         ):
             with pytest.raises(RuntimeError, match="Could not resolve unique_id"):
                 _ = await room.get_unique_id(f"https://www.douyin.com/user/{SEC_UID}")
@@ -215,7 +215,7 @@ class TestGetUniqueId:
         _client, client_patch = _patch_client(handler)
         with (
             client_patch,
-            patch("src.streams.room.get_ttwid", new_callable=AsyncMock, return_value="ttwid=fake"),
+            patch("src.platforms.live.room.get_ttwid", new_callable=AsyncMock, return_value="ttwid=fake"),
         ):
             with pytest.raises(UnsupportedUrlError):
                 _ = await room.get_unique_id("https://v.douyin.com/iQFeBnt/")
@@ -233,7 +233,7 @@ class TestGetUniqueId:
         _client, client_patch = _patch_client(handler)
         with (
             client_patch,
-            patch("src.streams.room.get_ttwid", new_callable=AsyncMock, return_value="ttwid=fake"),
+            patch("src.platforms.live.room.get_ttwid", new_callable=AsyncMock, return_value="ttwid=fake"),
         ):
             _ = await room.get_unique_id(f"https://www.douyin.com/user/{SEC_UID}")
 
@@ -253,7 +253,7 @@ class TestGetUniqueId:
         client, client_patch = _patch_client(handler)
         with (
             client_patch,
-            patch("src.streams.room.get_ttwid", new_callable=AsyncMock, return_value="ttwid=fake"),
+            patch("src.platforms.live.room.get_ttwid", new_callable=AsyncMock, return_value="ttwid=fake"),
         ):
             first = await room.get_unique_id(f"https://www.douyin.com/user/{SEC_UID}")
             second = await room.get_unique_id(f"https://www.douyin.com/user/{SEC_UID}")
@@ -325,7 +325,7 @@ class TestGetDouyinWebStreamData:
         with (
             patch("src.network.http.request", mock_req),
             # HTML 兜底路径应完全不被触发
-            patch("src.streams.spider._extract_room_data_from_html", return_value=None) as mock_html,
+            patch("src.platforms.live.spider._extract_room_data_from_html", return_value=None) as mock_html,
         ):
             result = await spider.get_douyin_web_stream_data(
                 "https://live.douyin.com/745964462470", cookies="ttwid=fake"
@@ -357,7 +357,7 @@ class TestGetDouyinAppStreamData:
 
         with (
             patch("src.network.http.request", mock_req),
-            patch("src.streams.spider.get_sec_user_id", side_effect=fake_sec_user_id),
+            patch("src.platforms.live.spider.get_sec_user_id", side_effect=fake_sec_user_id),
         ):
             result = await spider.get_douyin_app_stream_data("https://v.douyin.com/iQFeBnt/", cookies="ttwid=fake")
         assert result.get("anchor_name") == "app直播间主播"
@@ -371,10 +371,10 @@ class TestGetDouyinAppStreamData:
             raise UnsupportedUrlError("no reflow")
 
         with (
-            patch("src.streams.spider.get_sec_user_id", side_effect=fake_sec_user_id) as mock_sec,
-            patch("src.streams.spider.get_unique_id", new_callable=AsyncMock, return_value="47884081925"),
+            patch("src.platforms.live.spider.get_sec_user_id", side_effect=fake_sec_user_id) as mock_sec,
+            patch("src.platforms.live.spider.get_unique_id", new_callable=AsyncMock, return_value="47884081925"),
             patch(
-                "src.streams.spider.get_douyin_web_stream_data", new_callable=AsyncMock, return_value=room_data
+                "src.platforms.live.spider.get_douyin_web_stream_data", new_callable=AsyncMock, return_value=room_data
             ) as mock_web,
         ):
             result = await spider.get_douyin_app_stream_data("https://v.douyin.com/CeiU5cbX", cookies="ttwid=fake")
@@ -394,10 +394,10 @@ class TestGetDouyinAppStreamData:
         room_data = {"anchor_name": "用户页主播", "status": 4}
 
         with (
-            patch("src.streams.spider.get_sec_user_id", new_callable=AsyncMock) as mock_sec,
-            patch("src.streams.spider.get_unique_id", new_callable=AsyncMock, return_value="47884081925"),
+            patch("src.platforms.live.spider.get_sec_user_id", new_callable=AsyncMock) as mock_sec,
+            patch("src.platforms.live.spider.get_unique_id", new_callable=AsyncMock, return_value="47884081925"),
             patch(
-                "src.streams.spider.get_douyin_web_stream_data", new_callable=AsyncMock, return_value=room_data
+                "src.platforms.live.spider.get_douyin_web_stream_data", new_callable=AsyncMock, return_value=room_data
             ) as mock_web,
         ):
             result = await spider.get_douyin_app_stream_data(

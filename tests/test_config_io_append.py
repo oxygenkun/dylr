@@ -6,9 +6,9 @@ from pathlib import Path
 
 import pytest
 
+from src.config import files as config_files
 from src.config import io as config_io
 from src.network import targets
-from src.recording import state
 
 
 @pytest.fixture(autouse=True)
@@ -30,7 +30,7 @@ def test_add_to_new_file_writes_bom_and_line(tmp_path: Path) -> None:
     raw = path.read_bytes()
     assert raw.startswith(b"\xef\xbb\xbf")
     assert _read(path) == "https://live.douyin.com/123,主播: 测试主播\n"
-    assert state.ini_URL_content == _read(path)
+    assert config_files.ini_URL_content == _read(path)
 
 
 # 已启用的重复地址：返回 exists 且文件字节完全不变（不刷新 mtime）。

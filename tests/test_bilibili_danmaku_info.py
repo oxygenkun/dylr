@@ -11,8 +11,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from src.streams import spider
-from src.streams.selection import get_record_headers
+from src.platforms.live import spider
+from src.recording.pipeline.selection import get_record_headers
 
 # 真实 B站 wbi key 各 32 hex 字符（img_key + sub_key 共 64，混排表索引到 63）
 _IMG_KEY = "abcdefghijklmnopqrstuvwxyz012345"
@@ -70,7 +70,7 @@ def test_get_bilibili_danmaku_info_happy_path() -> None:
     # 冻结 time 为 1700000000：w_rid 签名依赖 wts 时间戳，固定值使签名可复现、断言稳定。
     with (
         patch("src.network.http.request", new_callable=AsyncMock, side_effect=fake_req),
-        patch("src.streams.spider.time") as t,
+        patch("src.platforms.live.spider.time") as t,
     ):
         t.time.return_value = 1700000000
         # 预期 w_rid（与函数内用同一冻结时间签名，验证签名路径可复现）
@@ -129,8 +129,8 @@ def test_get_bilibili_danmaku_info_spi_empty_uses_fallback_buvid() -> None:
     # 必须用 awaitable 桩」钉成可读契约。
     with (
         patch("src.network.http.request", new_callable=AsyncMock, side_effect=fake_req),
-        patch("src.streams.spider.fetch_cookies", new_callable=AsyncMock, return_value={}) as home_mock,
-        patch("src.streams.spider.time") as t,
+        patch("src.platforms.live.spider.fetch_cookies", new_callable=AsyncMock, return_value={}) as home_mock,
+        patch("src.platforms.live.spider.time") as t,
     ):
         t.time.return_value = 1700000000
         result = asyncio.run(spider.get_bilibili_danmaku_info("https://live.bilibili.com/462"))
@@ -166,7 +166,7 @@ def test_get_bilibili_danmaku_info_empty_danmu_returns_none() -> None:
 
     with (
         patch("src.network.http.request", new_callable=AsyncMock, side_effect=fake_req),
-        patch("src.streams.spider.time") as t,
+        patch("src.platforms.live.spider.time") as t,
     ):
         t.time.return_value = 1700000000
         result = asyncio.run(spider.get_bilibili_danmaku_info("https://live.bilibili.com/462"))
@@ -206,7 +206,7 @@ def test_bili_buvid_cached_across_calls() -> None:
     # 两次调用不同房间（462 / 3336696）：验证 buvid 进程内缓存使第二次不再请求 spi 端点。
     with (
         patch("src.network.http.request", new_callable=AsyncMock, side_effect=fake_req),
-        patch("src.streams.spider.time") as t,
+        patch("src.platforms.live.spider.time") as t,
     ):
         t.time.return_value = 1700000000
         r1 = asyncio.run(spider.get_bilibili_danmaku_info("https://live.bilibili.com/462"))
@@ -249,8 +249,8 @@ def test_bili_buvid_fallback_cached_across_calls() -> None:
     # 两次调用同房间：spi 空触发 uuid 兜底，兜底值同样缓存，第二次 0 次 spi 请求。
     with (
         patch("src.network.http.request", new_callable=AsyncMock, side_effect=fake_req),
-        patch("src.streams.spider.fetch_cookies", new_callable=AsyncMock, return_value={}),
-        patch("src.streams.spider.time") as t,
+        patch("src.platforms.live.spider.fetch_cookies", new_callable=AsyncMock, return_value={}),
+        patch("src.platforms.live.spider.time") as t,
     ):
         t.time.return_value = 1700000000
         r1 = asyncio.run(spider.get_bilibili_danmaku_info("https://live.bilibili.com/462"))
@@ -280,7 +280,7 @@ class _FakeWs:
 def _join_body(args: dict) -> dict[str, object]:
     import json as _json
 
-    from src.danmaku.platforms.bilibili import BilibiliDanmaku
+    from src.platforms.danmaku.bilibili import BilibiliDanmaku
 
     client = BilibiliDanmaku(on_message=lambda m: None, on_close=lambda r: None, on_ready=lambda: None)
     client._args = args
@@ -346,7 +346,7 @@ def test_buvid_prefers_cookie_over_spi() -> None:
     cookie = "SESSDATA=x; buvid3=REAL-BUVID3-123; other=1"
     with (
         patch("src.network.http.request", new_callable=AsyncMock, side_effect=fake_req),
-        patch("src.streams.spider.time") as t,
+        patch("src.platforms.live.spider.time") as t,
     ):
         t.time.return_value = 1700000000
         result = asyncio.run(spider.get_bilibili_danmaku_info("https://live.bilibili.com/462", cookies=cookie))
@@ -383,7 +383,7 @@ class _FakeAuthWs:
 def _decode_auth_reply(payload: bytes) -> tuple[Any, Any]:
     import struct
 
-    from src.danmaku.platforms.bilibili import BilibiliDanmaku
+    from src.platforms.danmaku.bilibili import BilibiliDanmaku
 
     client = BilibiliDanmaku(on_message=lambda m: None, on_close=lambda r: None, on_ready=lambda: None)
     ws = _FakeAuthWs()
@@ -412,7 +412,7 @@ def test_auth_reply_ok_keeps_connection() -> None:
 def test_auth_reply_failure_closes_connection() -> None:
     # code!=0 软拒绝：此前连接保持却不推弹幕且无任何感知；修复后主动断开并带原因退出，同时使
     # spider 侧 buvid 缓存失效（兜底 UUID 被拒后不可复用，下一轮重新获取）。
-    with patch("src.streams.spider.invalidate_bili_buvid_cache") as inv:
+    with patch("src.platforms.live.spider.invalidate_bili_buvid_cache") as inv:
         client, ws = _decode_auth_reply(b'{"code":-101,"message":"auth failed"}')
     assert client._stopped is True
     assert ws.closed is True
@@ -459,8 +459,8 @@ def test_buvid_from_homepage_setcookie_when_spi_empty() -> None:
     # 让 spi 两跳空、首页 Set-Cookie 返回真实 buvid3；验证优先采用首页值而非 uuid 兜底。
     with (
         patch("src.network.http.request", new_callable=AsyncMock, side_effect=fake_req),
-        patch("src.streams.spider.fetch_cookies", new_callable=AsyncMock, side_effect=fake_home),
-        patch("src.streams.spider.time") as t,
+        patch("src.platforms.live.spider.fetch_cookies", new_callable=AsyncMock, side_effect=fake_home),
+        patch("src.platforms.live.spider.time") as t,
     ):
         t.time.return_value = 1700000000
         result = asyncio.run(spider.get_bilibili_danmaku_info("https://live.bilibili.com/462"))
@@ -484,7 +484,7 @@ def test_invalidate_bili_buvid_cache_clears_state() -> None:
 
 
 def _watchdog_client() -> tuple[Any, Any]:
-    from src.danmaku.platforms.bilibili import BilibiliDanmaku
+    from src.platforms.danmaku.bilibili import BilibiliDanmaku
 
     client = BilibiliDanmaku(on_message=lambda m: None, on_close=lambda r: None, on_ready=lambda: None)
     ws = _FakeAuthWs()
@@ -494,7 +494,7 @@ def _watchdog_client() -> tuple[Any, Any]:
 
 def test_auth_watchdog_fires_without_reply() -> None:
     # 进房包发出后限时无 AUTH_REPLY(code=0)：按被拒处理——告警、断开、失效 buvid 缓存
-    from src.danmaku.platforms.bilibili import BilibiliDanmaku
+    from src.platforms.danmaku.bilibili import BilibiliDanmaku
 
     client, ws = _watchdog_client()
 
@@ -505,7 +505,7 @@ def test_auth_watchdog_fires_without_reply() -> None:
             await client._auth_watchdog(ws)
             await asyncio.sleep(0)  # 让 ensure_future 调度的 close 协程得到执行
 
-    with patch("src.streams.spider.invalidate_bili_buvid_cache") as inv:
+    with patch("src.platforms.live.spider.invalidate_bili_buvid_cache") as inv:
         asyncio.run(_run())
     # 软拒绝路径：连接被标记停止并主动断开，buvid 缓存失效钩子恰好调用一次。
     assert client._stopped is True
@@ -519,7 +519,7 @@ def test_auth_watchdog_fires_without_reply() -> None:
 def test_auth_watchdog_noop_after_ok_reply() -> None:
     # 已收到 code=0 回应（_auth_ok=True）：看门狗不动作（守护 _auth_ok 标志，
     # 防止成功进房后看门狗误触发断开）
-    from src.danmaku.platforms.bilibili import BilibiliDanmaku
+    from src.platforms.danmaku.bilibili import BilibiliDanmaku
 
     client, ws = _watchdog_client()
     client._auth_ok = True
@@ -529,7 +529,7 @@ def test_auth_watchdog_noop_after_ok_reply() -> None:
             await client._auth_watchdog(ws)
             await asyncio.sleep(0)
 
-    with patch("src.streams.spider.invalidate_bili_buvid_cache") as inv:
+    with patch("src.platforms.live.spider.invalidate_bili_buvid_cache") as inv:
         asyncio.run(_run())
     assert client._stopped is False
     assert ws.closed is False
@@ -538,7 +538,7 @@ def test_auth_watchdog_noop_after_ok_reply() -> None:
 
 def test_auth_watchdog_stale_ws_noop() -> None:
     # 看门狗存活期间会话已切换 host（self._ws 已非本次进房的 ws）：旧看门狗作废
-    from src.danmaku.platforms.bilibili import BilibiliDanmaku
+    from src.platforms.danmaku.bilibili import BilibiliDanmaku
 
     client, ws = _watchdog_client()
     # 模拟 host 切换：看门狗存活期间 self._ws 已指向新会话，旧看门狗须识别并作废

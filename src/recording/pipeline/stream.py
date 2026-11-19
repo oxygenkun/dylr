@@ -6,9 +6,9 @@ from typing import TypedDict, cast
 from loguru import logger
 
 from src.network.http import is_reachable
-from src.streams.errors import trace_error_decorator
-from src.streams.selection import MOBILE_UA, _is_h265, get_record_user_agent
-from src.streams.spider import get_bilibili_stream_data, get_douyu_stream_data
+from src.platforms.live.errors import trace_error_decorator
+from src.platforms.live.spider import get_bilibili_stream_data, get_douyu_stream_data
+from src.recording.pipeline.selection import MOBILE_UA, _is_h265, get_record_user_agent
 from src.support import i18n
 
 

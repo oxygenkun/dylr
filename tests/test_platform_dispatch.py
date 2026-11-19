@@ -8,14 +8,13 @@
 #
 # 所有 spider / stream 调用均替换为记录型异步桩，用例不发任何真实网络请求。
 import ast
-import threading
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-from src.recording import state
-from src.streams import dispatch as platform_dispatch
+from src.recording import state as recording_state
+from src.recording.pipeline import dispatch as platform_dispatch
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -47,37 +46,6 @@ def dispatch_env(main_mod: Any, monkeypatch: pytest.MonkeyPatch) -> tuple[Any, l
     calls: list[tuple[str, str]] = []
     monkeypatch.setattr(platform_dispatch, "spider", _RecordingShim("spider", calls), raising=False)
     monkeypatch.setattr(platform_dispatch, "stream", _RecordingShim("stream", calls), raising=False)
-    # main() 运行期才赋值的全局量：import 期不存在，需补齐否则 NameError
-    for name in (
-        "dy_cookie",
-        "tiktok_cookie",
-        "ks_cookie",
-        "hy_cookie",
-        "douyu_cookie",
-        "yy_cookie",
-        "bili_cookie",
-        "xhs_cookie",
-        "bigo_cookie",
-        "blued_cookie",
-        "sooplive_cookie",
-        "netease_cookie",
-        "qiandurebo_cookie",
-        "pandatv_cookie",
-        "maoerfm_cookie",
-        "winktv_cookie",
-        "flextv_cookie",
-        "look_cookie",
-        "twitcasting_cookie",
-        "baidu_cookie",
-        "weibo_cookie",
-        "kugou_cookie",
-        "liveme_cookie",
-        "global_proxy",
-    ):
-        if not hasattr(state, name):
-            monkeypatch.setattr(state, name, "", raising=False)
-    if not hasattr(state, "semaphore"):
-        monkeypatch.setattr(state, "semaphore", threading.Semaphore(8), raising=False)
     return main_mod, calls
 
 
@@ -156,7 +124,7 @@ def test_proxy_required_resolver_keeps_empty_defaults(
     dispatch_env: tuple, monkeypatch: pytest.MonkeyPatch, url: str, platform: str
 ) -> None:
     _, calls = dispatch_env
-    monkeypatch.setattr(state, "global_proxy", False)
+    monkeypatch.setattr(recording_state, "global_proxy", False)
 
     async def douyu_data(**kwargs: object) -> dict[str, object]:
         return {"room_id": "99", "is_live": True}
@@ -343,7 +311,11 @@ def _platform_cookie_map_entries(tree: ast.Module) -> dict[str, str]:
         entries: dict[str, str] = {}
         for key, val in zip(dict_node.keys, dict_node.values, strict=True):
             if isinstance(key, ast.Constant) and isinstance(key.value, str):
-                if isinstance(val, ast.Attribute) and isinstance(val.value, ast.Name) and val.value.id == "state":
+                if (
+                    isinstance(val, ast.Attribute)
+                    and isinstance(val.value, ast.Name)
+                    and val.value.id in {"state", "settings", "recording_state"}
+                ):
                     entries[key.value] = val.attr
                 elif isinstance(val, ast.Name):
                     entries[key.value] = val.id
@@ -358,7 +330,7 @@ def test_platform_name_literals_match_resolver_writeback(main_mod: Any) -> None:
     tree = ast.parse(
         "\n".join(
             (_REPO_ROOT / "src" / name).read_text(encoding="utf-8")
-            for name in ("recording/session.py", "streams/dispatch.py")
+            for name in ("recording/session.py", "recording/sources/room.py", "recording/pipeline/dispatch.py")
         )
     )
     resolver_names = _resolver_platform_names(tree)
@@ -380,7 +352,7 @@ def test_migu_is_not_a_dead_http_record_entry(main_mod: Any) -> None:
     tree = ast.parse(
         "\n".join(
             (_REPO_ROOT / "src" / name).read_text(encoding="utf-8")
-            for name in ("recording/session.py", "streams/dispatch.py")
+            for name in ("recording/session.py", "recording/sources/room.py", "recording/pipeline/dispatch.py")
         )
     )
     sequences = _literal_sequences_by_name(tree)
@@ -466,7 +438,7 @@ def test_forced_direct_download_platforms_carry_cookie(main_mod: Any) -> None:
     tree = ast.parse(
         "\n".join(
             (_REPO_ROOT / "src" / name).read_text(encoding="utf-8")
-            for name in ("recording/session.py", "streams/dispatch.py")
+            for name in ("recording/session.py", "recording/sources/room.py", "recording/pipeline/dispatch.py")
         )
     )
     entries = _platform_cookie_map_entries(tree)

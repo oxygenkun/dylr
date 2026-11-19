@@ -2,15 +2,15 @@
 # 并发风控核心模式测试：验证线程锁、速率限制、凭证共享的正确性。
 #
 # 覆盖三个核心模式（与 src 的真实实现一一对应）：
-# 1. 线程安全凭证管理  -> src/streams/ttwid.py 的 get_ttwid()（跨线程 + 跨事件循环去重）
-# 2. 速率限制          -> src/streams/selection.py 的 _douyin_rate_limit()（最小间隔 + 串行化）
+# 1. 线程安全凭证管理  -> src/platforms/live/ttwid.py 的 get_ttwid()（跨线程 + 跨事件循环去重）
+# 2. 速率限制          -> src/recording/pipeline/selection.py 的 _douyin_rate_limit()（最小间隔 + 串行化）
 # 3. 凭证共享          -> src/network/credentials.py 的 singleflight()（同 key 只拉一次、多模块复用）
 #
 # 口径（SEV-2222 / SEV-2223）：早期形态是「在测试里重写一份锁 / 限流器 / 凭证缓存，再断言这份
 # 自实现」，把 src/ 的对应实现整个删掉仍然全绿（典型假绿）。现在三处用例一律**直接驱动真实入口**，
 # 只允许打桩网络层与时间常量：
-#   - test_lock_prevents_duplicate_fetch   驱动 src.streams.ttwid.get_ttwid（桩 _fetch_ttwid）
-#   - TestRateLimit                        驱动 src.streams.selection._douyin_rate_limit
+#   - test_lock_prevents_duplicate_fetch   驱动 src.platforms.live.ttwid.get_ttwid（桩 _fetch_ttwid）
+#   - TestRateLimit                        驱动 src.recording.pipeline.selection._douyin_rate_limit
 #                                          （桩 stream_select 命名空间里的 time + main 的两个常量）
 #   - test_shared_credential_single_source 驱动 src.network.credentials.credential_cache.get_or_fetch（真去重实现）
 # 判据仍是「删掉生产实现就会失败」：去掉 with main.douyin_rate_lock / 去掉 singleflight 的
@@ -27,10 +27,10 @@ from typing import Any
 
 import pytest
 
-import src.streams.selection as stream_select
-import src.streams.ttwid as ttwid_module
+import src.platforms.live.ttwid as ttwid_module
+import src.recording.pipeline.selection as stream_select
+from src.config import settings
 from src.network import credentials
-from src.recording import state
 
 _plain_lock_type = type(threading.Lock())
 _rlock_type = type(threading.RLock())
@@ -74,8 +74,8 @@ def _fake_douyin_clock(monkeypatch: pytest.MonkeyPatch) -> _FakeClock:
     shim.sleep = fake.sleep
     monkeypatch.setattr(stream_select, "time", shim)
     # 生产默认最小间隔 3s；用例把它压到 0.5s 让断言仍是有意义的量（不是「恰好等于 0」）。
-    monkeypatch.setattr(state, "douyin_min_interval", 0.5, raising=False)
-    monkeypatch.setattr(state, "douyin_last_request_time", 0.0, raising=False)
+    monkeypatch.setattr(settings, "douyin_min_interval", 0.5, raising=False)
+    monkeypatch.setattr(stream_select, "douyin_last_request_time", 0.0, raising=False)
     return fake
 
 
@@ -141,7 +141,7 @@ class TestThreadSafeCredential:
         )
         assert not isinstance(stream_select._probe_throttle_lock, asyncio.Lock)
         assert isinstance(stream_select._probe_throttle_lock, _plain_lock_type), "探针节流锁必须是跨线程原语"
-        assert isinstance(state.douyin_rate_lock, _plain_lock_type), "抖音限流锁必须是跨线程原语"
+        assert isinstance(stream_select.douyin_rate_lock, _plain_lock_type), "抖音限流锁必须是跨线程原语"
 
 
 class TestRateLimit:
@@ -154,13 +154,13 @@ class TestRateLimit:
         stamps: list[float] = []
         for _ in range(3):
             stream_select._douyin_rate_limit()
-            stamps.append(float(state.douyin_last_request_time))
+            stamps.append(float(stream_select.douyin_last_request_time))
 
         assert len(stamps) == 3
         assert stamps == sorted(stamps), f"请求时刻倒退: {stamps}"
         for prev, nxt in pairwise(stamps):
-            assert nxt - prev >= state.douyin_min_interval, (
-                f"两次抖音请求间隔 {nxt - prev} < {state.douyin_min_interval}"
+            assert nxt - prev >= settings.douyin_min_interval, (
+                f"两次抖音请求间隔 {nxt - prev} < {settings.douyin_min_interval}"
             )
         assert _fake_douyin_clock.sleeps, "限流器一次都没 sleep：等于没限速"
         assert all(seconds > 0 for seconds in _fake_douyin_clock.sleeps), _fake_douyin_clock.sleeps
@@ -170,8 +170,8 @@ class TestRateLimit:
         # 「没有锁」与「有锁」的观测结果相同）。真实 douyin_rate_lock 让「读间隔 → 补睡 → 记时刻」
         # 成为临界区：相邻请求必然相差至少一个最小间隔。刻意用**真实时钟**：假时钟的 sleep 自带
         # 互斥，会把无锁形态也「救」成串行；代价是每条用例真等 ~0.05s×N。
-        monkeypatch.setattr(state, "douyin_min_interval", 0.05, raising=False)
-        monkeypatch.setattr(state, "douyin_last_request_time", time.time(), raising=False)
+        monkeypatch.setattr(settings, "douyin_min_interval", 0.05, raising=False)
+        monkeypatch.setattr(stream_select, "douyin_last_request_time", time.time(), raising=False)
 
         stamps: list[float] = []
         stamp_guard = threading.Lock()
@@ -181,7 +181,7 @@ class TestRateLimit:
             barrier.wait(timeout=20)
             stream_select._douyin_rate_limit()
             with stamp_guard:
-                stamps.append(float(state.douyin_last_request_time))
+                stamps.append(float(stream_select.douyin_last_request_time))
 
         threads = [threading.Thread(target=worker) for _ in range(5)]
         for t in threads:
@@ -196,8 +196,8 @@ class TestRateLimit:
         assert len(stamps) == 5, f"有线程未走完限流临界区: {stamps}"
         ordered = sorted(stamps)
         gaps = [b - a for a, b in pairwise(ordered)]
-        assert all(gap >= state.douyin_min_interval * 0.9 for gap in gaps), (
-            f"并发调用未被串行化（相邻请求间隔 {[round(g, 4) for g in gaps]} < {state.douyin_min_interval}）："
+        assert all(gap >= settings.douyin_min_interval * 0.9 for gap in gaps), (
+            f"并发调用未被串行化（相邻请求间隔 {[round(g, 4) for g in gaps]} < {settings.douyin_min_interval}）："
             "限流的 with main.douyin_rate_lock 被移除或改名"
         )
 
@@ -256,7 +256,7 @@ class TestCredentialSharing:
 
     def test_ttwid_module_pattern(self) -> None:
         # 验证实际 ttwid.py 模块的缓存模式
-        from src.streams.ttwid import _cached_ttwid, _ttwid_lock
+        from src.platforms.live.ttwid import _cached_ttwid, _ttwid_lock
 
         # 锁为 threading.RLock：跨线程去重的同时允许同线程重入，
         # 避免锁跨越 await 时同事件循环并发协程自旋死锁

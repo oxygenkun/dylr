@@ -34,7 +34,7 @@ def pytest_configure(config: Any) -> None:
 def _hermetic_danmaku_hub(monkeypatch: pytest.MonkeyPatch) -> None:
     # 弹幕监控枢纽替换为无文件输出实例：经 DanmakuCollector 上报的测试不写真实
     # logs/danmaku_monitor.jsonl，测试与仓库目录互不污染。
-    import src.danmaku.monitor as dm
+    import src.danmaku.hub as dm
 
     monkeypatch.setattr(dm, "_hub", dm.DanmakuMonitorHub(log_path=None))
 
@@ -43,8 +43,8 @@ def _hermetic_danmaku_hub(monkeypatch: pytest.MonkeyPatch) -> None:
 def _clean_credential_caches() -> Generator[None]:
     # 共享缓存与平台侧凭据状态都要重置，避免跨用例复用旧凭据。
     from src.network import credentials
-    from src.streams import spider as _spider
-    from src.streams import ttwid as _ttwid
+    from src.platforms.live import spider as _spider
+    from src.platforms.live import ttwid as _ttwid
 
     def _reset() -> None:
         credentials.cookie_cache.invalidate()

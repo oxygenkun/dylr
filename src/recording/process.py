@@ -206,13 +206,3 @@ def cleanup_all_ffmpeg_processes() -> None:
             )
         )
     logger.info("所有 ffmpeg 进程清理完成")
-
-
-def _get_error_line(e: BaseException) -> str:
-    """从异常 e 的 traceback 最内层取真正出错的行号；返回行号字符串（无 traceback 时返回 "unknown"）。"""
-    tb = e.__traceback__
-    if not tb:
-        return "unknown"
-    while tb.tb_next is not None:
-        tb = tb.tb_next
-    return str(tb.tb_lineno)

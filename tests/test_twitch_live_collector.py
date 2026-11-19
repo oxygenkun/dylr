@@ -20,8 +20,8 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.danmaku.collector import DanmakuCollector
-from src.danmaku.platforms.twitch import TwitchDanmaku
+from src.danmaku.session import DanmakuCollector
+from src.platforms.danmaku.twitch import TwitchDanmaku
 
 # Twitch 弹幕走 IRC 网关(经 WebSocket 桥接),必须连真实在线频道;拼错或离线会导致
 # 服务端直接断开,因此 channel 规范化得空串时立即 exit 1,不进入后续连接流程。

@@ -25,12 +25,12 @@ from loguru import logger
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.danmaku.base import DanmakuMessage
-from src.danmaku.platforms import bilibili
-from src.danmaku.platforms.bilibili import BilibiliDanmaku
-from src.streams import spider
+from src.platforms.danmaku import bilibili
+from src.platforms.danmaku.base import DanmakuMessage
+from src.platforms.danmaku.bilibili import BilibiliDanmaku
+from src.platforms.live import spider
 
-# 这里刻意不导入 main：本模块只需 src.streams.spider / src.danmaku.platforms.bilibili（离线用例把网络层整段桩住），
+# 这里刻意不导入 main：本模块只需 src.platforms.live.spider / src.platforms.danmaku.bilibili（离线用例把网络层整段桩住），
 # 而 import main 会把「进程退出时清理 ffmpeg」的 atexit 钩子带进 pytest 会话，收尾时对已关闭的
 # stderr 刷一长串 loguru "Logging error"。[历史注 2026-10-19] 原文件在此还 `import main`。
 
@@ -241,7 +241,7 @@ async def test_reject_auth_dispatches_through_spawned_task(monkeypatch: pytest.M
 
 async def test_reject_auth_close_failure_is_reclaimed_and_logged(monkeypatch: pytest.MonkeyPatch) -> None:
     # L-26 回归锁②：关闭协程自己抛错时必须「被回收并留痕」，而不是成为无人认领的孤儿 future。
-    # 这里刻意**不**打桩 spawn_danmaku_task，走 src/danmaku/base.py 的真实托管：其完成回调按既有的
+    # 这里刻意**不**打桩 spawn_danmaku_task，走 src/platforms/danmaku/base.py 的真实托管：其完成回调按既有的
     # 「[弹幕]后台协程异常: {type_name}: {exc}」模板落一条 warning（既有键，四语目录已登记，不新造
     # msgid）。退回裸 ensure_future 时这条 warning 不会出现，本用例即红。
     class _BoomWs:

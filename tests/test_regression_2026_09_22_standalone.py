@@ -1,7 +1,7 @@
 # 2026-09-23 追加：CODE_REVIEW_2026-09-22.md 第十章「孪生副本」语义漂移 + §5.1 副本侧条目的回归锁。
 #
 # 被测对象是 tool/dylr_standalone.py —— 它按设计**不 import src/**，是
-# src/recording/scheduler.py 并发实现与 src/streams/spider.py 部分平台解析的独立副本，因此必须有一份自己的用例。
+# src/recording/scheduler.py 并发实现与 src/platforms/live/spider.py 部分平台解析的独立副本，因此必须有一份自己的用例。
 # 本文件不推断 src/ 侧「应该是什么」，只把副本自身应满足的不变量钉住：
 #   MID-2257  PlatformBreaker 的 half-open 回报须经 _probing/_probe_owner 门控——非探针线程 /
 #             租约重授予后的陈旧探针只能入窗口、不得驱动状态迁移；样本窗口须为 deque(maxlen) +

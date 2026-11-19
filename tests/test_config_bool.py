@@ -15,10 +15,10 @@ import pytest
 from pytest import MonkeyPatch
 
 from src.config import io as config_io
+from src.config import paths as config_paths
+from src.config import settings
 from src.config.booleans import FALSE_TOKENS, TRUE_TOKENS, format_config_bool, parse_config_bool
 from src.config.store import ConfigStore
-from src.recording import engine as recorder
-from src.recording import state
 
 _MAIN_PY = Path(__file__).resolve().parents[1] / "src/recording/engine.py"
 _KEY = "是否录制弹幕(是/否)"
@@ -98,14 +98,14 @@ def test_read_config_bool_accepts_both_encodings(
     # 同一份配置里 TOML 布尔与字符串两种写法必须解析出相同结果（这是本次事故的核心保证）
     value = raw if raw in ("true", "false") else f'"{raw}"'
     store = _store(tmp_path, f'["录制设置"]\n"{_KEY}" = {value}\n')
-    monkeypatch.setattr(state, "config_file", str(store.path))
+    monkeypatch.setattr(config_paths, "config_file", str(store.path))
     assert config_io.read_config_bool(store, "录制设置", _KEY, False) is expected
 
 
 def test_read_config_bool_missing_key_writes_canonical_default(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
     # 缺键 → 按 default 以 TOML 原生布尔补写并返回该值（与 read_config_value 的自愈语义一致）
     store = _store(tmp_path, '["录制设置"]\nlanguage = "zh_cn"\n')
-    monkeypatch.setattr(state, "config_file", str(store.path))
+    monkeypatch.setattr(config_paths, "config_file", str(store.path))
 
     assert config_io.read_config_bool(store, "录制设置", _KEY, True) is True
     migrated = ConfigStore(store.path)
@@ -123,7 +123,7 @@ def test_read_config_bool_unrecognized_value_returns_default_and_keeps_original(
 ) -> None:
     # 未识别值返回 default，但**不得**覆写用户原文（避免把用户手改的内容静默改掉）
     store = _store(tmp_path, f'["录制设置"]\n"{_KEY}" = "maybe"\n')
-    monkeypatch.setattr(state, "config_file", str(store.path))
+    monkeypatch.setattr(config_paths, "config_file", str(store.path))
 
     assert config_io.read_config_bool(store, "录制设置", _KEY, False) is False
     on_disk = ConfigStore(store.path)
@@ -144,15 +144,15 @@ def test_https_config_accepts_true_false_encoding(
     # 本次事故的直接命中项：true 曾被判为「否」→ 流地址被降级为 http
     value = raw if raw in ("true", "false") else f'"{raw}"'
     store = _store(tmp_path, f'["录制设置"]\n"是否启用https录制" = {value}\n')
-    monkeypatch.setattr(state, "config_file", str(store.path))
-    assert recorder._read_https_recording_config(store) is expected
+    monkeypatch.setattr(config_paths, "config_file", str(store.path))
+    assert settings.read_https_recording(store) is expected
 
 
 def test_https_config_legacy_key_true_encoding_migrates(tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
     # 旧键用 true 写法时同样应继承为 True，并迁移写回规范写法「是」
     store = _store(tmp_path, '["录制设置"]\n"是否强制启用https录制" = true\n')
-    monkeypatch.setattr(state, "config_file", str(store.path))
-    assert recorder._read_https_recording_config(store) is True
+    monkeypatch.setattr(config_paths, "config_file", str(store.path))
+    assert settings.read_https_recording(store) is True
     migrated = ConfigStore(store.path)
     migrated.read()
     assert migrated.native("录制设置", "是否启用https录制") is True
@@ -184,18 +184,22 @@ def test_main_has_no_legacy_options_dict_lookup() -> None:
 
 
 @pytest.mark.parametrize(
-    "key",
+    ("name", "key"),
     [
-        "是否跳过代理检测(是/否)",
-        "保存文件夹是否以作者区分",
-        "分段录制是否开启",
-        "是否录制弹幕(是/否)",
-        "是否启用HLS采集(是/否)",
-        "生成时间字幕文件",
-        "追加格式后删除原文件",
+        ("folder_by_author", "保存文件夹是否以作者区分"),
+        ("split_video_by_time", "分段录制是否开启"),
+        ("enable_danmaku", "是否录制弹幕(是/否)"),
+        ("hls_collection_enabled", "是否启用HLS采集(是/否)"),
+        ("create_time_file", "生成时间字幕文件"),
+        ("delete_origin_file", "追加格式后删除原文件"),
     ],
 )
-def test_main_drift_prone_keys_use_read_config_bool(key: str) -> None:
-    # 2026-09-17 实测漂移的键必须走统一解析入口（漏改一个就会重新分叉口径）
-    source = _MAIN_PY.read_text(encoding="utf-8")
-    assert f'read_config_bool(config, "录制设置", "{key}"' in source
+@pytest.mark.parametrize(("raw", "expected"), [("true", True), ("false", False), ('"是"', True), ('"否"', False)])
+def test_declared_boolean_settings_use_shared_tokens(
+    tmp_path: Path, monkeypatch: MonkeyPatch, name: str, key: str, raw: str, expected: bool
+) -> None:
+    for field in settings.__annotations__:
+        monkeypatch.setattr(settings, field, getattr(settings, field))
+    store = _store(tmp_path, f'["录制设置"]\n"{key}" = {raw}\n')
+    settings.load(store)
+    assert getattr(settings, name) is expected

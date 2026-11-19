@@ -9,8 +9,8 @@
 # -----------------------------------------------------------------------------
 # * **零第三方依赖**：只使用 Python 标准库(urllib/math/subprocess/threading 等)，
 #   无需 pip install 即可运行(录制本身仍需 ffmpeg 可执行文件)。
-# * **本文件是被整合模块的独立副本，不是薄封装**：src/recording/scheduler.py 的并发实现、src/streams/spider.py
-#   的部分平台解析、src/streams/selection.py 的探针/退避、src/runtime/ffmpeg.py 的包内 ffmpeg 判据，
+# * **本文件是被整合模块的独立副本，不是薄封装**：src/recording/scheduler.py 的并发实现、src/platforms/live/spider.py
+#   的部分平台解析、src/recording/pipeline/selection.py 的探针/退避、src/runtime/ffmpeg.py 的包内 ffmpeg 判据，
 #   以及 ffmpeg 命令构造(本文件有**两处**定义点，main.py 只有一处)都在此各有一份拷贝。副本的
 #   通病是「单边修改 → 语义漂移」，故改判据必须两处同改、两边注释互相点名；并发两份实现的
 #   **等价性并不完整**，逐条差异见 PlatformBreaker 类注释。漂移的机检面：
@@ -831,7 +831,7 @@ class Scheduler:
 
 
 # =============================================================================
-# 5. 平台解析(整合自 src/streams/spider.py 对应平台分支)
+# 5. 平台解析(整合自 src/platforms/live/spider.py 对应平台分支)
 # =============================================================================
 
 
@@ -900,7 +900,7 @@ def resolve_douyin(url: str, proxy: str | None = None, cookies: str = "") -> Str
     # 第二道检测：抖音风控的第二形态是「HTTP 200 + 合法 JSON，但业务层 status_code 非零」
     # （如 status_code=8 需登录、=4002 参数异常）。只看 HTTP 状态与空响应体会漏掉这一形态
     # → 风控被误报成"未开播"，用户得不到「去配 cookie」的有效提示，只会反复重试。
-    # 与主工程 src/streams/spider.py 同判据（该侧在 200+合法 JSON 后同样检 status_code 非零）。
+    # 与主工程 src/platforms/live/spider.py 同判据（该侧在 200+合法 JSON 后同样检 status_code 非零）。
     # [历史注] 2026-09-12 审查 6.7 补齐此处。
     if isinstance(data, dict):
         try:
@@ -942,7 +942,7 @@ def resolve_douyin(url: str, proxy: str | None = None, cookies: str = "") -> Str
 # 虎牙页面中的 stream 数据：非贪婪匹配到 "iWebDefaultBitRate" 结束(与原工程一致)
 _HUYA_STREAM_RE = re.compile(r'stream: (\{"data".*?),"iWebDefaultBitRate"')
 # 房间别名(含字母)时从 HTML 提取数字房间号(与原工程 get_huya_app_stream_url 一致)
-# 孪生点(2026-09-23 MIN-2201)：主实现 src/streams/spider.py::get_huya_app_stream_url 的正则现已与本
+# 孪生点(2026-09-23 MIN-2201)：主实现 src/platforms/live/spider.py::get_huya_app_stream_url 的正则现已与本
 # 副本**逐字同串**(键名起始引号作锚点)，且两侧都在取回后剥引号 + 判 isdigit。改此处须两处同改。
 _HUYA_PROFILE_ROOM_RE = re.compile(r'"ProfileRoom":(.*?),"sPrivateHost')
 
@@ -1026,7 +1026,7 @@ def resolve_huya(url: str, proxy: str | None = None, cookies: str = "") -> Strea
         if m:
             # 页面的 "ProfileRoom" 有数字(:6030242)与字符串(:"6030242")两种内联形态，
             # 非贪婪捕获对后者会连引号一起收下 → 不剥引号则恒判非数字、白丢兜底接口
-            # (2026-09-23 与 src/streams/spider.py 同步，见上方 _HUYA_PROFILE_ROOM_RE 的孪生点注释)。
+            # (2026-09-23 与 src/platforms/live/spider.py 同步，见上方 _HUYA_PROFILE_ROOM_RE 的孪生点注释)。
             room_id = m.group(1).strip().strip('"')
     if not room_id.isdigit():
         info_.error = f"{fetch_failed_reason}；未能解析 stream 数据，且未取得数字房间号，无法走兜底接口".strip("；")
@@ -1282,7 +1282,7 @@ def dispatch(url: str, proxy: str | None = None, cookies: str = "") -> StreamInf
 
 
 # =============================================================================
-# 6. 流地址校验(整合自 src/streams/selection.py)
+# 6. 流地址校验(整合自 src/recording/pipeline/selection.py)
 # =============================================================================
 
 # 同 host 探针最小间隔 + 抖动：多房间并发时避免毫秒级连击触发风控
@@ -1322,7 +1322,7 @@ def _recheck_delay() -> float:
     return _GET_RECHECK_INTERVAL + _SYS_RANDOM.uniform(0, _GET_RECHECK_JITTER)
 
 
-# ---------- 探针退避(整合自 src/streams/selection.py，白名单仅虎牙) ----------
+# ---------- 探针退避(整合自 src/recording/pipeline/selection.py，白名单仅虎牙) ----------
 #
 # 虎牙 CDN 按连接预算限流：每轮「探针 + ffmpeg 拉流」烧光预算后，校验 GET 复核通过、
 # ffmpeg 立即 403，录制陷入秒级失败循环。观测到 401/403 后把该线路记入退避窗口：
@@ -1379,7 +1379,7 @@ def clear_probe_reject(url: str, platform: str) -> None:
 
 
 def _registrable_domain_lite(host: str) -> str:
-    # 近似注册域（末两段），仅用于派生跳的 Cookie 裁决（主线 src/streams/selection.py
+    # 近似注册域（末两段），仅用于派生跳的 Cookie 裁决（主线 src/recording/pipeline/selection.py
     # _registrable_domain 同判据）；IP 字面量与双段主机返回空串（不成域、只认精确相等）。
     if _parse_ip_literal(host) is not None or ":" in host:
         return ""
@@ -1575,7 +1575,7 @@ def validate_stream_url(
     # 的两处命令构造)必须同口径。大写 .M3U8 若落进「非 m3u8」分支就会走 content-type 启发式
     # + _confirm_get_ok，而 m3u8 在多家 CDN 上 HEAD 恒回 4xx → 正好命中「探针误杀可用源」
     # (非末位候选被直接拒，整轮回退或放弃录制)，并连带漏掉 -reconnect_at_eof 的移除、
-    # 复现 HLS 挂起事故。主程序侧 main.py::_validate_stream_url / src/streams/selection.py /
+    # 复现 HLS 挂起事故。主程序侧 main.py::_validate_stream_url / src/recording/pipeline/selection.py /
     # src/network/http.py 同样 lower。
     # [历史注] 2026-09-23 MIN-2259 补齐此处；命令构造两处早在 2026-09-12 审查时已 lower。
     url_lower = url.lower()

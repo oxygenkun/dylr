@@ -9,11 +9,11 @@ import httpx
 import pytest
 from loguru import logger
 
-import src.streams.selection as ss
+import src.recording.pipeline.selection as ss
+from src.config import settings
 from src.network import targets
-from src.recording import state
 
-_STREAM_SELECT_PATH = Path(__file__).resolve().parent.parent / "src" / "streams/selection.py"
+_STREAM_SELECT_PATH = Path(__file__).resolve().parent.parent / "src" / "recording/pipeline/selection.py"
 
 # 与 tests/test_regression_2026_09_29_wp_b_netguard.py 同一个公网解析结果（示例 IP，只作 DNS seam
 # 的返回值，不参与任何判定规则）。
@@ -63,7 +63,7 @@ def _hermetic_probe_env(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 @pytest.fixture
 def no_recheck_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
     # 「隔 _recheck_delay() 重试一次再定罪」的用例用：只把间隔归零，重试语义完全保留。
-    # 沿既有口径（tests/test_stream_select.py 用 patch("src.streams.selection.time") 达到同样效果），
+    # 沿既有口径（tests/test_stream_select.py 用 patch("src.recording.pipeline.selection.time") 达到同样效果），
     # 这里收窄到单个属性，避免替换整个 time 模块波及全进程。
     monkeypatch.setattr(ss, "_recheck_delay", lambda: 0.0)
 
@@ -398,8 +398,8 @@ class TestSourceUrlHandoff:
 
     def test_internal_record_url_on_reuse_path_is_not_returned(self, monkeypatch: pytest.MonkeyPatch) -> None:
         _install_mock_transport(monkeypatch, _ok_handler("application/vnd.apple.mpegurl"))
-        monkeypatch.setattr(state, "hls_collection_enabled", True)
-        monkeypatch.setattr(state, "hls_collection_exclude_platforms", ())
+        monkeypatch.setattr(settings, "hls_collection_enabled", True)
+        monkeypatch.setattr(settings, "hls_collection_exclude_platforms", ())
         # record_url 与序列候选逐字相同 → 走 probed 复用分支（MID-18），一次探针都不发
         result = ss.select_source_url(
             {"m3u8_url": _INTERNAL_M3U8, "flv_url": "", "record_url": _INTERNAL_M3U8}, None, "斗鱼直播"
@@ -415,6 +415,6 @@ class TestSourceUrlHandoff:
     def test_no_internal_url_survives_the_round(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # 收束断言：一轮选源里只要地址是内网，任何分支都不得返回非 None。
         _install_mock_transport(monkeypatch, _redirect_handler(_INTERNAL_M3U8))
-        monkeypatch.setattr(state, "hls_collection_enabled", True)
-        monkeypatch.setattr(state, "hls_collection_exclude_platforms", ())
+        monkeypatch.setattr(settings, "hls_collection_enabled", True)
+        monkeypatch.setattr(settings, "hls_collection_exclude_platforms", ())
         assert ss.select_source_url({"m3u8_url": _M3U8_START, "flv_url": _FLV_START, "record_url": ""}) is None

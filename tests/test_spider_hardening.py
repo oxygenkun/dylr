@@ -1,4 +1,4 @@
-# src/streams/spider.py「MID-48 国内平台批次」（2026-09-21）的离线回归锁。
+# src/platforms/live/spider.py「MID-48 国内平台批次」（2026-09-21）的离线回归锁。
 #
 # 2026-09-21 追加：文件末尾的 SEV-N04（淘宝 Set-Cookie 覆盖用户 Cookie）小节，
 # 属 CODE_REVIEW_2026-09-21.md 第 6.3 表指定的回归锁位置，与本批 MID-48 判据共用桩具。
@@ -48,7 +48,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from src.streams import spider as sp
+from src.platforms.live import spider as sp
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -705,7 +705,7 @@ class TestXhsHardening(_GuardCase):
 
 
 class TestYyHardening(_GuardCase):
-    # YY 的开播判定在 src/streams/stream.py::get_yy_stream_url 里做（avp_info_res 缺失即离线），
+    # YY 的开播判定在 src/recording/pipeline/stream.py::get_yy_stream_url 里做（avp_info_res 缺失即离线），
     # 所以 spider 侧唯一需要归因的是「stream-manager 响应整体解析不出对象」。
     URL = "https://www.yy.com/12345"
     _PAGE = 'nick: "YY主播",\n  logo: "x"\n  sid : "900001",\n   ssid: "2"\n'
@@ -718,7 +718,7 @@ class TestYyHardening(_GuardCase):
     silent_body = '{"head":{"result":0}}'
 
     # YY 的返回值是 stream-manager 原始响应 + anchor_name/title 拼装，不含 is_live 键，
-    # 故离线判据只看「没有 avp_info_res」——开播判定在 src/streams/stream.py 侧做。
+    # 故离线判据只看「没有 avp_info_res」——开播判定在 src/recording/pipeline/stream.py 侧做。
     expected = {
         "head": {"result": 0},
         "avp_info_res": {"stream_line_addr": {"a": {"cdn_info": {"url": "http://x/a.flv"}}}},
@@ -765,7 +765,7 @@ def _json_loads_calls(tree: ast.AST) -> list[ast.Call]:
 def test_migrated_functions_have_no_bare_json_loads() -> None:
     # 逐函数棘轮：本批 21 个平台解析函数体内必须零裸 json.loads（改回一处即红）。
     # 只按「函数名 + AST 区间」判定，避免全文计数被其它未迁移批次稀释成假绿。
-    src = (ROOT / "src" / "streams/spider.py").read_text(encoding="utf-8-sig")
+    src = (ROOT / "src" / "platforms/live/spider.py").read_text(encoding="utf-8-sig")
     tree = ast.parse(src)
     offenders: list[str] = []
     found: set[str] = set()
@@ -783,7 +783,7 @@ def test_migrated_functions_have_no_bare_json_loads() -> None:
 def test_bare_json_loads_ratchet_does_not_grow() -> None:
     # 全文件棘轮：唯一豁免是 _safe_loads 自身（它必须真的用 json.loads，否则 _loads_dict 恒回
     # {}、全员假离线）。剩余批次的迁移只允许压低计数，任何回升即红。
-    src = (ROOT / "src" / "streams/spider.py").read_text(encoding="utf-8-sig")
+    src = (ROOT / "src" / "platforms/live/spider.py").read_text(encoding="utf-8-sig")
     tree = ast.parse(src)
     guard = next(
         (
@@ -925,7 +925,7 @@ def test_overseas_migrated_functions_have_no_bare_json_loads() -> None:
     # 与第一批共用扫描器但名单独立——两批各自回退各自变红。
     # get_twitchtv_room_info 刻意不在名单内：GQL 批量响应是 list，_loads_dict 不适用
     # （见文件头 BARE_JSON_LOADS_CEILING 注释里的唯一豁免说明）。
-    src = (ROOT / "src" / "streams/spider.py").read_text(encoding="utf-8-sig")
+    src = (ROOT / "src" / "platforms/live/spider.py").read_text(encoding="utf-8-sig")
     tree = ast.parse(src)
     offenders: list[str] = []
     found: set[str] = set()

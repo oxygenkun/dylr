@@ -3,8 +3,9 @@
 import httpx
 import pytest
 
+from src.config import settings
 from src.network import http, targets
-from src.streams import selection
+from src.recording.pipeline import selection
 
 
 @pytest.mark.parametrize("text", ["127.1", "2130706433", "0x7f000001", "0177.0.0.1", "[::1]"])
@@ -93,7 +94,7 @@ def test_rejected_redirect_cannot_use_last_resort(
     monkeypatch: pytest.MonkeyPatch, destination: str, body: bytes, record_fallback: bool
 ) -> None:
     monkeypatch.setattr(targets, "resolve_host_ips", lambda host: ["93.184.216.34"])
-    monkeypatch.setattr(selection.state, "hls_collection_enabled", True)
+    monkeypatch.setattr(settings, "hls_collection_enabled", True)
     monkeypatch.setattr(selection, "_throttle_probe", lambda url: None)
     start = "https://probeUser:probePassword@start.example.com/live.m3u8?token=probeSecret"
     seen: list[str] = []

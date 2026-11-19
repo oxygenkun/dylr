@@ -5,9 +5,9 @@ import re
 import urllib.request
 from typing import Any
 
-from src.danmaku.base import DanmakuBase, DanmakuMessage, DanmakuMessageType
 from src.network.urls import normalize_proxy_url
 from src.network.websocket import WebSocketClient
+from src.platforms.danmaku.base import DanmakuBase, DanmakuMessage, DanmakuMessageType
 
 SERVER_URL = "wss://irc-ws.chat.twitch.tv"
 

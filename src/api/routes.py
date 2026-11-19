@@ -4,7 +4,6 @@ import asyncio
 import inspect
 import json
 import os
-import re
 import secrets
 import threading
 import time
@@ -60,10 +59,12 @@ from src.api.models import (
     RoomToggle,
     RoomUpdate,
 )
+from src.app import version as app_version
 from src.app.log_archive import archive_runtime_logs
 from src.config import io as config_io
-from src.danmaku.monitor import get_hub
-from src.recording import state
+from src.config import lock as config_lock
+from src.danmaku.hub import get_hub
+from src.recording import state as recording_state
 from src.recording import status as recorder_status
 from src.support import i18n as i18n_module
 from src.support.logger import logger
@@ -304,19 +305,6 @@ def _get_client_ip(request: Request, cfg: dict[str, str | int | bool]) -> str:
     return peer
 
 
-def _read_app_version() -> str:
-    pyproject_path = Path(__file__).resolve().parents[2] / "pyproject.toml"
-    if pyproject_path.exists():
-        text = pyproject_path.read_text(encoding="utf-8")
-        m = re.search(r'^version\s*=\s*["\'](.+?)["\']', text, re.MULTILINE)
-        if m:
-            return m.group(1)
-    return "0.0.0"
-
-
-_APP_VERSION = _read_app_version()
-
-
 def create_app(
     config_file: str,
     url_config_file: str,
@@ -431,7 +419,7 @@ def create_app(
         if not is_hashed_web_password(cast(str, cfg["web_password"])):
             hashed = hash_web_password(cast(str, cfg["web_password"]).strip())
 
-            with state.file_update_lock:
+            with config_lock.file_update_lock:
                 _ = update_config_line(cast(str, app.state.config_file), "Web", "web_password", hashed)
             _invalidate_web_cfg_cache()
             cfg["web_password"] = hashed
@@ -478,8 +466,8 @@ def create_app(
 
     @_route(app, ["GET"], "/health")
     async def health() -> dict[str, str]:
-        """探活端点：进程存活 + ASGI/路由已就绪 + 应用版本可读（_APP_VERSION 在模块导入期即从。"""
-        return {"status": "ok", "version": _APP_VERSION}
+        """返回服务健康状态与项目版本。"""
+        return {"status": "ok", "version": app_version.version.removeprefix("v")}
 
     @_route(app, ["GET"], "/api/status/stream")
     async def status_stream(request: Request) -> StreamingResponse:
@@ -506,7 +494,7 @@ def create_app(
     @_route(app, ["POST"], "/api/recording/toggle")
     def toggle_recording(req: RecordingToggle) -> dict[str, object]:
 
-        state.recording_enabled = req.enable
+        recording_state.recording_enabled = req.enable
         if not req.enable:
             _ = archive_runtime_logs(reopen_streams=True)
         return {"ok": True, "recording_enabled": req.enable}
@@ -518,8 +506,8 @@ def create_app(
         )
         running: list[str] | None
         try:
-            with state.record_state_lock:
-                running = list(state.running_list)
+            with recording_state.record_state_lock:
+                running = list(recording_state.running_list)
         except Exception as e:
             running = None
             logger.warning(
@@ -542,7 +530,7 @@ def create_app(
         except ValueError as e:
             raise HTTPException(422, str(e)) from e
 
-        with _rooms_config_lock, state.file_update_lock:
+        with _rooms_config_lock, config_lock.file_update_lock:
             existing = parse_url_config(cast(str, app.state.url_config_file))
             if any(r["url"] == url for r in existing):
                 raise HTTPException(409, i18n_module.tr("直播间已存在"))
@@ -577,7 +565,7 @@ def create_app(
             raise HTTPException(422, str(e)) from e
 
         replaced = False
-        with _rooms_config_lock, state.file_update_lock:
+        with _rooms_config_lock, config_lock.file_update_lock:
             old_rooms = parse_url_config(cast(str, app.state.url_config_file))
             new_url = normalize_url(req.url)
             if any(r["url"] == new_url and r["url"] != old_url for r in old_rooms):
@@ -607,7 +595,7 @@ def create_app(
     def delete_room(url: str = "") -> dict[str, object]:
         url = normalize_url(url)
 
-        with _rooms_config_lock, state.file_update_lock:
+        with _rooms_config_lock, config_lock.file_update_lock:
             rooms = parse_url_config(cast(str, app.state.url_config_file))
             for r in rooms:
                 if r["url"] == url:
@@ -624,7 +612,7 @@ def create_app(
     def toggle_room(req: RoomToggle) -> dict[str, object]:
         url = normalize_url(req.url)
 
-        with _rooms_config_lock, state.file_update_lock:
+        with _rooms_config_lock, config_lock.file_update_lock:
             rooms = parse_url_config(cast(str, app.state.url_config_file))
             for r in rooms:
                 if r["url"] == url:
@@ -656,7 +644,7 @@ def create_app(
         if quality and quality not in BUILTIN_QUALITIES:
             raise HTTPException(422, i18n_module.tr("未知画质档位: {quality}", quality=quality))
 
-        with _rooms_config_lock, state.file_update_lock:
+        with _rooms_config_lock, config_lock.file_update_lock:
             rooms = parse_url_config(cast(str, app.state.url_config_file))
             if not any(r["url"] == url for r in rooms):
                 raise HTTPException(404, i18n_module.tr("未找到直播间"))
@@ -678,7 +666,7 @@ def create_app(
         except ValueError as e:
             raise HTTPException(422, str(e)) from e
 
-        with state.file_update_lock:
+        with config_lock.file_update_lock:
             options = write_quality_options(cast(str, app.state.config_file), req.options)
         if options is None:
             raise HTTPException(
@@ -777,7 +765,7 @@ def create_app(
                 value = normalized_password
 
         try:
-            with state.file_update_lock:
+            with config_lock.file_update_lock:
                 ok = update_config_line(cast(str, app.state.config_file), section, key, value)
         except ValueError as e:
             raise HTTPException(422, str(e)) from e
@@ -814,7 +802,7 @@ def create_app(
         previous = i18n_module.get_language()
         effective = i18n_module.set_language(normalized)
 
-        with state.file_update_lock:
+        with config_lock.file_update_lock:
             written = update_or_append_config_line(cast(str, app.state.config_file), "录制设置", "language", effective)
         if not written:
             _ = i18n_module.set_language(previous)

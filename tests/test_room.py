@@ -1,10 +1,10 @@
-# src/streams/room.py 回归测试：URL 解析、请求签名入口与共享请求头 HEADERS。
+# src/platforms/live/room.py 回归测试：URL 解析、请求签名入口与共享请求头 HEADERS。
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.streams.room import HEADERS, UnsupportedUrlError
+from src.platforms.live.room import HEADERS, UnsupportedUrlError
 
 
 # 守卫 get_sec_user_id / get_unique_id 在 URL 非法时抛出的专用异常类型。
@@ -56,7 +56,7 @@ class TestGetSecUserId:
     @pytest.mark.asyncio
     # 守卫函数可导入且可调用，防止重命名/删除导致调用方崩溃
     async def test_function_exists(self) -> None:
-        from src.streams.room import get_sec_user_id
+        from src.platforms.live.room import get_sec_user_id
 
         assert callable(get_sec_user_id)
 
@@ -65,14 +65,14 @@ class TestGetSecUserId:
     async def test_function_is_async(self) -> None:
         import inspect
 
-        from src.streams.room import get_sec_user_id
+        from src.platforms.live.room import get_sec_user_id
 
         assert inspect.iscoroutinefunction(get_sec_user_id)
 
     @pytest.mark.asyncio
     # 正常路径：reflow URL 含 sec_user_id，正确提取 room_id 与 sec_user_id
     async def test_normal_extraction(self) -> None:
-        from src.streams.room import get_sec_user_id
+        from src.platforms.live.room import get_sec_user_id
 
         redirect_url = "https://live.douyin.com/reflow/7318293442?sec_user_id=MS4wLjABAAAA_test_sec&aid=6383"
         mock_response = MagicMock()
@@ -83,7 +83,7 @@ class TestGetSecUserId:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("src.streams.room.httpx.AsyncClient", return_value=mock_client):
+        with patch("src.platforms.live.room.httpx.AsyncClient", return_value=mock_client):
             result = await get_sec_user_id("https://v.douyin.com/iQLgKSj/")
 
         assert result is not None
@@ -95,7 +95,7 @@ class TestGetSecUserId:
     @pytest.mark.asyncio
     async def test_unsupported_url_raises(self) -> None:
         # 异常路径：重定向 URL 不包含 reflow/，抛出 UnsupportedUrlError。
-        from src.streams.room import get_sec_user_id
+        from src.platforms.live.room import get_sec_user_id
 
         mock_response = MagicMock()
         mock_response.url = "https://www.douyin.com/user/some_user"
@@ -105,7 +105,7 @@ class TestGetSecUserId:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("src.streams.room.httpx.AsyncClient", return_value=mock_client):
+        with patch("src.platforms.live.room.httpx.AsyncClient", return_value=mock_client):
             with pytest.raises(UnsupportedUrlError):
                 await get_sec_user_id("https://v.douyin.com/invalid/")
 
@@ -116,7 +116,7 @@ class TestGetUniqueId:
     @pytest.mark.asyncio
     # 守卫函数可导入且可调用，防止重命名/删除导致调用方崩溃
     async def test_function_exists(self) -> None:
-        from src.streams.room import get_unique_id
+        from src.platforms.live.room import get_unique_id
 
         assert callable(get_unique_id)
 
@@ -125,14 +125,14 @@ class TestGetUniqueId:
     async def test_function_is_async(self) -> None:
         import inspect
 
-        from src.streams.room import get_unique_id
+        from src.platforms.live.room import get_unique_id
 
         assert inspect.iscoroutinefunction(get_unique_id)
 
     @pytest.mark.asyncio
     # 兜底路径：JSON 接口被风控后仍能从分享页 HTML 提取 unique_id
     async def test_normal_extraction(self) -> None:
-        from src.streams.room import get_unique_id
+        from src.platforms.live.room import get_unique_id
 
         # 第一次请求：重定向到用户主页（不含 reflow/）
         first_response = MagicMock()
@@ -152,8 +152,8 @@ class TestGetUniqueId:
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
         with (
-            patch("src.streams.room.httpx.AsyncClient", return_value=mock_client),
-            patch("src.streams.room.get_ttwid", new_callable=AsyncMock, return_value="ttwid=fake"),
+            patch("src.platforms.live.room.httpx.AsyncClient", return_value=mock_client),
+            patch("src.platforms.live.room.get_ttwid", new_callable=AsyncMock, return_value="ttwid=fake"),
         ):
             result = await get_unique_id("https://v.douyin.com/iQLgKSj/")
 
@@ -162,7 +162,7 @@ class TestGetUniqueId:
     @pytest.mark.asyncio
     async def test_reflow_url_raises_unsupported(self) -> None:
         # 异常路径：重定向 URL 包含 reflow/，抛出 UnsupportedUrlError。
-        from src.streams.room import get_unique_id
+        from src.platforms.live.room import get_unique_id
 
         mock_response = MagicMock()
         mock_response.url = "https://live.douyin.com/reflow/123456?sec_user_id=abc&aid=6383"
@@ -172,7 +172,7 @@ class TestGetUniqueId:
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
-        with patch("src.streams.room.httpx.AsyncClient", return_value=mock_client):
+        with patch("src.platforms.live.room.httpx.AsyncClient", return_value=mock_client):
             with pytest.raises(UnsupportedUrlError):
                 await get_unique_id("https://v.douyin.com/iQLgKSj/")
 
@@ -186,7 +186,7 @@ class TestGetXbogus:
     @pytest.mark.asyncio
     # 守卫函数可导入且可调用，防止重命名/删除导致调用方崩溃
     async def test_function_exists(self) -> None:
-        from src.streams.room import get_xbogus
+        from src.platforms.live.room import get_xbogus
 
         assert callable(get_xbogus)
 
@@ -195,6 +195,6 @@ class TestGetXbogus:
     async def test_function_is_async(self) -> None:
         import inspect
 
-        from src.streams.room import get_xbogus
+        from src.platforms.live.room import get_xbogus
 
         assert inspect.iscoroutinefunction(get_xbogus)

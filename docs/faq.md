@@ -85,7 +85,7 @@ brew install node
 - 排查要点（实测结论）：
   - 抖音风控的典型信号是 **HTTP 200 + 空响应体**，而非 4xx 错误码；排查时先看响应体长度，但空响应也需结合网络与日志判断，不能单凭它确定 UA/Cookie 被拒
   - `web/enter` 返回 `status_code=10002 / unknown error` 可为瞬时软拒绝（风控、缺少 msToken 或限流）。当前实现先静默重试 1 次，再回退 HTML 抓取；若兜底成功，属于**正常的容错链路**，不代表房间不可用或录制失败
-  - 请求抖音接口应使用**桌面端 User-Agent**；旧版移动端 UA 曾被静默限流（返回空 body）。账号解析使用 [room.py](../src/streams/room.py) 的 `DESKTOP_UA`，不要直接套用录制流探针的 UA
+  - 请求抖音接口应使用**桌面端 User-Agent**；旧版移动端 UA 曾被静默限流（返回空 body）。账号解析使用 [room.py](../src/platforms/live/room.py) 的 `DESKTOP_UA`，不要直接套用录制流探针的 UA
   - 主页类链接（格式 4/5）请直接填写完整地址；`iesdouyin.com/share/user/` 曾返回反爬壳页，不应依赖 HTML 正则提取 `unique_id`。当前账号解析优先走接口，旧页面仅为兜底
 
 **Q: HLS 校验失败日志空白，总是回退到 FLV**
@@ -95,22 +95,22 @@ brew install node
   - Windows 下 `socket.timeout` / `TimeoutError` 的 `str()` 为空，导致异常日志显示为空白，无法判断是超时、连接被拒还是证书问题
   - 流地址校验函数原先静默吞掉所有异常（`except Exception: return False`），回退 FLV 时无任何原因可查
   - m3u8 源 HEAD 探测原先未覆盖 404（抖音等 CDN 常对 HEAD 返回 404 而 GET 可正常拉流），且从 HLS 源选择到校验调用**未透传代理**，导致 TikTok 等需代理平台直连校验超时误判不可达
-- 当前表现：异常日志带脱敏 URL 与异常类型；流地址校验记录状态码 / content-type，通用 `is_reachable` 的部分诊断在 DEBUG 级别。HEAD 未确认可用的 m3u8（包括常见的 404）会补 `Range: bytes=0-0` GET 探测；HLS 源选择透传代理，并继续检查媒体分片。现行实现见 [selection.py](../src/streams/selection.py) 与 [http.py](../src/network/http.py)
+- 当前表现：异常日志带脱敏 URL 与异常类型；流地址校验记录状态码 / content-type，通用 `is_reachable` 的部分诊断在 DEBUG 级别。HEAD 未确认可用的 m3u8（包括常见的 404）会补 `Range: bytes=0-0` GET 探测；HLS 源选择透传代理，并继续检查媒体分片。现行实现见 [selection.py](../src/recording/pipeline/selection.py) 与 [http.py](../src/network/http.py)
 - 若仍回退，按 `ConnectTimeout`、`HEAD=404, Range-GET=403` 等具体日志检查代理、CDN 可达性与流地址是否过期；不要仅凭 HEAD 失败判断直播流失效。部分平台无备选源时会交由 ffmpeg 最后尝试，因为探针与 ffmpeg 的客户端指纹不同
 
 **Q: 弹幕连接失败，提示 `connecting through a SOCKS proxy requires python-socks`**
 
 - 历史根因是 WebSocket 库自动跟随系统 SOCKS 代理；视频拉流与弹幕使用不同通道，视频正常并不代表弹幕连接正常。macOS 的 `urllib.request.getproxies()` 还会读取系统网络代理设置，因此 shell 中没有代理环境变量也不能排除系统代理；可用 `scutil --proxy` 检查
-- 当前 [WebSocketClient](../src/network/websocket.py) 默认 `proxy=None`，不自动跟随系统代理或 `ALL_PROXY`；需要代理的平台可显式传入代理，不再是所有平台强制直连。[Twitch](../src/danmaku/platforms/twitch.py) 未收到配置代理时还会读取系统 HTTP/HTTPS 代理并显式传入。先更新到当前版本，再检查对应平台实际传入的代理，不要为解决意外代理而盲目增加 `python-socks` 或修改全局系统设置
+- 当前 [WebSocketClient](../src/network/websocket.py) 默认 `proxy=None`，不自动跟随系统代理或 `ALL_PROXY`；需要代理的平台可显式传入代理，不再是所有平台强制直连。[Twitch](../src/platforms/danmaku/twitch.py) 未收到配置代理时还会读取系统 HTTP/HTTPS 代理并显式传入。先更新到当前版本，再检查对应平台实际传入的代理，不要为解决意外代理而盲目增加 `python-socks` 或修改全局系统设置
 - 查看 [streamget.log](../logs/streamget.log) 的 DEBUG 记录，按「采集线程启动 → 连接就绪 → 收到首条弹幕 → 连接关闭原因」定位。分享日志前脱敏 Cookie、Token 与带签名 URL
-- B站能连接但无弹幕/几十秒后断开，还应区分两个已修复的历史问题：[get_bilibili_danmaku_info](../src/streams/spider.py) 先用 `room/v1/Room/room_init` 将短号转换为真实房间号再取弹幕鉴权；[心跳循环](../src/network/websocket.py) 会检查并等待异步心跳回调，避免协程未执行导致服务端断连
+- B站能连接但无弹幕/几十秒后断开，还应区分两个已修复的历史问题：[get_bilibili_danmaku_info](../src/platforms/live/spider.py) 先用 `room/v1/Room/room_init` 将短号转换为真实房间号再取弹幕鉴权；[心跳循环](../src/network/websocket.py) 会检查并等待异步心跳回调，避免协程未执行导致服务端断连
 
 **Q: 抖音、斗鱼显示「正在直播中」，却无报错、无录制文件**
 
 - 历史缺陷是 `get_record_headers()` 返回 `None` 时，`if headers:` 错误包住整个录制链，导致没有专属 Referer/Origin 且未配置 Cookie 的平台静默跳过录制；虎牙、B站有专属头，因而可能正常。不要把「补 Cookie 后恢复」误判为必须配置 Cookie 才能录制
 - 当前唯一入口为 `python -m src.main`；Web 面板由 `[Web] web_enable` 控制，[web.py](../src/web.py) 不提供独立启动入口。录制实现已移至 [session.py](../src/recording/session.py)，其中 `_build_ffmpeg_input_args()` 只按需插入 `-headers`，TLS、代理与后续录制不依赖 headers 是否为空
 - 排查先确认不是仅通知模式、录制并发槽等待或选源失败，再沿 `select_source_url` 返回值与「准备开始录制视频」日志定位。确需临时插桩时只记录脱敏后的流地址，并核对条件块边界；「条件为假而整块跳过」可能既无异常也无日志
-- 流地址探针与 ffmpeg 必须使用一致的 GET 请求语义、Referer/Cookie 和 UA；[selection.py](../src/streams/selection.py) 与录制链共用 `get_record_user_agent()` / `MOBILE_UA`，避免斗鱼等 CDN 因 UA 不同出现探针 403。不要将账号接口所需的桌面 UA 一概用于所有录制流
+- 流地址探针与 ffmpeg 必须使用一致的 GET 请求语义、Referer/Cookie 和 UA；[selection.py](../src/recording/pipeline/selection.py) 与录制链共用 `get_record_user_agent()` / `MOBILE_UA`，避免斗鱼等 CDN 因 UA 不同出现探针 403。不要将账号接口所需的桌面 UA 一概用于所有录制流
 
 **Q: 录制的视频文件损坏**
 

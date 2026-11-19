@@ -13,6 +13,8 @@
 - `ensure_config_migrated()` 只在 TOML 不存在时迁移旧 INI；成功转换后尝试将旧文件改名为 `config.ini.migrated`。已有 TOML 不被旧 INI 覆盖，首次启动无配置时创建 TOML 头部再由读取方补缺省值。
 - [reader.py](../../src/config/reader.py) 的容错 INI 解析和重复键诊断仅服务旧配置迁移；不把「INI 同节重复键容错」当成当前 TOML 语法规则。
 
+`src/config/settings.py` 在字段的 `Annotated` 声明中统一定义类型、TOML 节/键与默认值。引擎每轮调用 `settings.load(config)`，由加载器复用现有读写入口自动读取、补写缺省值并归一化格式、时长和代理等派生值；消费者通过模块引用读取最新设置。默认值在声明时保存，热加载删除配置项后恢复声明值；未知布尔原文和非法数值仍按现有规则保留并兜底。语言切换、调度器容量和监控服务的应用留在引擎。路径直接引用 `src/config/paths.py`；文件写入共用 `src/config/lock.py` 的同一把可重入锁，URL 文件恢复快照由 `src/config/files.py` 持有，配置层不依赖录制运行态。
+
 ## 读写接口
 
 | 接口 | 所属模块 | 行为 |
@@ -24,7 +26,7 @@
 | 房间编辑与配置备份 | [io.py](../../src/config/io.py) | 编辑 URL 列表、维护脱敏备份 |
 | 面板配置读写 | [config.py](../../src/api/config.py) | Web 配置、敏感值遮罩、目标键和值校验 |
 
-写入时复用共享 `state.file_update_lock`；布尔 token 的单一解析入口为 [booleans.py](../../src/config/booleans.py)。键名、原文保留和 TLS 约束见 [配置已知坑](../agent-reference/known-pitfalls.md#配置键名布尔口径与-ssl-验证)。
+写入时复用共享 `config.lock.file_update_lock`；布尔 token 的单一解析入口为 [booleans.py](../../src/config/booleans.py)。键名、原文保留和 TLS 约束见 [配置已知坑](../agent-reference/known-pitfalls.md#配置键名布尔口径与-ssl-验证)。
 
 ## 主播名自动更新
 

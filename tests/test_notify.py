@@ -15,7 +15,7 @@ import pytest
 from loguru import logger
 
 import src.notifications.notify as notify
-from src.recording import state
+from src.config import settings
 
 # M-30：命令一律用 sys.executable，不写死字面量 `python`——生产 run_script 以 shell=False +
 # shlex.split 在 PATH 里查找可执行文件，Linux/CI 镜像常只提供 python3（无 python 软链），旧写法在
@@ -100,13 +100,13 @@ def test_run_script_uses_safe_split_not_shell(log_capture: io.StringIO) -> None:
 # {ROOM_NAME}/{TIME}：机器字段永不进翻译层，中文 [直播间名称]/[时间] 仅作旧配置兼容别名）。
 def test_build_push_title_default_carries_room_name(monkeypatch: pytest.MonkeyPatch) -> None:
     # 未配置自定义标题时，兜底标题必须含 record_name（而不是死文本）
-    monkeypatch.setattr(state, "push_message_title", "")
+    monkeypatch.setattr(settings, "push_message_title", "")
     assert notify.build_push_title("序号37 哈那TωTira", "2026-10-22 18:11:45") == "序号37 哈那TωTira 正在直播中"
 
 
 def test_build_push_title_replaces_placeholders(monkeypatch: pytest.MonkeyPatch) -> None:
     # 自定义标题里的占位符按约定替换：正文与标题共用 {ROOM_NAME}/{TIME} 两个记号
-    monkeypatch.setattr(state, "push_message_title", "开播啦：{ROOM_NAME} @ {TIME}")
+    monkeypatch.setattr(settings, "push_message_title", "开播啦：{ROOM_NAME} @ {TIME}")
     title = notify.build_push_title("序号37 哈那TωTira", "2026-10-22 18:11:45")
     assert title == "开播啦：序号37 哈那TωTira @ 2026-10-22 18:11:45"
 
@@ -114,27 +114,27 @@ def test_build_push_title_replaces_placeholders(monkeypatch: pytest.MonkeyPatch)
 def test_build_push_title_accepts_legacy_chinese_placeholders(monkeypatch: pytest.MonkeyPatch) -> None:
     # 旧配置（改了占位符语法之前写下的）继续可用：中文别名在渲染时同样展开，
     # 不需要用户去 config.ini 里改一个字符
-    monkeypatch.setattr(state, "push_message_title", "开播啦：[直播间名称] @ [时间]")
+    monkeypatch.setattr(settings, "push_message_title", "开播啦：[直播间名称] @ [时间]")
     title = notify.build_push_title("序号37 哈那TωTira", "2026-10-22 18:11:45")
     assert title == "开播啦：序号37 哈那TωTira @ 2026-10-22 18:11:45"
 
 
 def test_build_push_title_without_placeholder_is_literal(monkeypatch: pytest.MonkeyPatch) -> None:
     # 没写占位符的自定义标题保持原样：不给老用户的通知标题强插主播名（对齐「只加占位符支持」的取舍）
-    monkeypatch.setattr(state, "push_message_title", "直播间状态更新通知")
+    monkeypatch.setattr(settings, "push_message_title", "直播间状态更新通知")
     assert notify.build_push_title("序号37 哈那TωTira", "2026-10-22 18:11:45") == "直播间状态更新通知"
 
 
 def test_build_push_title_survives_braces_in_room_name(monkeypatch: pytest.MonkeyPatch) -> None:
     # 主播昵称带花括号是常态（如「兔{酱}」）；渲染走 str.replace 而非 str.format，才不会被当占位符炸掉
-    monkeypatch.setattr(state, "push_message_title", "{ROOM_NAME} 开播")
+    monkeypatch.setattr(settings, "push_message_title", "{ROOM_NAME} 开播")
     assert notify.build_push_title("序号1 兔{酱}", "t") == "序号1 兔{酱} 开播"
 
 
 def test_push_message_sends_room_name_as_bark_title(monkeypatch: pytest.MonkeyPatch) -> None:
     # 端到端：push_message 传给 bark 的 title 必须带主播名，body 维持 main.py 拼好的正文
-    monkeypatch.setattr(state, "push_message_title", "")
-    monkeypatch.setattr(state, "live_status_push", "BARK")
+    monkeypatch.setattr(settings, "push_message_title", "")
+    monkeypatch.setattr(settings, "live_status_push", "BARK")
     sent: dict[str, object] = {}
 
     def fake_bark(api: str, title: str = "", content: str = "", **kwargs: object) -> dict[str, list[str | int]]:
@@ -160,7 +160,7 @@ def test_build_push_title_keeps_placeholder_out_of_translation(monkeypatch: pyte
     from src.support import i18n
 
     original = i18n.get_language()
-    monkeypatch.setattr(state, "push_message_title", "")
+    monkeypatch.setattr(settings, "push_message_title", "")
     try:
         i18n.set_language(lang)
         title = notify.build_push_title("序号37 哈那TωTira", "2026-10-22 18:11:45")

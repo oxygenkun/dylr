@@ -27,10 +27,10 @@ import pytest
 from loguru import logger
 
 import src.app.log_archive as la
-import src.danmaku.monitor as dm
+import src.danmaku.hub as dm
 import src.danmaku.srt_writer as sw
 import src.recording.process as fp
-from src.danmaku.monitor import DanmakuMonitorHub
+from src.danmaku.hub import DanmakuMonitorHub
 from src.danmaku.srt_writer import SrtWriter
 
 
@@ -249,7 +249,7 @@ class TestSidecarArchiveWindow:
 class TestSidecarRotateBackoff:
     # 三条锁都直接驱动 _append_sidecar_line（MID-25 起它既是生产实现也是给测试留的注入口），不经
     # hub/写线程：轮转只在句柄 tell() 越阈值时发生，用真线程反而要把队列排空时机也钉进断言。
-    # os.replace 替身按 M-27/MT-11 口径只落进 src.danmaku.monitor 的命名空间。
+    # os.replace 替身按 M-27/MT-11 口径只落进 src.danmaku.hub 的命名空间。
     @staticmethod
     def _close_all(files: dict[str, Any]) -> None:
         for fh in files.values():

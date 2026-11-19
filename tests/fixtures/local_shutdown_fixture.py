@@ -27,18 +27,19 @@ os.environ["DOUYIN_DISABLE_LOG_ARCHIVE"] = "1"
 
 # Bootstrap argv, environment and import path before loading production modules.
 from src.app import graceful_shutdown  # noqa: E402
+from src.config import settings  # noqa: E402
 from src.recording import engine as main  # noqa: E402
 from src.recording import session as recording  # noqa: E402
-from src.recording import state  # noqa: E402
+from src.recording import state as recording_state  # noqa: E402
 
 
 def run(output: Path) -> None:
     signal.signal(signal.SIGTERM, main.safe_exit)
     signal.signal(signal.SIGINT, main.safe_exit)
     output.mkdir(parents=True, exist_ok=True)
-    state.create_time_file = False
-    state.split_video_by_time = True
-    state.recording_enabled = True
+    settings.create_time_file = False
+    settings.split_video_by_time = True
+    recording_state.recording_enabled = True
     for kind in ["normal", "segmented"]:
         path = output / ("normal.mp4" if kind == "normal" else "segment_%03d.mp4")
         command = [

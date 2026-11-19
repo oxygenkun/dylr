@@ -46,7 +46,7 @@ uv run --locked --extra dev ruff check .
 
 ## 测试与覆盖率
 
-测试放在 `tests/`。源码搬迁后，既有文件名仍保留，例如 [test_ffmpeg_proc.py](../tests/test_ffmpeg_proc.py) 与 [test_stream_select.py](../tests/test_stream_select.py) 分别覆盖 [recording/process.py](../src/recording/process.py) 与 [streams/selection.py](../src/streams/selection.py)。前端 `tests/frontend/` 使用 Node 内置 `node:test`，无需 npm；新增用例须同步 Python 包装，并在 [ci.yml](../.github/workflows/ci.yml) 的「Gate frontend tests not skipped」登记 node-id。
+测试放在 `tests/`。源码搬迁后，既有文件名仍保留，例如 [test_ffmpeg_proc.py](../tests/test_ffmpeg_proc.py) 与 [test_stream_select.py](../tests/test_stream_select.py) 分别覆盖 [recording/process.py](../src/recording/process.py) 与 [recording/pipeline/selection.py](../src/recording/pipeline/selection.py)。前端 `tests/frontend/` 使用 Node 内置 `node:test`，无需 npm；新增用例须同步 Python 包装，并在 [ci.yml](../.github/workflows/ci.yml) 的「Gate frontend tests not skipped」登记 node-id。
 
 安装基础依赖与 dev extra 后，仅在准备提交时采集覆盖率并检查阈值；日常编辑不自动执行：
 
@@ -94,20 +94,20 @@ python tool/smoke_test.py -c tool/smoke_web.json -r smoke_report.html -f html
 
 **视频录制平台：**
 
-1. 在 `src/streams/spider.py` 中添加平台数据获取函数（参考现有平台实现）
-2. 在 `src/streams/stream.py` 中添加流地址与画质解析函数；支持画质回采时返回 `actual_quality` 和 `available_qualities` 字段
-3. 在 `src/streams/dispatch.py` 登记 URL 准入、平台 resolver 与房间上下文
+1. 在 `src/platforms/live/spider.py` 中添加平台数据获取函数（参考现有平台实现）
+2. 在 `src/recording/pipeline/stream.py` 中添加流地址与画质解析函数；支持画质回采时返回 `actual_quality` 和 `available_qualities` 字段
+3. 在 `src/recording/pipeline/dispatch.py` 登记 URL 准入、平台 resolver 与房间上下文
 4. 补充 `tests/` 回归用例，同步使用文档与 [平台架构说明](architecture/platforms.md)；文档入口见 [架构索引](architecture/README.md)
 
 **弹幕录制平台（如需支持弹幕）：**
 
-1. 在 `src/danmaku/platforms/` 下新建 `<平台>.py`，继承 `src/danmaku/base.py` 的 `DanmakuBase`，实现连接/鉴权/消息解析
-2. 在 `src/danmaku/factory.py` 的弹幕平台注册表中登记（平台名与 `src/streams/dispatch.py` 的 platform 标识一致），由 `get_danmaku_class` / `get_danmaku_collector` 工厂解耦创建
-3. 在 `src/streams/dispatch.py` 的 resolver 中填充弹幕参数；`src/recording/session.py` 沿用公共采集器生命周期
+1. 在 `src/platforms/danmaku/` 下新建 `<平台>.py`，继承 `src/platforms/danmaku/base.py` 的 `DanmakuBase`，实现连接/鉴权/消息解析
+2. 在 `src/danmaku/service.py` 的弹幕平台注册表中登记（平台名与 `src/recording/pipeline/dispatch.py` 的 platform 标识一致），由 `get_danmaku_class` / `get_danmaku_collector` 工厂解耦创建
+3. 在 `src/recording/pipeline/dispatch.py` 的 resolver 中填充弹幕参数；`src/recording/session.py` 沿用公共采集器生命周期
 4. 补充 `tests/` 回归用例，同步使用文档与 [平台架构说明](architecture/platforms.md)；文档入口见 [架构索引](architecture/README.md)
 
 选源与解析的操作配方见 [平台选源流程](../.agents/skills/platform-source-selection/SKILL.md)。
 
-> 注：弹幕子系统与 `src/streams/spider.py`（视频流地址解析）是平行解耦的两套抽象，`spider.py` 不导入 `src/danmaku/platforms/`。
+> 注：弹幕子系统与 `src/platforms/live/spider.py`（视频流地址解析）是平行解耦的两套抽象，`spider.py` 不导入 `src/platforms/danmaku/`。
 
 > 相关：[架构导航](architecture/README.md)、[项目结构](agent-reference/project-structure.md)；返回[文档导航](README.md)。

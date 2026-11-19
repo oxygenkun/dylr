@@ -16,14 +16,15 @@ from typing import Any
 import pytest
 
 import src.recording.postprocess as vp
-from src.recording import state
+from src.config import settings
+from src.support import console
 
 
 @pytest.fixture(autouse=True)
 def _stub_main_globals(monkeypatch: pytest.MonkeyPatch) -> Any:
     # converts_mp4 运行时读取 main 的两个全局：把「是否重编码」与彩色输出对象打桩，
     # 避免依赖真实 config.ini 与控制台（AGENTS：不 patch stdlib 模块本体，只换属性）
-    monkeypatch.setattr(state, "converts_to_h264", False, raising=False)
+    monkeypatch.setattr(settings, "converts_to_h264", False, raising=False)
 
     class _Color:
         YELLOW = ""
@@ -31,7 +32,7 @@ def _stub_main_globals(monkeypatch: pytest.MonkeyPatch) -> Any:
         def print_colored(self, *args: Any, **kwargs: Any) -> None:
             return None
 
-    monkeypatch.setattr(state, "color_obj", _Color(), raising=False)
+    monkeypatch.setattr(console, "color_obj", _Color(), raising=False)
     yield
 
 

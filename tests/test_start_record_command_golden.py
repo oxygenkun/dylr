@@ -1,3 +1,22 @@
+import copy
+import datetime
+import json
+import os
+import threading
+import traceback
+import types
+from collections.abc import Generator
+from pathlib import Path
+from types import ModuleType
+from typing import Any
+from unittest.mock import MagicMock
+
+import pytest
+
+from src.config import paths as config_paths
+from src.config import settings
+from src.recording import session as recording
+
 # 黄金样本测试：在 F-01（start_record 五条 ffmpeg 命令构造路径统一）重构之前，
 # 先把当前「逐分支内联构造」产出的 ffmpeg 命令行逐字节冻结成基准快照。
 #
@@ -20,23 +39,9 @@
 #   python -m pytest tests/test_start_record_command_golden.py -q                  # 比对基准（重构后回归）
 #
 # 重构 F-01 后，重跑普通模式，若任一命令与基准不符即说明行为被改动——必须回到「等价重构」。
-import copy
-import datetime
-import json
-import os
-import threading
-import traceback
-import types
-from collections.abc import Generator
-from pathlib import Path
-from types import ModuleType
-from typing import Any
-from unittest.mock import MagicMock
-
-import pytest
-
-from src.recording import session as recording
-from src.recording import state
+from src.recording import state as recording_state
+from src.recording.sources import room as room_poller
+from src.support import console
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _GOLDEN_PATH = Path(__file__).resolve().parent / "golden" / "start_record_commands.json"
@@ -231,54 +236,74 @@ def _setup_case(main: ModuleType, monkeypatch: pytest.MonkeyPatch, case: dict[st
     cap = _Cap()
 
     # —— 钉死所有录制状态 / 配置全局量 ——
-    plain = {
-        "exit_recording": False,
-        "recording_enabled": True,
-        "recording": set(),
-        "recording_time_list": {},
-        "record_state_lock": threading.Lock(),
-        "need_update_line_list": [],
-        "not_record_list": [],
-        "error_window": [],
-        "url_comments": set(),
-        "scheduler": None,
-        "auto_update_anchor_name": False,
-        "show_url": False,
-        "live_status_push": False,
-        "begin_show_push": False,
-        "over_show_push": False,
-        "over_push_message_text": "",
-        "begin_push_message_text": "",
-        "disable_record": False,
-        "push_check_seconds": 0,
-        "create_time_file": False,
-        "converts_to_mp4": False,
-        "delete_origin_file": False,
-        "custom_script": "",
-        "video_save_path": "",
-        "folder_by_author": False,
-        "folder_by_time": False,
-        "folder_by_title": False,
-        "filename_by_title": False,
-        "default_path": "/recordings",
-        "enable_https_recording": False,
-        "loop_time": False,
-        "delay_default": 0,
-        "video_save_type": case["save_type"],
-        "split_video_by_time": case["split"],
-        "split_time": "600",
-        "proxy_addr": case.get("proxy", ""),
-        "proxy_addr_bak": "",
-        "enable_proxy_platform_list": ["抖音直播"] if case.get("proxy") else [],
-        "extra_enable_proxy_platform_list": [],
-        "OVERSEAS_PLATFORM_HOST": case.get("overseas", []),
-        "color_obj": MagicMock(),
-    }
-    for name, value in plain.items():
-        monkeypatch.setattr(recording if name == "OVERSEAS_PLATFORM_HOST" else state, name, value)
+    for module, values in (
+        (
+            recording_state,
+            {
+                "exit_recording": False,
+                "recording_enabled": True,
+                "recording": set(),
+                "recording_time_list": {},
+                "record_state_lock": threading.Lock(),
+                "need_update_line_list": [],
+                "not_record_list": [],
+                "error_window": [],
+                "url_comments": set(),
+                "scheduler": None,
+            },
+        ),
+        (
+            settings,
+            {
+                "auto_update_anchor_name": False,
+                "show_url": False,
+                "live_status_push": False,
+                "begin_show_push": False,
+                "over_show_push": False,
+                "over_push_message_text": "",
+                "begin_push_message_text": "",
+                "disable_record": False,
+                "push_check_seconds": 0,
+                "create_time_file": False,
+                "converts_to_mp4": False,
+                "delete_origin_file": False,
+                "custom_script": "",
+                "video_save_path": "",
+                "folder_by_author": False,
+                "folder_by_time": False,
+                "folder_by_title": False,
+                "filename_by_title": False,
+                "enable_https_recording": False,
+                "loop_time": False,
+                "delay_default": 0,
+                "video_save_type": case["save_type"],
+                "split_video_by_time": case["split"],
+                "split_time": "600",
+                "proxy_addr": case.get("proxy", ""),
+                "proxy_addr_bak": "",
+                "enable_proxy_platform_list": ["抖音直播"] if case.get("proxy") else [],
+                "extra_enable_proxy_platform_list": [],
+            },
+        ),
+        (
+            config_paths,
+            {
+                "default_path": "/recordings",
+            },
+        ),
+        (
+            console,
+            {
+                "color_obj": MagicMock(),
+            },
+        ),
+    ):
+        for name, value in values.items():
+            monkeypatch.setattr(module, name, value)
+    _patch(monkeypatch, "OVERSEAS_PLATFORM_HOST", case.get("overseas", []))
 
     for ck in _COOKIE_GLOBALS:
-        monkeypatch.setattr(state, ck, "")
+        monkeypatch.setattr(settings, ck, "")
 
     # ssl 校验裁决：main.py 仅当 should_verify_stream_tls 返回 False（校验关闭）时才插入
     # -tls_verify 0，故 ssl_off=True 要让该接口返回 False。
@@ -308,7 +333,7 @@ def _setup_case(main: ModuleType, monkeypatch: pytest.MonkeyPatch, case: dict[st
     _time_shim.localtime = lambda t=None: _fixed_tt
     _time_shim.sleep = lambda *a, **k: None
     _time_shim.time = lambda: 1_000_000.0
-    monkeypatch.setattr(recording, "time", _time_shim)
+    _patch(monkeypatch, "time", _time_shim)
 
     class _FrozenDateTime(datetime.datetime):
         # 返回类型标 Any：typeshed 中 datetime.now/today 返回 Self，标具体类型会触发
@@ -326,13 +351,13 @@ def _setup_case(main: ModuleType, monkeypatch: pytest.MonkeyPatch, case: dict[st
     # 同进程任何线程（loguru 记录时间戳、coverage）此刻都在用冻结子类。
     _datetime_shim = _module_shim(datetime)
     _datetime_shim.datetime = _FrozenDateTime
-    monkeypatch.setattr(recording, "datetime", _datetime_shim)
+    _patch(monkeypatch, "datetime", _datetime_shim)
 
     # 所有文件系统副作用：makedirs 变 no-op，full_path 仅为确定字符串
     # MID-66：同上，os 走替身（其余 os.* 属性全部转发真实实现）
     _os_shim = _module_shim(os)
     _os_shim.makedirs = lambda *a, **k: None
-    monkeypatch.setattr(recording, "os", _os_shim)
+    _patch(monkeypatch, "os", _os_shim)
 
     # —— mock 网络 / IO ——
     port_info = {
@@ -347,23 +372,19 @@ def _setup_case(main: ModuleType, monkeypatch: pytest.MonkeyPatch, case: dict[st
     # 返回四元组 (platform, port_info, record_danmaku_args, new_record_url)（见 main.py 的
     # _resolve_platform_stream）。第 3 项以前恒为 None，SEV-2224 之后改为按用例取值，
     # 这样「保存类型分支漏传 danmaku_args」才会体现在快照里。
-    monkeypatch.setattr(
-        recording,
+    _patch(
+        monkeypatch,
         "_resolve_platform_stream",
         lambda *a, **k: (case["platform"], port_info, case["danmaku_args"], ""),
     )
-    monkeypatch.setattr(
-        recording,
-        "select_source_url",
-        lambda *a, **k: case["real_url"],
-    )
-    monkeypatch.setattr(
-        recording,
+    _patch(monkeypatch, "select_source_url", lambda *a, **k: case["real_url"])
+    _patch(
+        monkeypatch,
         "get_record_headers",
         lambda *a, **k: {"Referer": "http://example.com", "Cookie": "a=b"} if case.get("headers") else None,
     )
     # 返回 None → 走默认移动端 UA（确定性）
-    monkeypatch.setattr(recording, "get_record_user_agent", lambda *a, **k: None)
+    _patch(monkeypatch, "get_record_user_agent", lambda *a, **k: None)
 
     def _check(
         record_name: str,
@@ -383,9 +404,9 @@ def _setup_case(main: ModuleType, monkeypatch: pytest.MonkeyPatch, case: dict[st
         )
         return True  # comment_end=True → 触发 if comment_end: return，干净退出
 
-    monkeypatch.setattr(recording, "check_subprocess", _check)
-    monkeypatch.setattr(recording, "record_success", lambda *a, **k: None)
-    monkeypatch.setattr(recording, "record_error", lambda *a, **k: None)
+    _patch(monkeypatch, "check_subprocess", _check)
+    _patch(monkeypatch, "record_success", lambda *a, **k: None)
+    _patch(monkeypatch, "record_error", lambda *a, **k: None)
 
     def _dl(
         flv_url: str,
@@ -404,17 +425,17 @@ def _setup_case(main: ModuleType, monkeypatch: pytest.MonkeyPatch, case: dict[st
                 "platform": platform,
             }
         )
-        state.exit_recording = True  # 直下路径无 check_subprocess，靠退出标志干净退出
+        recording_state.exit_recording = True  # 直下路径无 check_subprocess，靠退出标志干净退出
         return True
 
-    monkeypatch.setattr(recording, "direct_download_stream", _dl)
+    _patch(monkeypatch, "direct_download_stream", _dl)
     # TS 非分段分支会无条件起一个非 daemon 线程跑 converts_mp4（真实函数会卡在假路径上），
     # 这里直接 no-op，避免 pytest 等待该线程导致挂死。
-    monkeypatch.setattr(recording, "converts_mp4", lambda *a, **k: None)
+    _patch(monkeypatch, "converts_mp4", lambda *a, **k: None)
 
     # 退出时房间清理：hub 调用 no-op
-    monkeypatch.setattr(recording, "get_hub", lambda: MagicMock())
-    import src.danmaku.monitor as _dm
+    _patch(monkeypatch, "get_hub", lambda: MagicMock())
+    import src.danmaku.hub as _dm
 
     # conftest 已把 _hub 设为 hermetic；此处再兜底，防止 finally 真连
     if hasattr(_dm, "_hub"):
@@ -432,7 +453,7 @@ def _setup_case(main: ModuleType, monkeypatch: pytest.MonkeyPatch, case: dict[st
     # 真实异常会被 start_record 内部 except 吞掉并无限循环；让 record_error 触发退出标志，使循环
     # 在首个异常后干净退出，异常本身留在 _Cap.errors 里可读。本行**覆盖**上面 record_error 的
     # no-op 桩（顺序敏感：换到那行之前就会被 no-op 抢走，异常轮次重新变成无限循环）。
-    monkeypatch.setattr(recording, "record_error", lambda *a, **k: setattr(state, "exit_recording", True))
+    _patch(monkeypatch, "record_error", lambda *a, **k: setattr(recording_state, "exit_recording", True))
 
     return cap
 
@@ -516,7 +537,7 @@ def test_start_record_command_golden(
     main_mod: ModuleType, monkeypatch: pytest.MonkeyPatch, case: dict[str, Any]
 ) -> None:
     cap = _setup_case(main_mod, monkeypatch, case)
-    recording.start_record((case["quality"], case["record_url"], case["anchor_name"]))
+    room_poller.start_record((case["quality"], case["record_url"], case["anchor_name"]))
     actual = _actual_of(case, cap)
 
     if _REGEN:
@@ -614,3 +635,10 @@ def test_golden_snapshot_shape_is_sane() -> None:
         )
         assert entry["platform"] == case["platform"], f"{case['id']} 快照里的 platform 与用例不符"
         assert "danmaku_args" in entry, f"{case['id']} 快照缺 danmaku_args 键（SEV-2224 的接线未被记录）"
+
+
+def _patch(monkeypatch: pytest.MonkeyPatch, name: str, value: object) -> None:
+    """同一符号可能位于录制执行层或房间轮询层，按实际归属同时补桩。"""
+    for module in (recording, room_poller):
+        if hasattr(module, name):
+            monkeypatch.setattr(module, name, value)

@@ -12,9 +12,9 @@ import time
 from pathlib import Path
 from typing import Any, cast
 
-from src.danmaku.base import DanmakuMessage, DanmakuMessageType
-from src.danmaku.collector import DanmakuCollector
+from src.danmaku.session import DanmakuCollector
 from src.danmaku.srt_writer import SrtWriter
+from src.platforms.danmaku.base import DanmakuMessage, DanmakuMessageType
 
 
 class _FakeDanmaku:

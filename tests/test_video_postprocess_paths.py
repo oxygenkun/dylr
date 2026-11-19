@@ -35,14 +35,19 @@ from typing import Any, cast
 import pytest
 
 import src.recording.postprocess as vp
-from src.recording import state
+from src.config import paths as config_paths
+from src.config import settings
+from src.recording import state as recording_state
+from src.support import console
 
 
 @pytest.fixture(autouse=True)
 def _stub_main_globals(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(state, "converts_to_h264", False, raising=False)
-    monkeypatch.setattr(state, "os_type", "nt", raising=False)
-    monkeypatch.setattr(state, "text_encoding", "utf-8", raising=False)
+    monkeypatch.setattr(settings, "converts_to_h264", False, raising=False)
+    process_os = types.SimpleNamespace(**vars(vp.os))
+    process_os.name = "nt"
+    monkeypatch.setattr(vp, "os", process_os)
+    monkeypatch.setattr(config_paths, "text_encoding", "utf-8", raising=False)
 
     class _Color:
         YELLOW = ""
@@ -50,9 +55,9 @@ def _stub_main_globals(monkeypatch: pytest.MonkeyPatch) -> None:
         def print_colored(self, *_a: Any, **_k: Any) -> None:
             return None
 
-    monkeypatch.setattr(state, "color_obj", _Color(), raising=False)
-    monkeypatch.setattr(state, "recording", set(), raising=False)
-    monkeypatch.setattr(state, "record_state_lock", threading.Lock(), raising=False)
+    monkeypatch.setattr(console, "color_obj", _Color(), raising=False)
+    monkeypatch.setattr(recording_state, "recording", set(), raising=False)
+    monkeypatch.setattr(recording_state, "record_state_lock", threading.Lock(), raising=False)
 
 
 def _make_source(tmp_path: Path, size: int = 64, name: str = "live_000.ts") -> Path:
@@ -353,10 +358,10 @@ class TestGeneratesSubtitles:
 
         def stop_after_one(_seconds: float) -> None:
             sleeps.append(_seconds)
-            state.recording.discard("room-a")
+            recording_state.recording.discard("room-a")
 
         monkeypatch.setattr(vp, "time", types.SimpleNamespace(sleep=stop_after_one))
-        state.recording.add("room-a")
+        recording_state.recording.add("room-a")
         vp.generate_subtitles("room-a", str(prefix))
         text = (tmp_path / "sub.srt").read_text(encoding="utf-8")
         assert text.startswith("1\n00:00:01,000 --> 00:00:02,000")
@@ -387,10 +392,10 @@ class TestGeneratesSubtitles:
         def step(_seconds: float) -> None:
             count["n"] += 1
             if count["n"] >= 2:
-                state.recording.discard("room-b")
+                recording_state.recording.discard("room-b")
 
         monkeypatch.setattr(vp, "time", types.SimpleNamespace(sleep=step))
-        state.recording.add("room-b")
+        recording_state.recording.add("room-b")
         vp.generate_subtitles("room-b", str(tmp_path / "sub"))
         text = (tmp_path / "sub.srt").read_text(encoding="utf-8")
         assert "00:00:02,000 --> 00:00:03,000" in text

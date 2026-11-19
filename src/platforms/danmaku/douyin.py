@@ -5,13 +5,13 @@ import time
 import urllib.parse
 from typing import Any, cast
 
-from src.danmaku.base import DanmakuBase, DanmakuMessage, DanmakuMessageType
-from src.danmaku.compression import MAX_DECOMPRESSED_BYTES, decompress_zlib
-from src.danmaku.platforms._xbogus import danmaku_signature
 from src.network.websocket import WebSocketClient
+from src.platforms.danmaku._xbogus import danmaku_signature
+from src.platforms.danmaku.base import DanmakuBase, DanmakuMessage, DanmakuMessageType
+from src.platforms.live.ttwid import get_ttwid, invalidate_ttwid
 from src.proto import douyin_pb2
-from src.streams.ttwid import get_ttwid, invalidate_ttwid
 from src.support import i18n
+from src.support.compression import MAX_DECOMPRESSED_BYTES, decompress_zlib
 from src.support.logger import logger
 
 SERVER_URL = "wss://webcast100-ws-web-lq.douyin.com/webcast/im/push/v2/"

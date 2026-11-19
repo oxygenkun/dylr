@@ -23,7 +23,8 @@ from pytest import MonkeyPatch
 
 from src.config import files as config_files
 from src.config import io as config_io
-from src.recording import state
+from src.config import lock as config_lock
+from src.config import paths as config_paths
 
 # 分支 → 用例 对照表（本文件只管写侧；读侧/只读降级见 test_config_io_readonly.py，
 # 备份轮换见 test_config_io_backup.py）。
@@ -67,10 +68,10 @@ def url_config(tmp_path: Path, monkeypatch: MonkeyPatch) -> Path:
     # 误写真实配置等于改掉用户环境。file_update_lock 也换成新锁，避免与同进程
     # 其他用例共享 main 的全局锁而互相串行。
     path = tmp_path / "URL_config.ini"
-    monkeypatch.setattr(state, "url_config_file", str(path))
-    monkeypatch.setattr(state, "text_encoding", "utf-8-sig")
-    monkeypatch.setattr(state, "ini_URL_content", "")
-    monkeypatch.setattr(state, "file_update_lock", threading.Lock())
+    monkeypatch.setattr(config_paths, "url_config_file", str(path))
+    monkeypatch.setattr(config_paths, "text_encoding", "utf-8-sig")
+    monkeypatch.setattr(config_files, "ini_URL_content", "")
+    monkeypatch.setattr(config_lock, "file_update_lock", threading.Lock())
     return path
 
 
@@ -118,7 +119,7 @@ class TestUpdateFile:
             def __exit__(self, *exc: object) -> None:
                 return None
 
-        monkeypatch.setattr(state, "file_update_lock", _CountingLock())
+        monkeypatch.setattr(config_lock, "file_update_lock", _CountingLock())
         assert config_io.update_file(str(url_config), URL_A, URL_A) == URL_A
         assert entered == 0, "无变化的调用不应抢写入锁"
 
@@ -132,7 +133,7 @@ class TestUpdateFile:
         assert "https://live.douyin.com/999" in content
         assert URL_B in content, "相似前缀行不得被顺带改掉"
         assert content.count("\r\n") == 2, "CRLF 行尾必须原样保留"
-        assert state.ini_URL_content == content
+        assert config_files.ini_URL_content == content
 
     def test_start_str_comments_out_hit_line(self, url_config: Path) -> None:
         _write_text(url_config, f"{URL_A}\n")
@@ -150,8 +151,8 @@ class TestUpdateFile:
         assert _read_text(url_config) == ""
 
     def test_read_failure_restores_snapshot(self, url_config: Path, monkeypatch: MonkeyPatch) -> None:
-        state.ini_URL_content = f"{URL_B}\n"
-        monkeypatch.setattr(state, "text_encoding", "utf-8-sig")
+        config_files.ini_URL_content = f"{URL_B}\n"
+        monkeypatch.setattr(config_paths, "text_encoding", "utf-8-sig")
         # BOM 后紧跟非法 UTF-8 字节：严格解码必失败，走到「用快照恢复」这条降级分支
         url_config.write_bytes(b"\xef\xbb\xbf\xff\xfe\xfd")
         assert config_io.update_file(str(url_config), URL_A, URL_B) == URL_A
@@ -159,7 +160,7 @@ class TestUpdateFile:
 
     def test_read_failure_without_snapshot_leaves_file_intact(self, url_config: Path) -> None:
         url_config.write_bytes(b"\xef\xbb\xbf\xff\xfe\xfd")
-        state.ini_URL_content = ""
+        config_files.ini_URL_content = ""
         assert config_io.update_file(str(url_config), URL_A, URL_B) == URL_A
         assert url_config.read_bytes().startswith(b"\xef\xbb\xbf\xff")
 
@@ -168,7 +169,7 @@ class TestUpdateFile:
         monkeypatch.setattr(config_io, "_atomic_write_text", lambda *_a, **_k: False)
         assert config_io.update_file(str(url_config), URL_A, URL_B) == URL_A
         assert _read_text(url_config) == f"{URL_A}\n"
-        assert state.ini_URL_content == "", "写失败时快照不得前进"
+        assert config_files.ini_URL_content == "", "写失败时快照不得前进"
 
     def test_no_match_writes_nothing_and_returns_old_string(self, url_config: Path, monkeypatch: MonkeyPatch) -> None:
         # M-07（2026-10-19）：old_str 一行都没命中 → **不落盘** + 返回 old_str。
@@ -188,7 +189,7 @@ class TestUpdateFile:
         ), "未命中必须与「替换成功」可区分（返回 old_str 是 web_api MIN-2243 负信号契约的唯一来源）"
         assert write_calls == [], "未命中不得整文件重写（无谓刷新 mtime 会牵动热加载与备份触发判据）"
         assert _read_text(url_config) == f"{URL_A}\n{URL_B}\n"
-        assert state.ini_URL_content == "", "未命中时快照不得前进"
+        assert config_files.ini_URL_content == "", "未命中时快照不得前进"
 
     def test_comment_only_rewrite_still_lands_when_content_is_identical(
         self, url_config: Path, monkeypatch: MonkeyPatch
@@ -244,14 +245,14 @@ class TestUpdateAnchorName:
 
     def test_unreadable_file_returns_false(self, url_config: Path, monkeypatch: MonkeyPatch) -> None:
         url_config.write_bytes(b"\xef\xbb\xbf\xff\xfe")
-        monkeypatch.setattr(state, "text_encoding", "utf-8-sig")
+        monkeypatch.setattr(config_paths, "text_encoding", "utf-8-sig")
         assert config_io.update_anchor_name(URL_A, "张三") is False
 
     def test_write_failure_does_not_advance_snapshot(self, url_config: Path, monkeypatch: MonkeyPatch) -> None:
         _write_text(url_config, f"{URL_A}\n")
         monkeypatch.setattr(config_io, "_atomic_write_text", lambda *_a, **_k: False)
         assert config_io.update_anchor_name(URL_A, "张三") is False
-        assert state.ini_URL_content == ""
+        assert config_files.ini_URL_content == ""
 
 
 class TestSecretRedaction:
@@ -294,7 +295,7 @@ class TestBackupSecretHandling:
         src = tmp_path / "config.ini"
         _write_text(src, "[Cookie]\ndouyin_cookie = top-secret\n")
         monkeypatch.delenv("DLR_BACKUP_KEEP_SECRETS", raising=False)
-        monkeypatch.setattr(state, "text_encoding", "utf-8-sig")
+        monkeypatch.setattr(config_paths, "text_encoding", "utf-8-sig")
         backup_dir = tmp_path / "backup"
         config_io.backup_file(str(src), str(backup_dir))
         copies = list(backup_dir.iterdir())
@@ -307,7 +308,7 @@ class TestBackupSecretHandling:
         src = tmp_path / "config.ini"
         _write_text(src, "[Cookie]\ndouyin_cookie = top-secret\n")
         monkeypatch.setenv("DLR_BACKUP_KEEP_SECRETS", "1")
-        monkeypatch.setattr(state, "text_encoding", "utf-8-sig")
+        monkeypatch.setattr(config_paths, "text_encoding", "utf-8-sig")
         backup_dir = tmp_path / "backup"
         config_io.backup_file(str(src), str(backup_dir))
         copies = list(backup_dir.iterdir())
@@ -344,7 +345,7 @@ class TestBackupSecretHandling:
         src = tmp_path / "config.ini"
         _write_text(src, "[Cookie]\ndouyin_cookie = top-secret\n")
         monkeypatch.setenv("DLR_BACKUP_KEEP_SECRETS", "1")
-        monkeypatch.setattr(state, "text_encoding", "utf-8-sig")
+        monkeypatch.setattr(config_paths, "text_encoding", "utf-8-sig")
         backup_dir = tmp_path / "backup"
 
         def deny(*args: object, **kwargs: object) -> None:
@@ -375,11 +376,11 @@ class TestBackupLoop:
         _write_text(cfg, "[录制设置]\nlanguage = zh_CN\n")
         urls = tmp_path / "URL_config.ini"
         _write_text(urls, f"{URL_A}\n")
-        monkeypatch.setattr(state, "config_file", str(cfg))
-        monkeypatch.setattr(state, "url_config_file", str(urls))
-        monkeypatch.setattr(state, "backup_dir", str(tmp_path / "backup"))
+        monkeypatch.setattr(config_paths, "config_file", str(cfg))
+        monkeypatch.setattr(config_paths, "url_config_file", str(urls))
+        monkeypatch.setattr(config_paths, "backup_dir", str(tmp_path / "backup"))
         monkeypatch.delenv("DLR_BACKUP_KEEP_SECRETS", raising=False)
-        monkeypatch.setattr(state, "text_encoding", "utf-8")
+        monkeypatch.setattr(config_paths, "text_encoding", "utf-8")
 
         # MT-01（2026-10-19）：旧桩在**首轮** sleep 就抛，循环只跑一轮，
         # 「MD5 未变 → 不重复备份」那条分支从未被执行——删掉 `if new_md5 != md5` 去重判断
@@ -420,10 +421,10 @@ class TestBackupLoop:
         # ["config.ini"]（只试过一次）而转红。
         cfg = tmp_path / "config.ini"
         _write_text(cfg, "[Cookie]\ndouyin_cookie = top-secret\n")
-        monkeypatch.setattr(state, "config_file", str(cfg))
-        monkeypatch.setattr(state, "url_config_file", str(tmp_path / "no-url-config.ini"))
-        monkeypatch.setattr(state, "backup_dir", str(tmp_path / "backup"))
-        monkeypatch.setattr(state, "text_encoding", "utf-8")
+        monkeypatch.setattr(config_paths, "config_file", str(cfg))
+        monkeypatch.setattr(config_paths, "url_config_file", str(tmp_path / "no-url-config.ini"))
+        monkeypatch.setattr(config_paths, "backup_dir", str(tmp_path / "backup"))
+        monkeypatch.setattr(config_paths, "text_encoding", "utf-8")
 
         outcomes = [False, True]  # 第一轮失败、第二轮成功
         attempts: list[str] = []
@@ -452,9 +453,9 @@ class TestBackupLoop:
         cfg.write_text("[录制设置]\nlanguage = zh_CN\n", encoding="utf-8")
         urls = tmp_path / "URL_config.ini"
         urls.write_text(f"{URL_A}\n", encoding="utf-8")
-        monkeypatch.setattr(state, "config_file", str(cfg))
-        monkeypatch.setattr(state, "url_config_file", str(urls))
-        monkeypatch.setattr(state, "backup_dir", str(tmp_path / "backup"))
+        monkeypatch.setattr(config_paths, "config_file", str(cfg))
+        monkeypatch.setattr(config_paths, "url_config_file", str(urls))
+        monkeypatch.setattr(config_paths, "backup_dir", str(tmp_path / "backup"))
 
         def deny(*args: object, **kwargs: object) -> None:
             raise OSError("stat failed")
@@ -491,7 +492,7 @@ class TestParserHelpers:
 
         target = tmp_path / "config.toml"
         target.write_text('["录制设置"]\n', encoding="utf-8")
-        monkeypatch.setattr(state, "config_file", str(target))
+        monkeypatch.setattr(config_paths, "config_file", str(target))
         store = ConfigStore(target)
         store.read()
         assert config_io.read_config_bool(store, "录制设置", "只开启粉丝弹幕", default=True) is True

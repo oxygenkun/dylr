@@ -3,15 +3,21 @@
 import builtins
 import threading
 import types
+from annotationlib import Format, get_annotations
 from collections import deque
 from pathlib import Path
 from unittest.mock import Mock
 
 import pytest
 
+from src.config import files as config_files
+from src.config import paths as config_paths
+from src.config import settings
 from src.config.store import ConfigStore
 from src.network import policy
-from src.recording import engine, state
+from src.recording import engine
+from src.recording import state as recording_state
+from src.recording.sources import room as room_module
 
 
 class CycleEnded(BaseException):
@@ -20,30 +26,31 @@ class CycleEnded(BaseException):
 
 @pytest.fixture(autouse=True)
 def isolated_engine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    for name, value in vars(state).copy().items():
-        if not name.startswith("__"):
+    for module in (recording_state, settings, config_paths, config_files):
+        for name in get_annotations(module, format=Format.STRING):
+            value = getattr(module, name)
             if isinstance(value, (dict, list, set, deque)):
                 value = value.copy()
-            monkeypatch.setattr(state, name, value)
-    state.script_path = str(tmp_path)
-    state.config_file = str(tmp_path / "config.toml")
-    state.url_config_file = str(tmp_path / "URL_config.ini")
-    state.default_path = str(tmp_path / "downloads")
-    state.backup_dir = str(tmp_path / "backup_config")
-    state.first_run = False
-    state.first_start = True
-    state.recording_enabled = False
-    state.exit_recording = False
-    state.disk_limited = False
-    state.scheduler = None
-    state.running_list = []
-    state.recording = set()
-    state.create_var = {}
-    state.need_update_line_list = []
-    state.not_record_list = []
-    Path(state.config_file).write_text('["录制设置"]\nlanguage = "zh_CN"\n', encoding="utf-8")
-    Path(state.url_config_file).write_text("https://live.douyin.com/123\n", encoding="utf-8-sig")
-    monkeypatch.setattr(engine, "config", ConfigStore(state.config_file))
+            monkeypatch.setattr(module, name, value)
+    config_paths.script_path = str(tmp_path)
+    config_paths.config_file = str(tmp_path / "config.toml")
+    config_paths.url_config_file = str(tmp_path / "URL_config.ini")
+    config_paths.default_path = str(tmp_path / "downloads")
+    config_paths.backup_dir = str(tmp_path / "backup_config")
+    recording_state.first_run = False
+    recording_state.first_start = True
+    recording_state.recording_enabled = False
+    recording_state.exit_recording = False
+    recording_state.disk_limited = False
+    recording_state.scheduler = None
+    recording_state.running_list = []
+    recording_state.recording = set()
+    recording_state.create_var = {}
+    recording_state.need_update_line_list = []
+    recording_state.not_record_list = []
+    Path(config_paths.config_file).write_text('["录制设置"]\nlanguage = "zh_CN"\n', encoding="utf-8")
+    Path(config_paths.url_config_file).write_text("https://live.douyin.com/123\n", encoding="utf-8-sig")
+    monkeypatch.setattr(engine, "config", ConfigStore(config_paths.config_file))
     engine.config.read()
     monkeypatch.setattr(engine, "language", "zh_CN")
     monkeypatch.setattr(engine, "_last_ssl_disable_platforms_raw", "")
@@ -69,7 +76,7 @@ def isolated_engine(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_main_applies_configuration_and_room_entries() -> None:
-    Path(state.config_file).write_text(
+    Path(config_paths.config_file).write_text(
         '["录制设置"]\n'
         '"同一时间访问网络的线程数" = 7\n'
         '"最大同时录制数(0为不限制)" = 2\n'
@@ -83,39 +90,39 @@ def test_main_applies_configuration_and_room_entries() -> None:
     )
     active = "https://live.douyin.com/123"
     commented = "https://www.huya.com/456"
-    Path(state.url_config_file).write_text(
+    Path(config_paths.url_config_file).write_text(
         f"{active}\n#{commented}\n高清，https://live.bilibili.com/789，主播: 测试\nhttps://unknown.example/123\n",
         encoding="utf-8-sig",
     )
     engine.config.read()
     with pytest.raises(CycleEnded):
         engine.main(non_interactive=True)
-    assert state.video_save_type == "MP4"
-    assert state.split_time == "1800" and state.max_record_seconds == 0
-    assert state.delay_default == 30 and state.proxy_addr is None
-    assert state.hls_collection_exclude_platforms == ["虎牙直播", "B站直播"]
-    assert state.scheduler is not None
-    assert state.scheduler.network_semaphore.capacity == 7
-    assert state.scheduler.recording_limit == 2
-    assert state.text_no_repeat_url == [
+    assert settings.video_save_type == "MP4"
+    assert settings.split_time == "1800" and settings.max_record_seconds == 0
+    assert settings.delay_default == 30 and settings.proxy_addr is None
+    assert settings.hls_collection_exclude_platforms == ["虎牙直播", "B站直播"]
+    assert recording_state.scheduler is not None
+    assert recording_state.scheduler.network_semaphore.capacity == 7
+    assert recording_state.scheduler.recording_limit == 2
+    assert recording_state.text_no_repeat_url == [
         ("原画", active, ""),
         ("高清", "https://live.bilibili.com/789", "主播: 测试"),
     ]
-    assert commented in state.url_comments
-    assert "#https://unknown.example/123" in Path(state.url_config_file).read_text(encoding="utf-8-sig")
+    assert commented in recording_state.url_comments
+    assert "#https://unknown.example/123" in Path(config_paths.url_config_file).read_text(encoding="utf-8-sig")
     engine.follow_monitor.start.assert_called_once()
     engine.douyin_dm_monitor.start.assert_called_once()
 
 
 def test_main_hot_reload_replaces_previous_values(monkeypatch: pytest.MonkeyPatch) -> None:
-    config_file = Path(state.config_file)
+    config_file = Path(config_paths.config_file)
     config_file.write_text('["录制设置"]\n"同一时间访问网络的线程数" = 5\n', encoding="utf-8")
     engine.config.read()
     capacities: list[int] = []
 
     def next_cycle(seconds: float) -> None:
-        assert state.scheduler is not None
-        capacities.append(state.scheduler.network_semaphore.capacity)
+        assert recording_state.scheduler is not None
+        capacities.append(recording_state.scheduler.network_semaphore.capacity)
         if len(capacities) == 1:
             config_file.write_text('["录制设置"]\n"同一时间访问网络的线程数" = 9\n', encoding="utf-8")
         else:
@@ -125,14 +132,14 @@ def test_main_hot_reload_replaces_previous_values(monkeypatch: pytest.MonkeyPatc
     with pytest.raises(CycleEnded):
         engine.main(non_interactive=True)
     assert capacities == [5, 9]
-    assert state.max_request == 9
+    assert settings.max_request == 9
 
 
 def test_web_engine_returns_when_disk_limit_is_reached() -> None:
     engine.utils.check_disk_capacity.return_value = 0
     engine.main(non_interactive=True)
-    assert state.disk_limited and state.exit_recording
-    assert not state.create_var and not state.running_list
+    assert recording_state.disk_limited and recording_state.exit_recording
+    assert not recording_state.create_var and not recording_state.running_list
     engine._shutdown_postprocess_executor.assert_called_once()
 
 
@@ -151,15 +158,21 @@ def test_room_threads_release_registration(monkeypatch: pytest.MonkeyPatch, star
                 raise RuntimeError("thread unavailable")
             super().start()
 
-    def record(url_tuple: tuple[str, str, str], number: int, *, room_state: dict[str, str]) -> None:
+    def record(
+        url_tuple: tuple[str, str, str],
+        number: int,
+        *,
+        room_state: dict[str, str],
+        **_kwargs: object,
+    ) -> None:
         calls.append((url_tuple, number))
         room_state["name"] = "测试房间"
 
     threading_shim = types.SimpleNamespace(**vars(threading))
     threading_shim.Thread = RoomThread
-    monkeypatch.setattr(engine, "threading", threading_shim)
-    monkeypatch.setattr(engine, "start_record", record)
-    state.recording_enabled = True
+    monkeypatch.setattr(room_module, "threading", threading_shim)
+    monkeypatch.setattr(room_module, "start_record", record)
+    recording_state.recording_enabled = True
     try:
         with pytest.raises(CycleEnded):
             engine.main(non_interactive=True)
@@ -170,7 +183,7 @@ def test_room_threads_release_registration(monkeypatch: pytest.MonkeyPatch, star
             assert not thread.is_alive()
     assert len(threads) == 1
     assert calls == ([] if start_failure else [(("原画", "https://live.douyin.com/123", ""), 1)])
-    assert not state.running_list and not state.create_var
+    assert not recording_state.running_list and not recording_state.create_var
 
 
 @pytest.mark.parametrize("cli", [False, True])

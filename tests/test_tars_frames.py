@@ -1,4 +1,4 @@
-# CR-03 畸形 Tars 帧边界回归锁（src/danmaku/platforms/_tars.py，2026-09-21 补）。
+# CR-03 畸形 Tars 帧边界回归锁（src/platforms/danmaku/_tars.py，2026-09-21 补）。
 #
 # 被守的失败形态：解码器把协议里的长度字段当游标增量直接用，且只判「未越上界」不判负数。
 # 负长度 → 切片得空串且游标**回退**到刚消费的头字节之前，而 _goto / finish_struct
@@ -28,8 +28,8 @@ from typing import Any
 
 import pytest
 
-from src.danmaku.platforms._tars import SIMPLE_LIST, TarsInputStream, TarsOutputStream
-from src.danmaku.platforms.huya import HuyaDanmaku
+from src.platforms.danmaku._tars import SIMPLE_LIST, TarsInputStream, TarsOutputStream
+from src.platforms.danmaku.huya import HuyaDanmaku
 
 
 def _int_field(value: int) -> bytes:

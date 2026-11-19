@@ -13,7 +13,7 @@
 # DNS 那一 seam 用 monkeypatch.setattr 换 targets.host_rejection_reason；
 # 而内网/回环/元数据字面量那几条一律走**真实**判据（它们不经 DNS，离线即可定罪）。
 #
-# 判据分层（与 src/streams/spider.py 的三道闸一一对应）：
+# 判据分层（与 src/platforms/live/spider.py 的三道闸一一对应）：
 #   ① 落地页 host 域族白名单 _shopee_is_allowed_host（含 userinfo/@ 拒绝）；
 #   ② 落地页内网判定 targets.host_rejection_reason；
 #   ③ 构造结果 api_host 再过一次白名单（校验的是要发出去的那个 host，不是输入）。
@@ -24,7 +24,7 @@ from typing import Any
 import pytest
 
 from src.network import targets
-from src.streams import spider as sp
+from src.platforms.live import spider as sp
 
 
 def _as_str(value: object) -> str:

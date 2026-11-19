@@ -7,13 +7,13 @@ def main() -> None:
     from src.support.console import configure_encoding
 
     configure_encoding()
+    from src.config import paths as config_paths
     from src.config.store import ensure_config_migrated
-    from src.recording import state
 
-    _ = ensure_config_migrated(state.config_file, state.legacy_config_file)
+    _ = ensure_config_migrated(config_paths.config_file, config_paths.legacy_config_file)
     from src.api.config import read_web_config
 
-    if read_web_config(state.config_file)["web_enable"]:
+    if read_web_config(config_paths.config_file)["web_enable"]:
         from src import web
 
         web.run()

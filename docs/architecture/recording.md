@@ -6,7 +6,7 @@
 
 `src/main.py` 只负责启动；`src/recording/engine.py` 的 `initialize_process()` 显式执行运行时检查、配置初始化、退出钩子和备份线程启动，CLI 另外安装信号处理器。导入录制模块不会执行这些启动操作，不需要 `sys.modules` 入口别名或重导出入口函数。
 
-`src/recording/session.py` 管理单房间轮询、直下、FFmpeg 命令、看门狗和录后处理接线；临时解析变量留在函数内。共享配置、集合、计数器、锁和调度器引用归 `src/recording/state.py`，状态展示归 `src/recording/status.py`。完整调用关系见 [架构总览](README.md#工作流程与依赖边界)，文件清单只在 [项目结构](../agent-reference/project-structure.md) 维护。
+`src/recording/service.py` 的 `RecordingService` 管理房间轮询线程并统一选源入口；`src/recording/sources/room.py` 的 `RoomPoller` / `start_record` 负责单房间检测循环；`src/recording/session.py` 的 `RecorderSession` 执行单次录制（直下、FFmpeg 命令、看门狗与录后处理接线）。录制集合、计数器、线程/调度器引用及对应锁集中在 `src/recording/state.py`；热加载后的设置快照与运行路径分别归 `src/config/settings.py` 和 `src/config/paths.py`，调用方直接引用所属模块。配置写锁归 `src/config/lock.py`，URL 文件恢复快照归 `src/config/files.py`，抖音限流锁和时间戳随限流函数留在选源模块；应用版本统一由 `src/app/version.py` 读取，状态展示归 `src/recording/status.py`。完整调用关系见 [架构总览](README.md#工作流程与依赖边界)，文件清单只在 [项目结构](../agent-reference/project-structure.md) 维护。
 
 ## 并发调度中枢 (`src/recording/scheduler.py`)
 

@@ -108,7 +108,8 @@ def _drive_web_main(
     cfg = _write_web_config(tmp_path, host)
     engine = _FakeEngineModule(tmp_path, cfg)
 
-    monkeypatch.setattr(web, "state", engine)
+    monkeypatch.setattr(web, "config_paths", engine)
+    monkeypatch.setattr(web, "recording_state", engine)
     monkeypatch.setattr(web, "recorder", engine)
     monkeypatch.setattr(web, "logger", _RecordingLogger(res.warnings))
     monkeypatch.setattr(web, "_enter_background_mode", fake_enter_background_mode)

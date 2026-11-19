@@ -5,11 +5,13 @@ import re
 from collections import OrderedDict
 from pathlib import Path
 
+from src.config import lock as config_lock
 from src.config.store import ConfigError, ConfigStore, ConfigValueError
-from src.recording import state
 from src.support import i18n
 from src.support.logger import logger
 from src.support.utils import atomic_write_text, mask_credentials
+
+ini_URL_content: str = ""  # URL 文件恢复快照；成功写回后更新。
 
 
 def read_ini_value(file_path: str | Path, section: str, key: str) -> str | None:
@@ -38,7 +40,7 @@ def read_config_value(file_path: str | Path, section: str, key: str) -> str | No
 
 def update_config(file_path: str | Path, section: str, key: str, new_value: str) -> None:
     """持锁修改 TOML 配置项并原子写回。"""
-    with state.file_update_lock:
+    with config_lock.file_update_lock:
         store = ConfigStore(file_path)
         try:
             store.read()
@@ -74,7 +76,7 @@ def remove_duplicate_lines(file_path: str | Path) -> None:
     """持锁去重配置行，保留首次出现顺序与行尾。"""
     unique_lines: OrderedDict[str, str] = OrderedDict()
     text_encoding = "utf-8-sig"
-    with state.file_update_lock:
+    with config_lock.file_update_lock:
         try:
             with open(file_path, encoding=text_encoding, newline="") as input_file:
                 for line in input_file:
@@ -113,7 +115,7 @@ def rewrite_line_by_segment(text_line: str, old_str: str, new_str: str) -> str |
 
 def replace_url(file_path: str | Path, old: str, new: str) -> None:
     """持锁精确替换 URL 配置字段并原子写回。"""
-    with state.file_update_lock:
+    with config_lock.file_update_lock:
         try:
             with open(file_path, encoding="utf-8-sig", newline="") as f:
                 lines = f.readlines()

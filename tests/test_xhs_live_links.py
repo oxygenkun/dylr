@@ -1,3 +1,15 @@
+import json
+from typing import Any
+from unittest.mock import patch
+
+import pytest
+
+from src.config import paths as config_paths
+from src.config import settings
+from src.platforms.live import spider as sp
+from src.platforms.live.spider import XhsUrlError, parse_xhs_live_url
+from src.recording import session as recording
+
 # 小红书链接统一解析契约的专项测试（PROPOSAL_2026-10-04 Task 1）。
 #
 # 覆盖的是**纯解析**这一层：`spider.parse_xhs_live_url` 不发网络请求、不读配置，
@@ -12,17 +24,10 @@
 #   2) 动态段直播 https://www.xiaohongshu.com/livestream/<动态段>/<数字房间ID>
 #   3) 分享短链  https://xhslink.com/o/<短码>（本任务只做结构识别，不解重定向）
 #   4) 作者主页  https://www.xiaohongshu.com/user/profile/<用户ID>（既有监控兼容）
-import json
-from typing import Any
-from unittest.mock import patch
-
-import pytest
-
-from src.recording import session as recording
-from src.recording import state
-from src.streams import dispatch as platform_dispatch
-from src.streams import spider as sp
-from src.streams.spider import XhsUrlError, parse_xhs_live_url
+from src.recording import state as recording_state
+from src.recording.pipeline import dispatch as platform_dispatch
+from src.recording.sources import room as room_poller
+from src.support import console
 
 # 用户给出的真实房间号形态：18 位纯数字，用来锁「room_id 必须按原样整段取出」。
 LIVE_ROOM_ID = "570480456678837366"
@@ -535,8 +540,8 @@ def main_mod() -> Any:
 def _prime_resolver(main: Any, monkeypatch: pytest.MonkeyPatch, port_info: dict[str, Any]) -> None:
     import threading
 
-    monkeypatch.setattr(state, "semaphore", threading.Semaphore(8), raising=False)
-    monkeypatch.setattr(state, "xhs_cookie", "", raising=False)
+    monkeypatch.setattr(recording_state, "semaphore", threading.Semaphore(8), raising=False)
+    monkeypatch.setattr(settings, "xhs_cookie", "", raising=False)
 
     async def _fake_stream_url(*args: object, **kwargs: object) -> dict[str, object]:
         return dict(port_info)
@@ -586,7 +591,9 @@ def test_xhs_dispatch_warnings_use_translated_templates() -> None:
     import ast
     from pathlib import Path
 
-    tree = ast.parse((Path(__file__).resolve().parent.parent / "src/streams/dispatch.py").read_text(encoding="utf-8"))
+    tree = ast.parse(
+        (Path(__file__).resolve().parent.parent / "src/recording/pipeline/dispatch.py").read_text(encoding="utf-8")
+    )
     found: set[str] = set()
     for node in ast.walk(tree):
         if not (isinstance(node, ast.Call) and getattr(node.func, "attr", "") == "warning" and node.args):
@@ -621,9 +628,9 @@ def test_xhs_link_creates_and_starts_recording_job(
     page = _page("end", nickname="测试主播")
     fake = _fake_async_req({LIVE_ROOM_ID: page})
     monkeypatch.setattr(sp.http, "request", fake)
-    monkeypatch.setattr(state, "xhs_cookie", "", raising=False)
+    monkeypatch.setattr(settings, "xhs_cookie", "", raising=False)
     monkeypatch.setattr(platform_dispatch.spider.http, "request", fake)
-    monkeypatch.setattr(state, "semaphore", threading.Semaphore(8), raising=False)
+    monkeypatch.setattr(recording_state, "semaphore", threading.Semaphore(8), raising=False)
 
     commands: list[list[str]] = []
     updates: list[str] = []
@@ -643,68 +650,86 @@ def test_xhs_link_creates_and_starts_recording_job(
 
     # start_record 靠 exit_recording 收敛：_check 返回 True 即「注释退出」，本例用 main 命名空间里的
     # time 替身把轮末等待的第一次 sleep 变成「置退出标志」（见下方 time_shim），未开播轮也能确定跑完一轮。
-    monkeypatch.setattr(recording, "check_subprocess", _check)
-    monkeypatch.setattr(recording, "record_success", lambda *a, **k: None)
-    monkeypatch.setattr(recording, "record_error", lambda *a, **k: None)
-    monkeypatch.setattr(
-        recording, "select_source_url", lambda *a, **k: "http://live-source-play.xhscdn.com/live/abc.flv"
-    )
-    monkeypatch.setattr(recording, "get_record_headers", lambda *a, **k: None)
-    monkeypatch.setattr(recording, "get_record_user_agent", lambda *a, **k: None)
-    monkeypatch.setattr(recording, "converts_mp4", lambda *a, **k: None)
-    monkeypatch.setattr(recording, "generate_subtitles", lambda *a, **k: None)
+    _patch(monkeypatch, "check_subprocess", _check)
+    _patch(monkeypatch, "record_success", lambda *a, **k: None)
+    _patch(monkeypatch, "record_error", lambda *a, **k: None)
+    _patch(monkeypatch, "select_source_url", lambda *a, **k: "http://live-source-play.xhscdn.com/live/abc.flv")
+    _patch(monkeypatch, "get_record_headers", lambda *a, **k: None)
+    _patch(monkeypatch, "get_record_user_agent", lambda *a, **k: None)
+    _patch(monkeypatch, "converts_mp4", lambda *a, **k: None)
+    _patch(monkeypatch, "generate_subtitles", lambda *a, **k: None)
 
     # plain 是 start_record 单轮运行所需的全部模块全局（与 test_record_watchdog 的
     # _prime_start_record / test_start_record_command_golden 的 _setup_case 同一组键）。
     # 逐项列全而不是「setattr 兜底补齐」：缺一个键就会在几十行之后以 NameError 崩在别处，
     # 定位成本远高于这里的冗长。
-    plain: dict[str, Any] = {
-        "exit_recording": False,
-        "recording_enabled": True,
-        "recording": set(),
-        "recording_time_list": {},
-        "record_state_lock": threading.Lock(),
-        "need_update_line_list": [],
-        "not_record_list": [],
-        "error_window": [],
-        "url_comments": set(),
-        "running_list": [],
-        "monitoring": 0,
-        "scheduler": None,
-        "auto_update_anchor_name": False,
-        "show_url": False,
-        "live_status_push": False,
-        "begin_show_push": False,
-        "over_show_push": False,
-        "over_push_message_text": "",
-        "begin_push_message_text": "",
-        "disable_record": False,
-        "push_check_seconds": 0,
-        "create_time_file": False,
-        "converts_to_mp4": False,
-        "delete_origin_file": False,
-        "custom_script": "",
-        "video_save_path": "",
-        "folder_by_author": False,
-        "folder_by_time": False,
-        "folder_by_title": False,
-        "filename_by_title": False,
-        "default_path": str(tmp_path),
-        "enable_https_recording": False,
-        "loop_time": False,
-        "delay_default": 0,
-        "video_save_type": "FLV",
-        "split_video_by_time": False,
-        "split_time": "600",
-        "proxy_addr": "",
-        "proxy_addr_bak": "",
-        "enable_proxy_platform_list": [],
-        "extra_enable_proxy_platform_list": [],
-        "OVERSEAS_PLATFORM_HOST": [],
-        "color_obj": __import__("unittest.mock", fromlist=["MagicMock"]).MagicMock(),
-    }
-    for name, value in plain.items():
-        monkeypatch.setattr(recording if name == "OVERSEAS_PLATFORM_HOST" else state, name, value)
+    for module, values in (
+        (
+            recording_state,
+            {
+                "exit_recording": False,
+                "recording_enabled": True,
+                "recording": set(),
+                "recording_time_list": {},
+                "record_state_lock": threading.Lock(),
+                "need_update_line_list": [],
+                "not_record_list": [],
+                "error_window": [],
+                "url_comments": set(),
+                "running_list": [],
+                "monitoring": 0,
+                "scheduler": None,
+            },
+        ),
+        (
+            settings,
+            {
+                "auto_update_anchor_name": False,
+                "show_url": False,
+                "live_status_push": False,
+                "begin_show_push": False,
+                "over_show_push": False,
+                "over_push_message_text": "",
+                "begin_push_message_text": "",
+                "disable_record": False,
+                "push_check_seconds": 0,
+                "create_time_file": False,
+                "converts_to_mp4": False,
+                "delete_origin_file": False,
+                "custom_script": "",
+                "video_save_path": "",
+                "folder_by_author": False,
+                "folder_by_time": False,
+                "folder_by_title": False,
+                "filename_by_title": False,
+                "enable_https_recording": False,
+                "loop_time": False,
+                "delay_default": 0,
+                "video_save_type": "FLV",
+                "split_video_by_time": False,
+                "split_time": "600",
+                "proxy_addr": "",
+                "proxy_addr_bak": "",
+                "enable_proxy_platform_list": [],
+                "extra_enable_proxy_platform_list": [],
+            },
+        ),
+        (
+            config_paths,
+            {
+                "default_path": str(tmp_path),
+            },
+        ),
+        (
+            console,
+            {
+                "color_obj": __import__("unittest.mock", fromlist=["MagicMock"]).MagicMock(),
+            },
+        ),
+    ):
+        for name, value in values.items():
+            monkeypatch.setattr(module, name, value)
+    _patch(monkeypatch, "OVERSEAS_PLATFORM_HOST", [])
     for cookie in (
         "dy_cookie",
         "tiktok_cookie",
@@ -714,7 +739,7 @@ def test_xhs_link_creates_and_starts_recording_job(
         "shopee_cookie",
         "huajiao_cookie",
     ):
-        monkeypatch.setattr(state, cookie, "", raising=False)
+        monkeypatch.setattr(settings, cookie, "")
 
     # start_record 的内层 while True 靠「轮末 delay_default 等待」再回首部判 exit_recording 收敛；
     # delay_default=0 时它会零耗时空转、测试挂死。用 main 命名空间里的 time 替身把第一次 sleep
@@ -724,13 +749,13 @@ def test_xhs_link_creates_and_starts_recording_job(
     import types
 
     def _sleep_and_stop(_seconds: float) -> None:
-        state.exit_recording = True
+        recording_state.exit_recording = True
 
     time_shim = types.SimpleNamespace(**{k: getattr(_time_mod, k) for k in dir(_time_mod) if not k.startswith("_")})
     time_shim.sleep = _sleep_and_stop
-    monkeypatch.setattr(recording, "time", time_shim)
+    _patch(monkeypatch, "time", time_shim)
 
-    recording.start_record(("原画", room_url, ""))
+    room_poller.start_record(("原画", room_url, ""))
 
     # 未开播轮次不该起 ffmpeg，但仍必须完成解析：主播名来自 hostInfo.nickName，
     # 空 anchor_name 会被 start_record 判成「网址内容获取失败」并每轮重试
@@ -738,16 +763,23 @@ def test_xhs_link_creates_and_starts_recording_job(
     assert updates == [], "未开播不得进入录制调用"
     # 监控作业确实建起来了：need_update_line_list 里是「原链接|规范链接,主播: 测试主播」，
     # 空主播名会让这一行退化成无意义的配置回写
-    assert state.need_update_line_list, "未开播也必须登记监控作业"
-    assert "测试主播" in state.need_update_line_list[0], state.need_update_line_list
+    assert recording_state.need_update_line_list, "未开播也必须登记监控作业"
+    assert "测试主播" in recording_state.need_update_line_list[0], recording_state.need_update_line_list
 
     # 同一链接在开播态下必须真正起录制：把 liveStatus 换成 success 再跑一轮
-    monkeypatch.setattr(state, "exit_recording", False)
+    monkeypatch.setattr(recording_state, "exit_recording", False)
     live_page = _page_with_deeplink()
     live_fake = _fake_async_req({LIVE_ROOM_ID: live_page})
     monkeypatch.setattr(sp.http, "request", live_fake)
     monkeypatch.setattr(platform_dispatch.spider.http, "request", live_fake)
-    recording.start_record(("原画", room_url, ""))
+    room_poller.start_record(("原画", room_url, ""))
 
     assert commands, "开播后必须拉起录制子进程"
     assert any("live-source-play.xhscdn.com" in arg for arg in commands[0]), commands[0]
+
+
+def _patch(monkeypatch: pytest.MonkeyPatch, name: str, value: object) -> None:
+    """同一符号可能位于录制执行层或房间轮询层，按实际归属同时补桩。"""
+    for module in (recording, room_poller):
+        if hasattr(module, name):
+            monkeypatch.setattr(module, name, value)

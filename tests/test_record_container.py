@@ -13,8 +13,8 @@ from typing import Any
 
 import pytest
 
+from src.platforms.live.spider import extract_douyin_hevc_flv_url
 from src.recording import session as recording
-from src.streams.spider import extract_douyin_hevc_flv_url
 
 _MAIN_PATH = Path(__file__).resolve().parent.parent / "src/recording/session.py"
 # 同类回归的第二处定义点：转码/合流命令同用 -segment_format。
@@ -142,7 +142,7 @@ class TestHevcFlvUrlCarriesCodecMarker:
 
     def test_marker_is_visible_to_is_h265(self) -> None:
         # 端到端：补标记后下游判定必须能识别，否则这个修复等于没做
-        from src.streams.selection import _is_h265
+        from src.recording.pipeline.selection import _is_h265
 
         html = '"https://pull-flv-q11.douyincdn.com/thirdgame/stream-731829344212345678.flv?expire=123"'
         result = extract_douyin_hevc_flv_url(html)

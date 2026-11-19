@@ -23,10 +23,10 @@ from typing import Any, cast
 import pytest
 
 import src.network.websocket as ws_client_module
-from src.danmaku.collector import DanmakuCollector
-from src.danmaku.monitor import DanmakuMonitorHub
-from src.danmaku.platforms.bilibili import BilibiliDanmaku
+from src.danmaku.hub import DanmakuMonitorHub
+from src.danmaku.session import DanmakuCollector
 from src.network.websocket import WebSocketClient
+from src.platforms.danmaku.bilibili import BilibiliDanmaku
 from src.support.logger import logger
 
 # 凭据样例：口令与账号都是**只在测试里出现的唯一 token**，断言它们在各类产物中消失即可
@@ -182,7 +182,7 @@ def test_collector_on_close_masks_unmasked_reason(tmp_path: Path) -> None:
 
 
 async def test_reject_auth_reports_close_once(monkeypatch: pytest.MonkeyPatch) -> None:
-    import src.streams.spider as spider
+    import src.platforms.live.spider as spider
 
     closes: list[str] = []
     invalidated: list[int] = []

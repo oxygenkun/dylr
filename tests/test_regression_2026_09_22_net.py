@@ -1,7 +1,7 @@
 # 2026-09-22/23 网络与代理层回归锁（MID-2233 / MIN-2216~2222）。
 #
 # 覆盖面（每条都对应一个「实测确认未修」的条目）：src/network/proxy.py 的 MID-2233 ①②③④；
-# src/streams/ttwid.py 的 MIN-2220（ttwid 跨出口串用）/ MIN-2222（空异常文本）；src/network/http.py 的
+# src/platforms/live/ttwid.py 的 MIN-2220（ttwid 跨出口串用）/ MIN-2222（空异常文本）；src/network/http.py 的
 # MIN-2216(async 侧) / MIN-2217 / MIN-2218 / MIN-2219 / MIN-2221。
 #
 # 打桩边界：只替换网络层与依赖构造（httpx 客户端 / _build_client / DNS seam / winreg），判定逻辑
@@ -18,7 +18,7 @@ import pytest
 from loguru import logger
 
 import src.network.http as async_http
-import src.streams.ttwid as ttwid_module
+import src.platforms.live.ttwid as ttwid_module
 from src.network import credentials, targets
 from src.network.http import _client_cache, _client_cache_lock, _close_owned_clients, is_reachable, request
 

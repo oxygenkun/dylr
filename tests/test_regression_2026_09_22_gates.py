@@ -6,7 +6,8 @@ from typing import Any
 
 import pytest
 
-from src.recording import state
+from src.config import settings
+from src.recording.pipeline import selection as stream_select
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -23,8 +24,6 @@ def test_douyin_rate_limit_actually_sleeps_and_advances_timestamp(monkeypatch: p
     # 改本体会全进程生效，波及 loguru enqueue 线程 / harness 守护线程 / coverage（R1 会红）。
     import types
 
-    import src.streams.selection as stream_select
-
     sleeps: list[float] = []
     fake_now = [1000.0]
 
@@ -38,13 +37,15 @@ def test_douyin_rate_limit_actually_sleeps_and_advances_timestamp(monkeypatch: p
     monkeypatch.setattr(stream_select, "time", time_shim)
     # 上一条请求发生在 1.0s 前、最小间隔 3.0s → 应补睡 2.0s；实现是「sleep 后重新 time.time()」，
     # 故时间戳推进到 1002.0（fake_sleep 已让 fake_now 随 sleep 前进，模拟真实时钟在等待期间流逝）。
-    monkeypatch.setattr(state, "douyin_min_interval", 3.0, raising=False)
-    monkeypatch.setattr(state, "douyin_last_request_time", 999.0, raising=False)
+    monkeypatch.setattr(settings, "douyin_min_interval", 3.0, raising=False)
+    monkeypatch.setattr(stream_select, "douyin_last_request_time", 999.0, raising=False)
 
     stream_select._douyin_rate_limit()
 
     assert sleeps == [pytest.approx(2.0)], f"间隔不足时未按差值补睡（实际 sleeps={sleeps}）"
-    assert state.douyin_last_request_time == pytest.approx(1002.0), "限流后未把 douyin_last_request_time 推进到当前时刻"
+    assert stream_select.douyin_last_request_time == pytest.approx(1002.0), (
+        "限流后未把 douyin_last_request_time 推进到当前时刻"
+    )
 
 
 def test_douyin_rate_limit_does_not_sleep_when_interval_already_elapsed(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -53,20 +54,18 @@ def test_douyin_rate_limit_does_not_sleep_when_interval_already_elapsed(monkeypa
     # 同样只换 stream_select 自己的 time 引用（浅拷贝 shim），理由见上一条用例。
     import types
 
-    import src.streams.selection as stream_select
-
     sleeps: list[float] = []
     time_shim = types.SimpleNamespace(**vars(stream_select.time))
     time_shim.sleep = sleeps.append
     time_shim.time = lambda: 2000.0
     monkeypatch.setattr(stream_select, "time", time_shim)
-    monkeypatch.setattr(state, "douyin_min_interval", 3.0, raising=False)
-    monkeypatch.setattr(state, "douyin_last_request_time", 1990.0, raising=False)
+    monkeypatch.setattr(settings, "douyin_min_interval", 3.0, raising=False)
+    monkeypatch.setattr(stream_select, "douyin_last_request_time", 1990.0, raising=False)
 
     stream_select._douyin_rate_limit()
 
     assert sleeps == [], f"间隔已满足却仍 sleep：{sleeps}"
-    assert state.douyin_last_request_time == pytest.approx(2000.0)
+    assert stream_select.douyin_last_request_time == pytest.approx(2000.0)
 
 
 def test_concurrency_rate_limit_case_drives_src_not_a_local_copy() -> None:
@@ -80,7 +79,7 @@ def test_concurrency_rate_limit_case_drives_src_not_a_local_copy() -> None:
 
     wanted = {
         # 类名 -> 该类体内必须出现的**真实实现**符号（任一命中即算驱动了 src）
-        "TestThreadSafeCredential": ("ttwid_module.get_ttwid", "src.streams.ttwid"),
+        "TestThreadSafeCredential": ("ttwid_module.get_ttwid", "src.platforms.live.ttwid"),
         "TestRateLimit": ("stream_select._douyin_rate_limit", "_douyin_rate_limit"),
         "TestCredentialSharing": ("credentials.credential_cache.get_or_fetch", "get_or_fetch"),
     }

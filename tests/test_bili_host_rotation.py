@@ -1,10 +1,10 @@
 # M-13 回归锁（2026-09-29 审查）：B站弹幕 host 轮换期间不得投「假关闭」事件。
 #
-# 被测生产实现：src/danmaku/platforms/bilibili.py::BilibiliDanmaku 的 _report_close 闸门 + start() 的
+# 被测生产实现：src/platforms/danmaku/bilibili.py::BilibiliDanmaku 的 _report_close 闸门 + start() 的
 # host 轮换循环（挂在 WebSocketClient.on_close 上的是闸门，不是裸回调）。
 #
 # 失效形态（修复前）：每个候选 host 各建一个 WebSocketClient 且都把 on_close 直挂 self._on_close
-# （消费端 = src/danmaku/collector.py::_on_close → hub.room_closed）。host[0] 耗尽 2 次重连即落一条
+# （消费端 = src/danmaku/session.py::_on_close → hub.room_closed）。host[0] 耗尽 2 次重连即落一条
 # 「房间关闭」，而 start() 随后继续试 host[1]；host[1] 连上又报 room_connected → 监控页
 # 「假关闭→重连」闪烁 + 一条与事实不符的落盘；两候选都失败时同一关闭事件投两次。
 # WebSocketClient 自带的 _close_reported 是**每实例**的，挡不住跨实例重复上报。
@@ -22,7 +22,7 @@ from typing import Any
 
 import pytest
 
-from src.danmaku.platforms import bilibili
+from src.platforms.danmaku import bilibili
 
 _EXHAUST_REASON = "重连超过最大次数，与服务器断开连接: stub"
 _HOST_A = "a.chat.bilibili.com"

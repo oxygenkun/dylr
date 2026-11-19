@@ -30,10 +30,10 @@ NO_DATA_HINT = (
 # —— 逐模块覆盖率阈值：本表是唯一事实源，AGENTS.md 只链接到此处、不复制数值。
 # 新模块不必登记（未登记的按 GLOBAL_FLOOR 判），生成物豁免由 GATE_EXEMPT_MODULES 明确列出。
 MODULE_THRESHOLDS: dict[str, float] = {
-    "src/streams/spider.py": 50,
-    "src/streams/stream.py": 70,
+    "src/platforms/live/spider.py": 50,
+    "src/recording/pipeline/stream.py": 70,
     "src/support/utils.py": 80,
-    "src/streams/ttwid.py": 85,
+    "src/platforms/live/ttwid.py": 85,
     "src/network/proxy.py": 50,
 }
 

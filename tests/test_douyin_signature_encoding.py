@@ -9,8 +9,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.danmaku.platforms import douyin as douyin_mod
-from src.danmaku.platforms._xbogus import XBOGUS_ALPHABET, danmaku_signature
+from src.platforms.danmaku import douyin as douyin_mod
+from src.platforms.danmaku._xbogus import XBOGUS_ALPHABET, danmaku_signature
 
 
 def test_signature_uses_xbogus_alphabet_only() -> None:

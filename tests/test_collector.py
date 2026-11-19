@@ -24,9 +24,9 @@ from typing import Any, cast
 
 import pytest
 
-import src.danmaku.collector as collector_module
-from src.danmaku.collector import DanmakuCollector
-from src.danmaku.monitor import DanmakuMonitorHub
+import src.danmaku.session as collector_module
+from src.danmaku.hub import DanmakuMonitorHub
+from src.danmaku.session import DanmakuCollector
 
 
 # 构造期即阻塞的弹幕客户端替身：模拟 _run 发布 self._loop 之后、进入 run_until_complete
@@ -56,6 +56,7 @@ class _SlowConstructDanmaku:
 
 # start() 内含 finally 清理链、且常驻不自行退出的弹幕客户端替身（MIN-23 用）。
 class _FinallyChainDanmaku:
+    started = threading.Event()
     finally_ran = threading.Event()
 
     def __init__(self, **kwargs: Any) -> None:
@@ -63,6 +64,7 @@ class _FinallyChainDanmaku:
 
     async def start(self, args: Any) -> None:
         try:
+            type(self).started.set()
             await asyncio.sleep(60)
         finally:
             # 平台 start() 里的清理链（关连接、失效缓存等）——只有取消真正送达才会执行
@@ -260,15 +262,11 @@ def test_shutdown_cancels_start_task_and_runs_finally_chain(tmp_path: Path) -> N
     # MIN-23：_shutdown 直接 loop.stop() 会让 danmaku.start() 的任务以 pending 态被
     # 销毁（stderr 刷「Task was destroyed but it is pending」），且平台 start() 的
     # finally 清理链永不执行。现在必须先 cancel + 让出一轮，再停 loop。
+    _FinallyChainDanmaku.started.clear()
     _FinallyChainDanmaku.finally_ran.clear()
     collector = _monitor_only(tmp_path, _FinallyChainDanmaku, DanmakuMonitorHub(log_path=None))
     collector.start()
-    deadline = time.monotonic() + 3.0
-    while time.monotonic() < deadline:
-        loop = collector._loop
-        if loop is not None and loop.is_running():
-            break
-        time.sleep(0.02)
+    assert _FinallyChainDanmaku.started.wait(3.0), "start() 协程未开始执行"
     assert collector._loop is not None and collector._loop.is_running()
 
     collector.stop(timeout=3.0)

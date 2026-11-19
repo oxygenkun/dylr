@@ -9,8 +9,10 @@ from typing import Any
 
 import pytest
 
-from src.recording import session as recording
-from src.recording import state
+from src.config import files as config_files
+from src.config import paths as config_paths
+from src.config import settings
+from src.recording import anchor as recording
 
 
 def _os_shim(**overrides: Any) -> types.SimpleNamespace:
@@ -35,8 +37,8 @@ def main_mod() -> ModuleType:
 def url_config(tmp_path: Path, main_mod: ModuleType, monkeypatch: pytest.MonkeyPatch) -> Path:
     # 每个用例独立的 URL_config.ini + main 全局指向它
     cfg = tmp_path / "URL_config.ini"
-    monkeypatch.setattr(state, "url_config_file", str(cfg))
-    monkeypatch.setattr(state, "ini_URL_content", "")
+    monkeypatch.setattr(config_paths, "url_config_file", str(cfg))
+    monkeypatch.setattr(config_files, "ini_URL_content", "")
     return cfg
 
 
@@ -128,7 +130,7 @@ class TestUpdateAnchorName:
         url_config.write_text("https://live.douyin.com/6,主播: 旧\n", encoding="utf-8-sig")
         update_anchor_name("https://live.douyin.com/6", "新")
         # 落盘后同步更新异常恢复快照（与 update_file 行为一致）
-        assert "主播: 新" in state.ini_URL_content
+        assert "主播: 新" in config_files.ini_URL_content
 
     def test_missing_file_returns_false(self, url_config: Path) -> None:
         from src.config.io import update_anchor_name
@@ -152,8 +154,8 @@ def save_root(tmp_path: Path, main_mod: ModuleType, monkeypatch: pytest.MonkeyPa
     # 每个用例独立的下载根目录 + main 全局指向它
     root = tmp_path / "downloads"
     root.mkdir()
-    monkeypatch.setattr(state, "video_save_path", "")
-    monkeypatch.setattr(state, "default_path", str(root))
+    monkeypatch.setattr(settings, "video_save_path", "")
+    monkeypatch.setattr(config_paths, "default_path", str(root))
     return root
 
 

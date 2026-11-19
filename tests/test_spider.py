@@ -1,4 +1,4 @@
-# src/streams/spider.py 回归测试：抖音（Web/APP）流地址解析路径，及各平台解析函数与容错归一化入口的行为契约。
+# src/platforms/live/spider.py 回归测试：抖音（Web/APP）流地址解析路径，及各平台解析函数与容错归一化入口的行为契约。
 
 import ast
 import asyncio
@@ -12,8 +12,8 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 
-from src.streams import spider as sp
-from src.streams.spider import (
+from src.platforms.live import spider as sp
+from src.platforms.live.spider import (
     _extract_room_data_from_html,
     _get_str_response,
     _loads_dict,
@@ -156,7 +156,7 @@ class TestGetDouyinWebStreamData:
 
         with (
             patch("src.network.http.request", new_callable=AsyncMock, side_effect=[api_response, html_response]),
-            patch("src.streams.spider.get_ttwid", new_callable=AsyncMock, return_value="ttwid=fake_ttwid"),
+            patch("src.platforms.live.spider.get_ttwid", new_callable=AsyncMock, return_value="ttwid=fake_ttwid"),
         ):
             result = await get_douyin_web_stream_data("https://live.douyin.com/7318293442")
 
@@ -181,8 +181,8 @@ class TestGetDouyinWebStreamData:
                 new_callable=AsyncMock,
                 side_effect=["", "", valid_html],  # 两次API空响应 + HTML回退
             ),
-            patch("src.streams.spider.get_ttwid", new_callable=AsyncMock, return_value="ttwid=fake"),
-            patch("src.streams.spider.asyncio.sleep", new_callable=AsyncMock),
+            patch("src.platforms.live.spider.get_ttwid", new_callable=AsyncMock, return_value="ttwid=fake"),
+            patch("src.platforms.live.spider.asyncio.sleep", new_callable=AsyncMock),
         ):
             result = await get_douyin_web_stream_data("https://live.douyin.com/7318293442")
 
@@ -200,8 +200,8 @@ class TestGetDouyinWebStreamData:
                 new_callable=AsyncMock,
                 side_effect=[error_response, error_response, "<html>no data</html>"],
             ),
-            patch("src.streams.spider.get_ttwid", new_callable=AsyncMock, return_value="ttwid=fake"),
-            patch("src.streams.spider.asyncio.sleep", new_callable=AsyncMock),
+            patch("src.platforms.live.spider.get_ttwid", new_callable=AsyncMock, return_value="ttwid=fake"),
+            patch("src.platforms.live.spider.asyncio.sleep", new_callable=AsyncMock),
         ):
             result = await get_douyin_web_stream_data("https://live.douyin.com/7318293442")
 
@@ -223,7 +223,7 @@ class TestGetDouyinWebStreamData:
         mock_ttwid = AsyncMock(return_value="ttwid=should_not_be_called")
         with (
             patch("src.network.http.request", new_callable=AsyncMock, return_value=api_response),
-            patch("src.streams.spider.get_ttwid", mock_ttwid),
+            patch("src.platforms.live.spider.get_ttwid", mock_ttwid),
         ):
             result = await get_douyin_web_stream_data("https://live.douyin.com/7318293442", cookies="custom_cookie=abc")
 
@@ -242,7 +242,7 @@ class TestGetDouyinWebStreamData:
         logger = _LogSpy()
         with (
             patch("src.network.http.request", new_callable=AsyncMock, return_value=api_response) as mock_req,
-            patch("src.streams.spider.logger", logger),
+            patch("src.platforms.live.spider.logger", logger),
         ):
             result = await get_douyin_web_stream_data(
                 "https://live.douyin.com/52979775590", cookies="custom_cookie=abc"
@@ -260,8 +260,8 @@ class TestGetDouyinWebStreamData:
         logger = _LogSpy()
         with (
             patch("src.network.http.request", new_callable=AsyncMock, return_value=api_response),
-            patch("src.streams.spider.logger", logger),
-            patch("src.streams.spider.asyncio.sleep", new_callable=AsyncMock),
+            patch("src.platforms.live.spider.logger", logger),
+            patch("src.platforms.live.spider.asyncio.sleep", new_callable=AsyncMock),
         ):
             result = await get_douyin_web_stream_data("https://live.douyin.com/745964462470", cookies="c=1")
 
@@ -278,7 +278,7 @@ class TestGetDouyinAppStreamData:
         expected = {"status": 2, "anchor_name": "主播", "stream_url": {}}
 
         with patch(
-            "src.streams.spider.get_douyin_web_stream_data", new_callable=AsyncMock, return_value=expected
+            "src.platforms.live.spider.get_douyin_web_stream_data", new_callable=AsyncMock, return_value=expected
         ) as mock_web:
             result = await get_douyin_app_stream_data("https://live.douyin.com/7318293442")
 
@@ -307,12 +307,12 @@ class TestGetDouyinAppStreamData:
 
         with (
             patch(
-                "src.streams.spider.get_sec_user_id",
+                "src.platforms.live.spider.get_sec_user_id",
                 new_callable=AsyncMock,
                 return_value=("7318293442", "MS4wLjABAAAA_sec"),
             ),
             patch("src.network.http.request", new_callable=AsyncMock, return_value=app_response),
-            patch("src.streams.spider.get_ttwid", new_callable=AsyncMock, return_value="ttwid=fake"),
+            patch("src.platforms.live.spider.get_ttwid", new_callable=AsyncMock, return_value="ttwid=fake"),
         ):
             result = await get_douyin_app_stream_data("https://v.douyin.com/iQLgKSj/")
 
@@ -324,12 +324,12 @@ class TestGetDouyinAppStreamData:
         # 异常路径：所有解析路径失败，返回空anchor_name字典。
         with (
             patch(
-                "src.streams.spider.get_sec_user_id",
+                "src.platforms.live.spider.get_sec_user_id",
                 new_callable=AsyncMock,
                 side_effect=Exception("network error"),
             ),
-            patch("src.streams.spider.get_ttwid", new_callable=AsyncMock, return_value="ttwid=fake"),
-            patch("src.streams.spider.is_user_homepage_url", return_value=False),
+            patch("src.platforms.live.spider.get_ttwid", new_callable=AsyncMock, return_value="ttwid=fake"),
+            patch("src.platforms.live.spider.is_user_homepage_url", return_value=False),
         ):
             result = await get_douyin_app_stream_data("https://v.douyin.com/invalid/")
 
@@ -360,7 +360,7 @@ class TestExtractRoomDataFromHtml:
             '\\"roomStore\\":' + room_store + ',"linkmicStore":{}}]\\n"])</script>'
         )
         logger = _LogSpy()
-        with patch("src.streams.spider.logger", logger):
+        with patch("src.platforms.live.spider.logger", logger):
             result = _extract_room_data_from_html(html)
 
         assert result["status"] == 4, result
@@ -697,7 +697,7 @@ class TestBilibiliStreamData:
             assert result is None
 
 
-# ─── WP-A（2026-09-29）：src/streams/spider.py 安全收口回归锁 ──────────────────────
+# ─── WP-A（2026-09-29）：src/platforms/live/spider.py 安全收口回归锁 ──────────────────────
 # 覆盖 ARCHIVE/worklog/CODE_REVIEW_2026-09-29_2.md 的 M-3 / M-4 / M-8 / M-9 / M-10。
 # S-1（Shopee 落地页域族白名单 + 凭据收口 + api_host 闸）单独落在
 # tests/test_shopee_landing_guard.py。
@@ -896,7 +896,7 @@ class TestM4PopkontvLoginErrorMasking:
 
 class TestM8ProxyScopedCredentialCaches:
     # M-8：进程级凭据快路此前只判「非空 + TTL」，不判 proxy → 代理 A 取到的设备标识
-    # 在有效期内被代理 B 的房间复用（同 src/streams/ttwid.py 的 MIN-2220 已修形态）。
+    # 在有效期内被代理 B 的房间复用（同 src/platforms/live/ttwid.py 的 MIN-2220 已修形态）。
 
     def test_kuaishou_did_fast_path_requires_same_proxy(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(sp, "_cached_kuaishou_did", "did=A")
@@ -1074,7 +1074,7 @@ class TestM9AnchorNameNeverNone:
 
 
 class TestTwitCastingParseFailureLoginFallback:
-    # M-10（回归锁，src/streams/spider.py 的 except AttributeError, ValueError 分支）：
+    # M-10（回归锁，src/platforms/live/spider.py 的 except AttributeError, ValueError 分支）：
     # get_data 在四个正则任一未命中时**显式** raise ValueError("Failed to parse page data")，
     # 而受限房的登录回退此前只接 AttributeError → 注释承诺的「解析失败→登录重试」是死分支，
     # 页面改版/成人房一律判未开播、登录态永远用不上。
@@ -1082,7 +1082,7 @@ class TestTwitCastingParseFailureLoginFallback:
     # 删掉即变红（装饰器会把 ValueError 吞成 {"is_live": False}，login 一次也不会调用）。
 
     _GOOD_HTML = (
-        # 四个正则的共同现场（模式串见 src/streams/spider.py::get_twitcasting_stream_url 的 get_data）：
+        # 四个正则的共同现场（模式串见 src/platforms/live/spider.py::get_twitcasting_stream_url 的 get_data）：
         # <title> 段要求 `主播名 (@账号)  的直播 - Twit`（括号 + 两个空格），
         # twitter:title 与 data-is-onlive 之后都必须紧跟**换行 + 空白**再接下一个属性。
         "<html><head><title>主播 (@tcuser)  的直播 - Twit</title>\n"

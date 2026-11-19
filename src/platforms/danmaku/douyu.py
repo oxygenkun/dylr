@@ -3,8 +3,8 @@ from __future__ import annotations
 import struct
 from typing import Any
 
-from src.danmaku.base import DanmakuBase, DanmakuMessage, DanmakuMessageType, spawn_danmaku_task
 from src.network.websocket import WebSocketClient
+from src.platforms.danmaku.base import DanmakuBase, DanmakuMessage, DanmakuMessageType, spawn_danmaku_task
 from src.support import i18n
 from src.support.logger import logger
 

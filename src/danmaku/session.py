@@ -6,9 +6,9 @@ import threading
 import time
 from typing import Any, cast
 
-from src.danmaku.base import DanmakuBase, DanmakuMessage, DanmakuMessageType, spawn_danmaku_task
-from src.danmaku.monitor import DanmakuMonitorHub, get_hub
+from src.danmaku.hub import DanmakuMonitorHub, get_hub
 from src.danmaku.srt_writer import SrtWriter
+from src.platforms.danmaku.base import DanmakuBase, DanmakuMessage, DanmakuMessageType, spawn_danmaku_task
 from src.support import i18n, utils
 from src.support.logger import logger
 

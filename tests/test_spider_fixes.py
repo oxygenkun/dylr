@@ -1,4 +1,4 @@
-# src/streams/spider.py 批次4修复：平台解析健壮性回归测试。
+# src/platforms/live/spider.py 批次4修复：平台解析健壮性回归测试。
 # 多数用例直接调用装饰器的 __wrapped__ 原函数，以便断言精确返回/异常，
 # 不被 trace_error_decorator 的「吞异常返回未直播」掩盖。
 # 单测聚焦「解析失败/边界输入不得崩溃或误判开播」，覆盖 vvxqiu/migu/faceit/shopee/zhihu/weibo/twitcasting/lianjie 及并发取凭据。
@@ -14,8 +14,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from src.network import credentials
+from src.platforms.live import spider as sp
 from src.runtime import javascript
-from src.streams import spider as sp
 
 
 def _unwrap(func: object) -> Any:

@@ -46,40 +46,31 @@ src/
 ├── main.py                      # 唯一入口：按 [Web] web_enable 选择纯录制或面板 + 录制
 ├── web.py                       # 面板实现（引擎线程与 uvicorn 生命周期），非启动入口
 ├── app/                         # 应用生命周期
+│   ├── version.py               # 项目版本读取；CLI、状态与 Web 探活共用
 │   ├── startup_cleanup.py       # 启动时的陈旧字节码清理
 │   ├── graceful_shutdown.py     # 退出协调与线程登记
 │   └── log_archive.py           # 停止后的运行日志归档
 ├── config/                      # 配置处理，与根目录 config/ 数据分开
 │   ├── booleans.py              # 布尔 token 解析与格式化
+│   ├── lock.py                  # 配置文件读写锁
+│   ├── paths.py                 # 应用根目录与运行期路径
+│   ├── settings.py              # 设置声明、自动加载与归一化（录制、推送、账号、Cookie）
 │   ├── store.py                 # TOML 存储、pydantic 类型校验、按内容摘要热加载与旧 INI 迁移
 │   ├── reader.py                # 旧 INI 的容错解析与重复键诊断（仅迁移路径使用）
-│   ├── files.py                 # TOML 读写、URL_config.ini 替换与行去重
+│   ├── files.py                 # TOML 读写、URL_config.ini 恢复快照与行去重
 │   └── io.py                    # 配置缺省值写回、房间编辑与脱敏备份
-├── recording/                   # 录制业务
-│   ├── engine.py                # 进程初始化、配置热加载与房间线程调度
-│   ├── session.py               # 单房间循环、直下、FFmpeg 命令与看门狗
-│   ├── state.py                 # 共享配置、路径、状态、锁与调度器引用
-│   ├── scheduler.py             # 网络/录制并发容量与 host 熔断
-│   ├── process.py               # FFmpeg 子进程登记与清理
-│   ├── postprocess.py           # 分段、转封装、转码与时间字幕
-│   └── status.py                # 录制状态快照与终端状态展示
-├── streams/                     # 视频流解析，与弹幕协议分开
-│   ├── dispatch.py              # URL 准入、平台分派、短链归一与房间上下文
-│   ├── spider.py                # 平台接口请求与直播数据获取
-│   ├── stream.py                # 平台流地址、画质映射与实际画质回采
-│   ├── selection.py             # 同步选源探针、可达性校验、退避与降级
-│   ├── room.py                  # 抖音直播间/主页信息解析
-│   ├── ab_sign.py               # 抖音 a_bogus 签名
-│   ├── ttwid.py                 # 抖音访客凭据
-│   └── errors.py                # 同步/异步解析异常记录与契约兜底
-├── danmaku/                     # 弹幕业务
-│   ├── base.py                  # 弹幕客户端接口与消息数据结构
-│   ├── collector.py             # 线程化采集、视频时间轴与字幕接线
-│   ├── factory.py               # 弹幕平台注册表与采集器工厂
-│   ├── monitor.py               # 实时监控枢纽与 JSONL 输出
-│   ├── srt_writer.py            # SRT 字幕分片写入
-│   ├── compression.py           # 共用 gzip/zlib 有界解压
-│   └── platforms/               # 弹幕协议实现，不是视频流平台分派
+├── platforms/                   # 平台适配，按外部系统拆分
+│   ├── live/                    # 直播流平台
+│   │   ├── spider.py            # 平台接口请求与直播数据获取
+│   │   ├── room.py              # 抖音直播间/主页信息解析
+│   │   ├── ab_sign.py           # 抖音 a_bogus 签名
+│   │   ├── ttwid.py             # 抖音访客凭据
+│   │   └── errors.py            # 同步/异步解析异常记录与契约兜底
+│   ├── account/douyin/          # 账号侧协议（关注/私信）
+│   │   ├── follow.py            # 抖音关注 feed 拉取/解析
+│   │   └── dm.py                # 抖音私信客户端与协议解析
+│   └── danmaku/                 # 弹幕协议实现
+│       ├── base.py              # 弹幕客户端接口与消息数据结构
 │       ├── bilibili.py          # B站（含平台专用 Brotli 解压）
 │       ├── douyin.py            # 抖音
 │       ├── douyu.py             # 斗鱼
@@ -87,10 +78,28 @@ src/
 │       ├── twitch.py            # Twitch
 │       ├── _tars.py             # 虎牙 Tars 编解码
 │       └── _xbogus.py           # 抖音弹幕签名
-├── monitors/                    # 账号级监控，与弹幕监控分开
-│   ├── registry.py              # 监控实例及新增房间回调
-│   ├── douyin_follow.py         # 抖音关注列表监控
-│   └── douyin_dm.py             # 抖音私信监控
+├── recording/                   # 录制业务
+│   ├── engine.py                # 进程初始化、配置热加载与房间线程调度
+│   ├── service.py               # 录制服务：房间生命周期、轮询线程与选源入口
+│   ├── session.py               # 单次录制执行（RecorderSession）、FFmpeg 命令与看门狗
+│   ├── state.py                 # 录制集合、计数器、线程/调度器引用及对应同步锁
+│   ├── scheduler.py             # 网络/录制并发容量与 host 熔断
+│   ├── process.py               # FFmpeg 子进程登记与清理
+│   ├── postprocess.py           # 分段、转封装、转码与时间字幕
+│   ├── status.py                # 录制状态快照与终端状态展示
+│   ├── sources/                 # 房间与账号信号源
+│   │   ├── room.py              # 配置房间的轮询线程与 start_record 主循环
+│   │   └── account.py           # 关注/私信监控实例装配
+│   └── pipeline/                # 录制专用取流与选源
+│       ├── dispatch.py          # URL 准入、平台分派、短链归一与房间上下文
+│       ├── stream.py            # 平台流地址、画质映射与实际画质回采
+│       └── selection.py         # 同步选源探针、可达性校验、退避、降级与抖音限流
+├── danmaku/                     # 弹幕业务
+│   ├── plan.py                  # DanmakuPlan / DanmakuArgs
+│   ├── service.py               # DanmakuService、平台注册表与采集器工厂
+│   ├── session.py               # 线程化采集、视频时间轴与字幕接线
+│   ├── hub.py                   # 实时监控枢纽与 JSONL 输出
+│   └── srt_writer.py            # SRT 字幕分片写入
 ├── notifications/               # 业务通知
 │   ├── msg_push.py              # 各推送渠道
 │   └── notify.py                # 录制成功/失败反馈、推送与自定义脚本
@@ -115,7 +124,9 @@ src/
 ├── support/                     # 不依赖录制状态的共用支撑
 │   ├── console.py               # 终端编码与颜色常量
 │   ├── i18n.py                  # 中英文翻译与语言热切换
+│   ├── errors.py                # 异常 traceback 行号定位
 │   ├── logger.py                # Loguru 日志与房间上下文
+│   ├── compression.py           # 共用 gzip/zlib 有界解压
 │   └── utils.py                 # 原子文件写入、文本、磁盘与凭据脱敏
 ├── proto/
 │   ├── douyin.proto             # 抖音弹幕协议源定义

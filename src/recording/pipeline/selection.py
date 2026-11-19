@@ -8,9 +8,9 @@ from urllib.parse import urljoin, urlsplit
 import httpx
 from loguru import logger
 
+from src.config import settings
 from src.network import policy, targets
 from src.network import urls as network_urls
-from src.recording import state
 from src.support import i18n, utils
 
 _URL_PATTERN = re.compile(r"(https?://)?(www\.)?[a-zA-Z0-9-]+(\.[a-zA-Z0-9-]+)+(:\d+)?(/.*)?")
@@ -21,6 +21,7 @@ def contains_url(string: str) -> bool:
     return _URL_PATTERN.search(string) is not None
 
 
+_INVALID_FILENAME_CHARS = r"[\/\\\:\*\？?\"\<\>\|&#.。,， ~！·% ]"
 _MAX_NAME_CHARS = 60
 
 _WINDOWS_RESERVED_NAMES = frozenset(
@@ -29,10 +30,10 @@ _WINDOWS_RESERVED_NAMES = frozenset(
 
 
 def clean_name(input_text: str) -> str:
-    cleaned_name = re.sub(state.rstr, "_", input_text.strip()).strip("_")
+    cleaned_name = re.sub(_INVALID_FILENAME_CHARS, "_", input_text.strip()).strip("_")
     cleaned_name = re.sub(r"[\x00-\x1f\x7f]", "_", cleaned_name).strip("_")
     cleaned_name = cleaned_name.replace("（", "(").replace("）", ")")
-    if state.clean_emoji:
+    if settings.clean_emoji:
         cleaned_name = utils.remove_emojis(cleaned_name, "_").strip("_")
     cleaned_name = cleaned_name.replace("&", "_")
     if cleaned_name and cleaned_name.split(".")[0].upper() in _WINDOWS_RESERVED_NAMES:
@@ -43,7 +44,7 @@ def clean_name(input_text: str) -> str:
 
 
 def get_quality_code(qn: str) -> str:
-    """蓝光细粒度档位（蓝光4M/8M/20M/30M）：虎牙/斗鱼按各自专属档位表处理（见 src/streams/stream.py），。"""
+    """蓝光细粒度档位（蓝光4M/8M/20M/30M）：虎牙/斗鱼按各自专属档位表处理（见 src/recording/pipeline/stream.py），。"""
     quality_zh_to_en = {
         "原画": "OD",
         "蓝光": "BD",
@@ -149,7 +150,7 @@ _probe_backoff_lock = threading.Lock()
 
 def _probe_backoff_window() -> float:
     """退避窗口必须至少跨过一个主循环周期，否则闭环恒不成立：固定 60s 而 delay_default 默认。"""
-    interval = float(state.delay_default or 0)
+    interval = float(settings.delay_default or 0)
     return max(_PROBE_BACKOFF_SECONDS, interval + _PROBE_BACKOFF_INTERVAL_MARGIN)
 
 
@@ -202,7 +203,7 @@ def _is_h265(url: str) -> bool:
 
 def _h265_copy_format_supported() -> bool:
     """判定当前「视频保存格式」的容器能否直拷（-c copy）HEVC 流：TS/MKV/MP4 三个 muxer 均。"""
-    raw = getattr(state, "video_save_type", "")
+    raw = getattr(settings, "video_save_type", "")
     fmt = raw.strip().upper() if isinstance(raw, str) else ""
     return fmt in ("TS", "MKV", "MP4")
 
@@ -786,8 +787,8 @@ def _validate_stream_url(
 
 def _hls_selection_config() -> tuple[bool, tuple[str, ...]]:
     """读取 main 的 HLS 采集配置（是否启用 + 排除平台名）：两个全局在启动早期或测试替身下。"""
-    enabled = bool(getattr(state, "hls_collection_enabled", True))
-    raw: object = getattr(state, "hls_collection_exclude_platforms", ())
+    enabled = bool(getattr(settings, "hls_collection_enabled", True))
+    raw: object = getattr(settings, "hls_collection_exclude_platforms", ())
     if isinstance(raw, str):
         names = raw.replace("，", ",").split(",")
     elif isinstance(raw, (list, tuple, set, frozenset)):
@@ -1019,11 +1020,16 @@ def select_source_url(
                 logger.debug(i18n.tr("关闭探针客户端失败: {type_name}: {e}", type_name=type(e).__name__, e=e))
 
 
+douyin_rate_lock: threading.Lock = threading.Lock()
+douyin_last_request_time: float = 0.0
+
+
 def _douyin_rate_limit() -> None:
     """抖音接口调用限流：必要时 sleep，保证两次抖音请求间隔不小于 douyin_min_interval 秒。"""
-    with state.douyin_rate_lock:
+    global douyin_last_request_time
+    with douyin_rate_lock:
         now = time.time()
-        elapsed = now - state.douyin_last_request_time
-        if elapsed < state.douyin_min_interval:
-            time.sleep(state.douyin_min_interval - elapsed)
-        state.douyin_last_request_time = time.time()
+        elapsed = now - douyin_last_request_time
+        if elapsed < settings.douyin_min_interval:
+            time.sleep(settings.douyin_min_interval - elapsed)
+        douyin_last_request_time = time.time()

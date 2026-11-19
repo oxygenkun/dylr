@@ -19,9 +19,9 @@ from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.danmaku.base import DanmakuMessage
-from src.danmaku.platforms.bilibili import BilibiliDanmaku
 from src.danmaku.srt_writer import SrtWriter
+from src.platforms.danmaku.base import DanmakuMessage
+from src.platforms.danmaku.bilibili import BilibiliDanmaku
 
 
 def build_frame(objs: list, proto_ver: int = 0) -> bytes:

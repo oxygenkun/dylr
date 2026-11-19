@@ -7,8 +7,8 @@ from collections.abc import Callable
 import brotli
 import pytest
 
-from src.danmaku.compression import decompress_zlib
-from src.danmaku.platforms.bilibili import _decompress_brotli
+from src.platforms.danmaku.bilibili import _decompress_brotli
+from src.support.compression import decompress_zlib
 
 
 @pytest.mark.parametrize(("compress", "wbits"), [(gzip.compress, 31), (zlib.compress, 15)])

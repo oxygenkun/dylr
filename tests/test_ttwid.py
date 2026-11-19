@@ -1,4 +1,4 @@
-# src/streams/ttwid.py 的回归锁：出口分列的 TTL 缓存、配置预置 ttwid 读取、拉取拼装、singleflight 并发去重与预热。
+# src/platforms/live/ttwid.py 的回归锁：出口分列的 TTL 缓存、配置预置 ttwid 读取、拉取拼装、singleflight 并发去重与预热。
 
 import asyncio
 import os
@@ -9,9 +9,9 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-import src.streams.ttwid as ttwid_module
+import src.platforms.live.ttwid as ttwid_module
 from src.network import credentials
-from src.streams.ttwid import _app_root, _fetch_ttwid, _read_config_ttwid, get_ttwid, warmup_ttwid
+from src.platforms.live.ttwid import _app_root, _fetch_ttwid, _read_config_ttwid, get_ttwid, warmup_ttwid
 
 
 @pytest.fixture(autouse=True)
@@ -52,7 +52,7 @@ class TestAppRoot:
 class TestReadConfigTtwid:
     def test_no_config_returns_empty(self) -> None:
         # 配置目录不存在时须返回空串而非抛异常（首次运行 / 未填 ttwid 配置的常态）
-        with patch("src.streams.ttwid._app_root", return_value="/nonexistent/path"):
+        with patch("src.platforms.live.ttwid._app_root", return_value="/nonexistent/path"):
             result = _read_config_ttwid()
             assert result == ""
 
@@ -61,7 +61,7 @@ class TestReadConfigTtwid:
         config_dir.mkdir()
         config_file = config_dir / "config.toml"
         config_file.write_text('[Cookie]\nttwid = "abc123"\n', encoding="utf-8")
-        with patch("src.streams.ttwid._app_root", return_value=str(tmp_path)):
+        with patch("src.platforms.live.ttwid._app_root", return_value=str(tmp_path)):
             result = _read_config_ttwid()
             assert result == "ttwid=abc123"
 
@@ -71,7 +71,7 @@ class TestReadConfigTtwid:
         config_dir.mkdir()
         config_file = config_dir / "config.toml"
         config_file.write_text('[Cookie]\nttwid = "ttwid=xyz789"\n', encoding="utf-8")
-        with patch("src.streams.ttwid._app_root", return_value=str(tmp_path)):
+        with patch("src.platforms.live.ttwid._app_root", return_value=str(tmp_path)):
             result = _read_config_ttwid()
             assert result == "ttwid=xyz789"
 
@@ -81,7 +81,7 @@ class TestReadConfigTtwid:
         config_dir.mkdir()
         config_file = config_dir / "config.toml"
         config_file.write_text('[Cookie]\nttwid = ""\n', encoding="utf-8")
-        with patch("src.streams.ttwid._app_root", return_value=str(tmp_path)):
+        with patch("src.platforms.live.ttwid._app_root", return_value=str(tmp_path)):
             result = _read_config_ttwid()
             assert result == ""
 
@@ -137,8 +137,8 @@ class TestGetTtwid:
     async def test_reads_config_first(self) -> None:
         ttwid_module._cached_ttwid = ""
         with (
-            patch("src.streams.ttwid._read_config_ttwid", return_value="ttwid=from_config"),
-            patch("src.streams.ttwid._fetch_ttwid", new_callable=AsyncMock, return_value=""),
+            patch("src.platforms.live.ttwid._read_config_ttwid", return_value="ttwid=from_config"),
+            patch("src.platforms.live.ttwid._fetch_ttwid", new_callable=AsyncMock, return_value=""),
         ):
             result = await get_ttwid()
             assert result == "ttwid=from_config"
@@ -148,8 +148,8 @@ class TestGetTtwid:
     async def test_falls_back_to_fetch(self) -> None:
         ttwid_module._cached_ttwid = ""
         with (
-            patch("src.streams.ttwid._read_config_ttwid", return_value=""),
-            patch("src.streams.ttwid._fetch_ttwid", new_callable=AsyncMock, return_value="ttwid=fetched"),
+            patch("src.platforms.live.ttwid._read_config_ttwid", return_value=""),
+            patch("src.platforms.live.ttwid._fetch_ttwid", new_callable=AsyncMock, return_value="ttwid=fetched"),
         ):
             result = await get_ttwid()
             assert result == "ttwid=fetched"
@@ -165,14 +165,14 @@ class TestWarmupTtwid:
         cookies = {"ttwid": "warm_value"}
         with (
             patch("src.network.http.request", new_callable=AsyncMock, return_value=cookies),
-            patch("src.streams.ttwid._read_config_ttwid", return_value=""),
+            patch("src.platforms.live.ttwid._read_config_ttwid", return_value=""),
         ):
             warmup_ttwid()
             assert ttwid_module._cached_ttwid == "ttwid=warm_value"
         ttwid_module._cached_ttwid = ""
 
     def test_exception_handled(self) -> None:
-        with patch("src.streams.ttwid.get_ttwid", new_callable=AsyncMock, side_effect=Exception("fail")):
+        with patch("src.platforms.live.ttwid.get_ttwid", new_callable=AsyncMock, side_effect=Exception("fail")):
             # get_ttwid 抛异常时 warmup 必须吞掉、不得冒泡
             warmup_ttwid()
 
@@ -195,7 +195,7 @@ class TestReadConfigTtwidBroadExcept:
             raise ValueError("unexpected")
 
         monkeypatch.setattr(ttwid_module, "read_config_entry", _boom)
-        with patch("src.streams.ttwid._app_root", return_value="/nonexistent"):
+        with patch("src.platforms.live.ttwid._app_root", return_value="/nonexistent"):
             assert _read_config_ttwid() == ""
 
 
@@ -206,7 +206,7 @@ class TestFetchTtwidException:
         ttwid_module._cached_ttwid = ""
         # fetch_cookies 抛异常时须记 warning 并返回空，不冒泡影响录制启动
         with patch(
-            "src.streams.ttwid.fetch_cookies",
+            "src.platforms.live.ttwid.fetch_cookies",
             new_callable=AsyncMock,
             side_effect=Exception("net down"),
         ):
@@ -237,8 +237,8 @@ class TestGetTtwidSingleflight:
             return "ttwid=once"
 
         with (
-            patch("src.streams.ttwid._fetch_ttwid", new=_fake_fetch),
-            patch("src.streams.ttwid._read_config_ttwid", return_value=""),
+            patch("src.platforms.live.ttwid._fetch_ttwid", new=_fake_fetch),
+            patch("src.platforms.live.ttwid._read_config_ttwid", return_value=""),
         ):
             results = await asyncio.gather(*[get_ttwid() for _ in range(5)])
 
@@ -257,8 +257,8 @@ class TestGetTtwidSingleflight:
             raise AssertionError("配置优先时不应发起网络请求")
 
         with (
-            patch("src.streams.ttwid._fetch_ttwid", new=_boom),
-            patch("src.streams.ttwid._read_config_ttwid", return_value="ttwid=from_config"),
+            patch("src.platforms.live.ttwid._fetch_ttwid", new=_boom),
+            patch("src.platforms.live.ttwid._read_config_ttwid", return_value="ttwid=from_config"),
         ):
             result = await get_ttwid()
 
@@ -269,7 +269,7 @@ class TestGetTtwidSingleflight:
 # ── MID-33：模块全局 ttwid 的 TTL 与显式失效入口 ────────────────────────────
 # 旧语义是「非空即永久返回」：抖音一旦作废 ttwid（风控常见形态），本进程不重启就
 # 再也不重新获取，表现为抖音解析长期「HTTP 200 + 空响应体」，而 cookie_cache 的
-# 30 分钟自愈在这层根本不参与判定（对照 src/streams/room.py 的 sec_uid 缓存）。
+# 30 分钟自愈在这层根本不参与判定（对照 src/platforms/live/room.py 的 sec_uid 缓存）。
 class TestTtwidTtl:
     @pytest.mark.asyncio
     async def test_fresh_global_short_circuits_without_network(self, monkeypatch: pytest.MonkeyPatch) -> None:

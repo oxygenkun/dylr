@@ -1,4 +1,4 @@
-# src/streams/spider.py 2026-09-20 批次修复（SEV-07、MID-33 spider 半边、MID-40..50）的离线回归用例。
+# src/platforms/live/spider.py 2026-09-20 批次修复（SEV-07、MID-33 spider 半边、MID-40..50）的离线回归用例。
 # 2026-09-21 追加 SEV-N02（popkontv token 双 "Bearer " 前缀）回归锁，见文件末尾同名小节。
 # 原则（AGENTS「测试不得自实现被测逻辑」）：只打桩 HTTP 层（src.network.http.request / httpx /
 # get_token_js 等边界），解析逻辑一律走真实代码；断言以「删掉生产修复就会变红」为判据。
@@ -15,8 +15,8 @@ import httpx
 import pytest
 
 from src.network import credentials
-from src.streams import spider as sp
-from src.streams.spider import (
+from src.platforms.live import spider as sp
+from src.platforms.live.spider import (
     get_baidu_stream_data,
     get_bilibili_stream_data,
     get_douyu_info_data,
@@ -417,7 +417,7 @@ class TestMid46TiktokGuestCookie:
             patch.object(sp, "logger", fake),
             patch.object(sp, "_read_tiktok_guest_cookie", return_value=sp._TIKTOK_BUILTIN_GUEST_COOKIE),
             patch.object(sp.http, "request", new=AsyncMock(return_value="<html>no SIGI</html>")),
-            patch("src.streams.spider.asyncio.sleep", new_callable=AsyncMock),
+            patch("src.platforms.live.spider.asyncio.sleep", new_callable=AsyncMock),
         ):
             result = await sp.get_tiktok_stream_data("https://www.tiktok.com/@x/live")
         assert result == {"is_live": False}
@@ -429,7 +429,7 @@ class TestMid46TiktokGuestCookie:
             patch.object(sp, "logger", fake),
             patch.object(sp, "_read_tiktok_guest_cookie", return_value="fresh-cookie"),
             patch.object(sp.http, "request", new=AsyncMock(return_value="<html>no SIGI</html>")),
-            patch("src.streams.spider.asyncio.sleep", new_callable=AsyncMock),
+            patch("src.platforms.live.spider.asyncio.sleep", new_callable=AsyncMock),
         ):
             await sp.get_tiktok_stream_data("https://www.tiktok.com/@x/live")
         assert not any("tiktok_guest_cookie" in m for m in fake.msgs)

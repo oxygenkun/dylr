@@ -2,7 +2,6 @@
 
 import datetime
 import os
-import random
 import re
 import subprocess
 import threading
@@ -16,51 +15,35 @@ import httpx
 from loguru import logger
 
 from src.app.graceful_shutdown import shutdown_manager
-from src.config.io import update_anchor_name
-from src.danmaku.factory import get_danmaku_collector
-from src.danmaku.monitor import get_hub
-from src.monitors.registry import follow_monitor
+from src.config import paths as config_paths
+from src.config import settings
+from src.danmaku.plan import DanmakuPlan
+from src.danmaku.service import DanmakuService
 from src.network import policy
 from src.network import urls as network_urls
-from src.notifications import msg_push
-from src.notifications.notify import clear_record_info, push_message, record_error, record_success, run_script
-from src.recording import state
+from src.notifications.notify import clear_record_info, record_error, record_success, run_script
+from src.recording import state as recording_state
+from src.recording.pipeline.dispatch import OVERSEAS_PLATFORM_HOST, _stream_path_suffix
+from src.recording.pipeline.selection import (
+    MOBILE_UA,
+    clean_name,
+    clear_ffmpeg_reject,
+    get_record_headers,
+    get_record_user_agent,
+    mark_ffmpeg_reject,
+)
+from src.recording.pipeline.stream import code_to_zh
+from src.recording.pipeline.stream import is_downgrade as _is_downgrade
+from src.recording.plan import RecordPlan, RecordResult
 from src.recording.postprocess import converts_mp4, generate_subtitles, get_startup_info
 from src.recording.process import (
-    _get_error_line,
     _terminate_ffmpeg_process,
     register_ffmpeg_process,
     unregister_ffmpeg_process,
 )
 from src.recording.scheduler import host_of
-from src.streams.dispatch import OVERSEAS_PLATFORM_HOST, _resolve_platform_stream, _stream_path_suffix
-from src.streams.selection import (
-    MOBILE_UA,
-    clean_name,
-    clear_ffmpeg_reject,
-    get_quality_code,
-    get_record_headers,
-    get_record_user_agent,
-    mark_ffmpeg_reject,
-    select_source_url,
-)
-from src.streams.stream import code_to_zh
-from src.streams.stream import is_downgrade as _is_downgrade
-from src.support import i18n, utils
-from src.support.logger import set_room_context
-
-
-def _interruptible_sleep(seconds: float, record_url: str | None = None) -> bool:
-    """可中断等待：把一次性 time.sleep(n) 收敛为逐秒 tick，使「退出 / 停止录制 / URL 被注释」。"""
-    _remaining = int(seconds) if seconds > 0 else 0
-    while _remaining > 0:
-        if state.exit_recording or not state.recording_enabled:
-            return True
-        if record_url is not None and record_url in state.url_comments:
-            return True
-        time.sleep(1)
-        _remaining -= 1
-    return False
+from src.support import console, i18n, utils
+from src.support.errors import get_error_line
 
 
 def _shutdown_postprocess_executor() -> None:
@@ -135,10 +118,14 @@ def direct_download_stream(
                         return False
 
                     for chunk in response.iter_bytes():
-                        if live_url in state.url_comments or state.exit_recording or not state.recording_enabled:
-                            state.color_obj.print_colored(
+                        if (
+                            live_url in recording_state.url_comments
+                            or recording_state.exit_recording
+                            or not recording_state.recording_enabled
+                        ):
+                            console.color_obj.print_colored(
                                 i18n.tr("[{record_name}]录制时已被注释或停止录制,下载中断", record_name=record_name),
-                                state.color_obj.YELLOW,
+                                console.color_obj.YELLOW,
                             )
                             clear_record_info(record_name, live_url)
                             return False
@@ -164,7 +151,7 @@ def direct_download_stream(
                 source_url=utils.mask_credentials(source_url),
                 type_name=type(e).__name__,
                 e=e,
-                get_error_line=_get_error_line(e),
+                get_error_line=get_error_line(e),
             )
         )
         return False
@@ -191,7 +178,6 @@ _FFMPEG_FAST_FAIL_SECONDS = 20.0
 
 _SEM_WAIT_TICK = 1.0
 
-_MAX_RECORD_SECONDS = 6 * 60 * 60  # 「单次录制时长上限(秒)」的配置默认值
 _RECORD_STALL_SECONDS = 10 * 60
 _RECORD_STALL_PROBE_INTERVAL = 30.0
 _WATCH_TICK_MAX_SECONDS = 300.0
@@ -302,9 +288,9 @@ def _generate_time_subtitles(record_name: str, subs_file_path: str, thread_name:
     try:
         generate_subtitles(record_name, subs_file_path)
     finally:
-        with state.record_state_lock:
-            if state.create_var.get(thread_name) is threading.current_thread():
-                state.create_var.pop(thread_name, None)
+        with recording_state.record_state_lock:
+            if recording_state.create_var.get(thread_name) is threading.current_thread():
+                recording_state.create_var.pop(thread_name, None)
 
 
 def check_subprocess(
@@ -317,9 +303,13 @@ def check_subprocess(
     danmaku_args: Any = None,
 ) -> bool:
     """启动并守护一次 ffmpeg 录制：ffmpeg_command 末位为输出路径；save_type 决定转码与弹幕/字幕；。"""
-    _rec_sem = state.recording_semaphore
+    _rec_sem = recording_state.recording_semaphore
     while not _rec_sem.acquire(timeout=_SEM_WAIT_TICK):
-        if record_url in state.url_comments or state.exit_recording or not state.recording_enabled:
+        if (
+            record_url in recording_state.url_comments
+            or recording_state.exit_recording
+            or not recording_state.recording_enabled
+        ):
             logger.debug(
                 i18n.tr(
                     "[{record_name}]等待录制槽位期间检测到停止信号，放弃本轮录制",
@@ -340,7 +330,7 @@ def check_subprocess(
                 ffmpeg_command,
                 stdin=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
-                startupinfo=get_startup_info(state.os_type),
+                startupinfo=get_startup_info(os.name),
                 start_new_session=(os.name != "nt"),
             )
             shutdown_manager.track(process)
@@ -352,8 +342,13 @@ def check_subprocess(
         for _seg_placeholder in ("_%02d", "_%03d"):
             subs_file_path = subs_file_path.replace(_seg_placeholder, "")
 
-        _danmaku_active = state.enable_danmaku or state.enable_danmaku_monitor
-        if _danmaku_active and platform is not None and platform in state.danmaku_platforms and "音频" not in save_type:
+        _danmaku_active = settings.enable_danmaku or settings.enable_danmaku_monitor
+        if (
+            _danmaku_active
+            and platform is not None
+            and platform in settings.danmaku_platforms
+            and "音频" not in save_type
+        ):
             if not danmaku_args:
                 logger.debug(
                     i18n.tr(
@@ -364,14 +359,16 @@ def check_subprocess(
                 )
             else:
                 try:
-                    danmaku_collector = get_danmaku_collector(
+                    danmaku_plan = DanmakuPlan(
                         platform=platform,
-                        danmaku_args=danmaku_args,
-                        base_filename=subs_file_path,
-                        segment_seconds=state.danmaku_split_time if _split_output else None,
+                        write_srt=settings.enable_danmaku,
+                        monitor_only=not settings.enable_danmaku,
+                        split_seconds=settings.danmaku_split_time if _split_output else None,
                         room_name=record_name,
-                        write_srt=state.enable_danmaku,
+                        base_filename=subs_file_path,
+                        args=danmaku_args,
                     )
+                    danmaku_collector = DanmakuService().create_session(danmaku_plan)
                     if danmaku_collector is not None:
                         danmaku_collector.start()
                 except Exception as e:
@@ -388,18 +385,18 @@ def check_subprocess(
                     danmaku_collector = None
 
         subs_thread_name = f"subs_{Path(subs_file_path).name}"
-        if state.create_time_file and not _split_output and "音频" not in save_type:
-            with state.record_state_lock:
-                state.create_var[subs_thread_name] = threading.Thread(
+        if settings.create_time_file and not _split_output and "音频" not in save_type:
+            with recording_state.record_state_lock:
+                recording_state.create_var[subs_thread_name] = threading.Thread(
                     target=_generate_time_subtitles,
                     args=(record_name, subs_file_path, subs_thread_name),
                     name=subs_thread_name,
                     daemon=True,
                 )
                 try:
-                    state.create_var[subs_thread_name].start()
+                    recording_state.create_var[subs_thread_name].start()
                 except RuntimeError:
-                    state.create_var.pop(subs_thread_name, None)
+                    recording_state.create_var.pop(subs_thread_name, None)
                     raise
 
         _watch_prev_wall = time.time()
@@ -421,7 +418,7 @@ def check_subprocess(
         _stall_last_size = -1
         _stall_since = _proc_started_watch
 
-        _record_limit_seconds = state.max_record_seconds
+        _record_limit_seconds = settings.max_record_seconds
 
         def _watchdog_hit() -> str:
             nonlocal _stall_last_probe, _stall_last_size, _stall_since
@@ -495,10 +492,14 @@ def check_subprocess(
                 unregister_ffmpeg_process(process)
                 _reached_record_limit = True
                 break
-            if record_url in state.url_comments or state.exit_recording or not state.recording_enabled:
-                state.color_obj.print_colored(
+            if (
+                record_url in recording_state.url_comments
+                or recording_state.exit_recording
+                or not recording_state.recording_enabled
+            ):
+                console.color_obj.print_colored(
                     i18n.tr("[{record_name}]录制时已被注释或停止录制,本条线程将会退出", record_name=record_name),
-                    state.color_obj.YELLOW,
+                    console.color_obj.YELLOW,
                 )
                 _converged = True
                 clear_record_info(record_name, record_url)
@@ -563,12 +564,12 @@ def check_subprocess(
                 )
             )
             record_error(host_of(record_url))
-            with state.record_state_lock:
-                state.recording.discard(record_name)
-                state.recording_time_list.pop(record_name, None)
+            with recording_state.record_state_lock:
+                recording_state.recording.discard(record_name)
+                recording_state.recording_time_list.pop(record_name, None)
             unregister_ffmpeg_process(proc)
             return False
-        if state.converts_to_mp4 and save_type == "TS":
+        if settings.converts_to_mp4 and save_type == "TS":
             if _split_output:
                 _ts_segments = _segment_files(save_file_path)
                 if _ts_segments is None:
@@ -579,9 +580,9 @@ def check_subprocess(
                         )
                     )
                 for ts_path in _ts_segments or ():
-                    _submit_postprocess(converts_mp4, str(ts_path), state.delete_origin_file, record_name)
+                    _submit_postprocess(converts_mp4, str(ts_path), settings.delete_origin_file, record_name)
             else:
-                _submit_postprocess(converts_mp4, save_file_path, state.delete_origin_file, record_name)
+                _submit_postprocess(converts_mp4, save_file_path, settings.delete_origin_file, record_name)
         print(i18n.tr("\n{record_name} {stop_time} 直播录制完成\n", record_name=record_name, stop_time=stop_time))
 
         if script_command:
@@ -592,7 +593,7 @@ def check_subprocess(
                     f'--save_file_path "{save_file_path}"',
                     f"--save_type {save_type}",
                     f"--split_video_by_time {_split_output}",
-                    f"--converts_to_mp4 {state.converts_to_mp4}",
+                    f"--converts_to_mp4 {settings.converts_to_mp4}",
                 ]
             else:
                 params = [
@@ -600,7 +601,7 @@ def check_subprocess(
                     f'"{save_file_path}"',
                     save_type,
                     f"split_video_by_time:{_split_output}",
-                    f"converts_to_mp4:{state.converts_to_mp4}",
+                    f"converts_to_mp4:{settings.converts_to_mp4}",
                 ]
             script_command = script_command.strip() + " " + " ".join(params)
             run_script(script_command)
@@ -614,14 +615,14 @@ def check_subprocess(
             )
 
     else:
-        state.color_obj.print_colored(
+        console.color_obj.print_colored(
             i18n.tr(
                 "\n{record_name} {stop_time} 直播录制出错,返回码: {return_code}\n",
                 record_name=record_name,
                 stop_time=stop_time,
                 return_code=_describe_return_code(return_code),
             ),
-            state.color_obj.RED,
+            console.color_obj.RED,
         )
         record_error(host_of(record_url))
         _output_side_failure = not os.path.isdir(os.path.dirname(save_file_path) or ".")
@@ -634,100 +635,11 @@ def check_subprocess(
                     i18n.tr("[{record_name}] ffmpeg 命令缺少 -i 输入参数，跳过探针退避标记", record_name=record_name)
                 )
 
-    with state.record_state_lock:
-        state.recording.discard(record_name)
-        state.recording_time_list.pop(record_name, None)
+    with recording_state.record_state_lock:
+        recording_state.recording.discard(record_name)
+        recording_state.recording_time_list.pop(record_name, None)
     unregister_ffmpeg_process(proc)
     return False
-
-
-def rename_anchor_directory(old_name: str, new_name: str, platform: str) -> bool:
-    """主播名变更后同步文件系统：把 {保存路径}/{platform}/{old_name} 改名为 new_name（目标已存在。"""
-    if not old_name or not new_name or old_name == new_name:
-        return True
-    try:
-        save_root = state.video_save_path or state.default_path
-        platform_dir = os.path.join(save_root, platform)
-        if not os.path.isdir(platform_dir):
-            return True
-        old_dir = os.path.join(platform_dir, old_name)
-        new_dir = os.path.join(platform_dir, new_name)
-        if os.path.isdir(old_dir):
-            if os.path.isdir(new_dir):
-                _merge_anchor_directory(old_dir, new_dir)
-            else:
-                os.rename(old_dir, new_dir)
-        _rename_prefixed_entries(platform_dir, old_name, new_name)
-        return True
-    except OSError as e:
-        logger.warning(
-            i18n.tr(
-                "重命名主播目录失败（下轮重试）: {old_name} -> {new_name}: {e}",
-                old_name=old_name,
-                new_name=new_name,
-                e=e,
-            )
-        )
-        return False
-
-
-def _merge_anchor_directory(old_dir: str, new_dir: str) -> None:
-    """把 old_dir 内全部条目移入 new_dir（同名冲突保留双方并告警）；全部移入且无残留时删除旧目录，。"""
-    for entry in list(os.scandir(old_dir)):
-        dst = os.path.join(new_dir, entry.name)
-        if os.path.exists(dst):
-            logger.warning(i18n.tr("合并主播目录时发现同名文件（双方保留，请手动整理）: {dst}", dst=dst))
-            continue
-        try:
-            os.rename(entry.path, dst)
-        except OSError as e:
-            logger.warning(
-                i18n.tr(
-                    "合并主播目录条目失败（下轮重试）: {path} -> {dst}: {type_name}: {e}",
-                    path=entry.path,
-                    dst=dst,
-                    type_name=type(e).__name__,
-                    e=e,
-                )
-            )
-    try:
-        if not os.listdir(old_dir):
-            os.rmdir(old_dir)
-    except OSError as e:
-        logger.warning(
-            i18n.tr(
-                "删除旧主播目录失败（已忽略）: {old_dir}: {type_name}: {e}",
-                old_dir=old_dir,
-                type_name=type(e).__name__,
-                e=e,
-            )
-        )
-
-
-def _rename_prefixed_entries(base_dir: str, old_name: str, new_name: str) -> None:
-    """递归把 base_dir 下以 "{old_name}_" 开头的文件改名为 "{new_name}_" 前缀，。"""
-    try:
-        entries = list(os.scandir(base_dir))
-    except OSError:
-        return
-    for entry in entries:
-        try:
-            if entry.is_dir(follow_symlinks=False):
-                _rename_prefixed_entries(entry.path, old_name, new_name)
-                dir_name = entry.name
-                if dir_name != new_name and dir_name.endswith(f"_{old_name}"):
-                    os.rename(entry.path, os.path.join(base_dir, dir_name[: -len(old_name)] + new_name))
-            elif entry.name.startswith(f"{old_name}_"):
-                os.rename(entry.path, os.path.join(base_dir, f"{new_name}_{entry.name[len(old_name) + 1 :]}"))
-        except OSError as e:
-            logger.warning(
-                i18n.tr(
-                    "主播名变更重命名失败（已跳过，不影响其余文件）: {path}: {type_name}: {e}",
-                    path=entry.path,
-                    type_name=type(e).__name__,
-                    e=e,
-                )
-            )
 
 
 def _build_ffmpeg_output_args(
@@ -1066,12 +978,12 @@ def _run_ffmpeg_record(
                 "错误信息: {type_name}: {e} 发生错误的行数: {get_error_line}",
                 type_name=type(e).__name__,
                 e=e,
-                get_error_line=_get_error_line(e),
+                get_error_line=get_error_line(e),
             )
         )
-        with state.record_state_lock:
-            state.recording.discard(record_name)
-            state.recording_time_list.pop(record_name, None)
+        with recording_state.record_state_lock:
+            recording_state.recording.discard(record_name)
+            recording_state.recording_time_list.pop(record_name, None)
         record_error(record_host)
         return False, False
     return True, comment_end
@@ -1079,11 +991,11 @@ def _run_ffmpeg_record(
 
 def _convert_after_record(save_file_path: str, split_video_by_time: bool) -> None:
     """录后转 MP4 统一出口：关闭转码直接返回；分段按「前缀 + _<数字序号>.<ext>」精确匹配；。"""
-    if not state.converts_to_mp4:
+    if not settings.converts_to_mp4:
         return
     try:
         if not split_video_by_time:
-            _submit_postprocess(converts_mp4, save_file_path, state.delete_origin_file)
+            _submit_postprocess(converts_mp4, save_file_path, settings.delete_origin_file)
             return
         extension = os.path.basename(save_file_path).rsplit(".", maxsplit=1)[-1]
         _seg_paths = _segment_files(save_file_path)
@@ -1105,689 +1017,394 @@ def _convert_after_record(save_file_path: str, split_video_by_time: bool) -> Non
                 )
             )
         for seg_file in seg_files:
-            _submit_postprocess(converts_mp4, str(seg_file), state.delete_origin_file)
+            _submit_postprocess(converts_mp4, str(seg_file), settings.delete_origin_file)
     except Exception as e:
         logger.error(i18n.tr("转码失败: {type_name}: {e} ", type_name=type(e).__name__, e=e))
 
 
-def start_record(
-    url_data: tuple[str, str, str], count_variable: int = -1, room_state: dict[str, str] | None = None
-) -> None:
-    """单个直播间的录制线程主体：循环「解析平台 → 选源 → ffmpeg/直下」，直到 URL 被注释、。"""
-    set_room_context(f"序号{count_variable}")
-    last_follow_revision = 0
-    while True:
-        record_name = ""
-        record_host = ""
+class RecorderSession:
+    """一次录制尝试的执行体：路径、FFmpeg/直下、录后处理。"""
+
+    def record_once(self, plan: RecordPlan) -> RecordResult:
+        observation = plan.observation
+        record_url = observation.url
+        record_name = plan.record_name
+        record_host = host_of(record_url)
+        record_quality = plan.quality_code
+        record_quality_zh = observation.quality
+        anchor_name = observation.anchor_name
+        platform = observation.platform
+        port_info = cast(dict[str, Any], observation.port_info or {})
+        record_danmaku_args = cast(dict[str, Any] | None, observation.danmaku_args)
+        real_url = plan.source_url
+        proxy_address = plan.proxy_address
+        platform_cookie = plan.cookies
+        record_finished = False
+
+        full_path = f"{config_paths.default_path}/{platform}"
+        now = datetime.datetime.today().strftime("%y%m%d_%H%M%S")
+        date_dir = datetime.datetime.today().strftime("%y%m%d")
+        live_title = cast(str, port_info.get("title", ""))
+        title_in_name = ""
+        if live_title:
+            live_title = clean_name(live_title)
+            title_in_name = live_title + "_" if settings.filename_by_title else ""
+
         try:
-            record_finished = False
-            run_once = False
-            start_pushed = False
-            new_record_url = ""  # Shopee 平台专用：记录带 uid 的完整 URL 用于更新配置
-            record_danmaku_args: dict[str, Any] | None = None  # 弹幕参数(平台相关)，传入 check_subprocess 启停弹幕
-            count_time = time.time()
-            record_quality_zh, record_url, anchor_name = url_data
-            record_quality = get_quality_code(record_quality_zh)
-            record_host = host_of(record_url)
+            if len(settings.video_save_path) > 0:
+                if not settings.video_save_path.endswith(("/", "\\")):
+                    full_path = f"{settings.video_save_path}/{platform}"
+                else:
+                    full_path = f"{settings.video_save_path}{platform}"
 
-            proxy_address = state.proxy_addr
-            platform = "未知平台"
-
-            if state.proxy_addr:
-                proxy_address = None
-                if state.enable_proxy_platform_list:
-                    for _proxy_platform in state.enable_proxy_platform_list:
-                        if _proxy_platform and _proxy_platform.strip() in record_url:
-                            proxy_address = state.proxy_addr
-                            break
-
-            if not proxy_address and state.extra_enable_proxy_platform_list:
-                for pt in state.extra_enable_proxy_platform_list:
-                    if pt and pt.strip() in record_url:
-                        proxy_address = state.proxy_addr_bak or None
-
-            while True:
-                record_danmaku_args = None
-                if state.exit_recording:
-                    logger.debug(
-                        i18n.tr(
-                            "检测到退出标志，录制线程退出: {record_url}",
-                            record_url=utils.mask_credentials(record_url),
-                        )
-                    )
-                    return
-                if not state.recording_enabled:
-                    logger.debug(
-                        i18n.tr(
-                            "录制已停止，房间线程退出: {record_url}",
-                            record_url=utils.mask_credentials(record_url),
-                        )
-                    )
-                    return
-                if record_url in state.url_comments:
-                    print(
-                        i18n.tr(
-                            "[{record_url}]已被注释,本条线程将会退出",
-                            record_url=utils.mask_credentials(record_url),
-                        )
-                    )
-                    clear_record_info(record_name, record_url)
-                    return
-                if state.scheduler is not None and not state.scheduler.allow(record_host):
-                    _backoff = state.scheduler.backoff_seconds(record_host)
-                    _backoff = min(_backoff, max(30.0, float(state.delay_default)))
-                    logger.debug(
-                        i18n.tr(
-                            "[{record_host}] 并发熔断中，跳过本轮探测，退避 {_backoff}s",
-                            record_host=utils.mask_credentials(record_host),
-                            _backoff=f"{_backoff:.0f}",
-                        )
-                    )
-                    _interruptible_sleep(_backoff, record_url)
-                    continue
-                try:
-                    follow_revision, follow_room = follow_monitor.get_room(record_url)
-                    if follow_room:
-                        last_follow_revision = follow_revision
-                    _resolved = _resolve_platform_stream(record_url, proxy_address, record_quality)
-                    if _resolved is None:
-                        _interruptible_sleep(max(30.0, float(state.delay_default)), record_url)
-                        continue
-                    platform, port_info, record_danmaku_args, new_record_url = _resolved
-
-                    if anchor_name:
-                        if "主播:" in anchor_name:
-                            anchor_split: list[str] = anchor_name.split("主播:")
-                            if len(anchor_split) > 1 and anchor_split[1].strip():
-                                anchor_name = anchor_split[1].strip()
-                            else:
-                                anchor_name = cast(str, port_info.get("anchor_name", ""))
-                    else:
-                        anchor_name = cast(str, port_info.get("anchor_name", ""))
-
-                    if not port_info.get("anchor_name", ""):
-                        print(
-                            i18n.tr(
-                                "序号{count_variable} 网址内容获取失败,进行重试中...获取失败的地址是:{url_data}",
-                                count_variable=count_variable,
-                                url_data=utils.mask_credentials(str(url_data)),
-                            )
-                        )
-                        record_error(record_host)
-                        _interruptible_sleep(max(30.0, float(state.delay_default)), record_url)
-                        continue
-                    else:
-                        record_success(record_host)
-                        anchor_name = clean_name(anchor_name)
-
-                        latest_anchor_name = clean_name(cast(str, port_info.get("anchor_name", "")))
-                        if (
-                            state.auto_update_anchor_name
-                            and platform != "自定义录制直播"
-                            and anchor_name
-                            and latest_anchor_name
-                            and latest_anchor_name != "空白昵称"
-                            and anchor_name != latest_anchor_name
-                        ):
-                            if rename_anchor_directory(
-                                anchor_name, latest_anchor_name, platform
-                            ) and update_anchor_name(record_url, latest_anchor_name):
-                                logger.info(
-                                    i18n.tr(
-                                        "主播名已变更，配置与录制文件同步更新: {anchor_name} -> {latest_anchor_name}",
-                                        anchor_name=anchor_name,
-                                        latest_anchor_name=latest_anchor_name,
-                                    )
-                                )
-                                _stale_record_name = f"序号{count_variable} {anchor_name}"
-                                anchor_name = latest_anchor_name
-                                with state.record_state_lock:
-                                    state.recording.discard(_stale_record_name)
-                                    state.recording_time_list.pop(_stale_record_name, None)
-                                try:
-                                    get_hub().room_stopped(_stale_record_name, "主播改名")
-                                except Exception:
-                                    pass
-                        record_name = f"序号{count_variable} {anchor_name}"
-                        set_room_context(record_name)
-
-                        if record_url in state.url_comments:
-                            print(i18n.tr("[{anchor_name}]已被注释,本条线程将会退出", anchor_name=anchor_name))
-                            clear_record_info(record_name, record_url)
-                            return
-
-                        if not url_data[-1] and not run_once:
-                            if new_record_url:
-                                state.need_update_line_list.append(
-                                    f"{record_url}|{new_record_url},主播: {anchor_name.strip()}"
-                                )
-                                state.not_record_list.append(new_record_url)
-                            else:
-                                state.need_update_line_list.append(
-                                    f"{record_url}|{record_url},主播: {anchor_name.strip()}"
-                                )
-                            run_once = True
-
-                        push_at = datetime.datetime.today().strftime("%Y-%m-%d %H:%M:%S")
-                        if not port_info.get("is_live", False):
-                            if len(state.recording) == 0:
-                                print(i18n.tr("\r{record_name} 等待直播... ", record_name=record_name))
-
-                            if start_pushed:
-                                if state.over_show_push:
-                                    push_content = msg_push.render_push_content(
-                                        "直播间状态更新：{ROOM_NAME} 直播已结束！时间：{TIME}", record_name, push_at
-                                    )
-                                    if state.over_push_message_text:
-                                        push_content = msg_push.render_push_template(
-                                            state.over_push_message_text, record_name, push_at
-                                        )
-
-                                    threading.Thread(
-                                        target=push_message,
-                                        args=(record_name, record_url, push_content.replace(r"\n", "\n")),
-                                        daemon=True,
-                                    ).start()
-                                start_pushed = False
-
-                        else:
-                            print(i18n.tr("\r{record_name} 正在直播中...", record_name=record_name))
-
-                            if state.live_status_push and not start_pushed:
-                                if state.begin_show_push:
-                                    push_content = msg_push.render_push_content(
-                                        "直播间状态更新：{ROOM_NAME} 正在直播中，时间：{TIME}", record_name, push_at
-                                    )
-                                    if state.begin_push_message_text:
-                                        push_content = msg_push.render_push_template(
-                                            state.begin_push_message_text, record_name, push_at
-                                        )
-
-                                    threading.Thread(
-                                        target=push_message,
-                                        args=(record_name, record_url, push_content.replace(r"\n", "\n")),
-                                        daemon=True,
-                                    ).start()
-                                start_pushed = True
-
-                            if state.disable_record:
-                                _sleep_remaining = state.push_check_seconds
-                                while _sleep_remaining > 0:
-                                    if (
-                                        not state.recording_enabled
-                                        or state.exit_recording
-                                        or record_url in state.url_comments
-                                    ):
-                                        break
-                                    time.sleep(1)
-                                    _sleep_remaining -= 1
-                                continue
-
-                            platform_cookie = {
-                                "抖音直播": state.dy_cookie,
-                                "TikTok直播": state.tiktok_cookie,
-                                "快手直播": state.ks_cookie,
-                                "虎牙直播": state.hy_cookie,
-                                "斗鱼直播": state.douyu_cookie,
-                                "YY直播": state.yy_cookie,
-                                "B站直播": state.bili_cookie,
-                                "小红书直播": state.xhs_cookie,
-                                "bigo": state.bigo_cookie,
-                                "blued": state.blued_cookie,
-                                "SOOP(原AfreecaTV)": state.sooplive_cookie,
-                                "网易CC直播": state.netease_cookie,
-                                "千度热播": state.qiandurebo_cookie,
-                                "PandaTV": state.pandatv_cookie,
-                                "猫耳FM直播": state.maoerfm_cookie,
-                                "WinkTV": state.winktv_cookie,
-                                "TTingLive(原Flextv)": state.flextv_cookie,
-                                "Look直播": state.look_cookie,
-                                "TwitCasting": state.twitcasting_cookie,
-                                "百度直播": state.baidu_cookie,
-                                "微博直播": state.weibo_cookie,
-                                "酷狗直播": state.kugou_cookie,
-                                "LiveMe": state.liveme_cookie,
-                                "shopee": state.shopee_cookie,
-                                "花椒直播": state.huajiao_cookie,
-                            }.get(platform, "")
-
-                            real_url = select_source_url(port_info, proxy_address, platform, cookies=platform_cookie)
-                            if not real_url:
-                                logger.warning(
-                                    i18n.tr("{anchor_name} 本轮未获取到可用流地址，跳过录制", anchor_name=anchor_name)
-                                )
-                                _interruptible_sleep(max(random.randint(-5, 5) + state.delay_default, 0), record_url)
-                                continue
-                            full_path = f"{state.default_path}/{platform}"
-                            now = datetime.datetime.today().strftime("%y%m%d_%H%M%S")
-                            date_dir = datetime.datetime.today().strftime("%y%m%d")
-                            live_title = cast(str, port_info.get("title", ""))
-                            title_in_name = ""
-                            if live_title:
-                                live_title = clean_name(live_title)
-                                title_in_name = live_title + "_" if state.filename_by_title else ""
-
-                            try:
-                                if len(state.video_save_path) > 0:
-                                    if not state.video_save_path.endswith(("/", "\\")):
-                                        full_path = f"{state.video_save_path}/{platform}"
-                                    else:
-                                        full_path = f"{state.video_save_path}{platform}"
-
-                                full_path = full_path.replace("\\", "/")
-                                if state.folder_by_author:
-                                    full_path = f"{full_path}/{anchor_name}"
-                                if state.folder_by_time:
-                                    full_path = f"{full_path}/{date_dir}"
-                                if state.folder_by_title and port_info.get("title"):
-                                    if state.folder_by_time:
-                                        full_path = f"{full_path}/{live_title}_{anchor_name}"
-                                    else:
-                                        full_path = f"{full_path}/{date_dir}_{live_title}"
-                                os.makedirs(full_path, exist_ok=True)
-                            except Exception as e:
-                                logger.error(
-                                    i18n.tr(
-                                        "错误信息: {type_name}: {e} 发生错误的行数: {get_error_line}",
-                                        type_name=type(e).__name__,
-                                        e=e,
-                                        get_error_line=_get_error_line(e),
-                                    )
-                                )
-                                _interruptible_sleep(max(random.randint(-5, 5) + state.delay_default, 0), record_url)
-                                continue
-
-                            if platform not in ("自定义录制直播", "虎牙直播"):
-                                if state.enable_https_recording and real_url.startswith("http://"):
-                                    real_url = real_url.replace("http://", "https://")
-                                elif not state.enable_https_recording and real_url.startswith("https://"):
-                                    if not any(pt_host in record_url for pt_host in OVERSEAS_PLATFORM_HOST):
-                                        real_url = real_url.replace("https://", "http://")
-
-                                http_record_list = ["shopee", "咪咕直播"]
-                                if platform in http_record_list:
-                                    real_url = real_url.replace("https://", "http://")
-
-                            user_agent = get_record_user_agent(platform) or MOBILE_UA
-
-                            is_overseas = any(pt_host in record_url for pt_host in OVERSEAS_PLATFORM_HOST)
-                            tuning = _ffmpeg_network_tuning(is_overseas)
-                            headers = get_record_headers(platform, record_url, cookies=platform_cookie)
-                            ffmpeg_command = _build_ffmpeg_input_args(
-                                real_url,
-                                user_agent,
-                                tuning,
-                                headers=headers,
-                                tls_verify=policy.should_verify_stream_tls(platform),
-                                proxy_address=proxy_address,
-                            )
-
-                            only_flv_record = False
-                            only_flv_platform_list = ["shopee", "花椒直播"]
-                            if platform in only_flv_platform_list:
-                                logger.debug(i18n.tr("提示: {platform} 将强制使用FLV格式录制", platform=platform))
-                                only_flv_record = True
-
-                            if not only_flv_record:
-                                with state.record_state_lock:
-                                    state.recording.add(record_name)
-                                    start_record_time = datetime.datetime.now()
-                                    actual_quality_value = port_info.get("actual_quality")
-                                    actual_quality_code: str | None = (
-                                        actual_quality_value if isinstance(actual_quality_value, str) else None
-                                    )
-                                    actual_quality_zh = code_to_zh(actual_quality_code) if actual_quality_code else ""
-                                    if actual_quality_code and _is_downgrade(record_quality, actual_quality_code):
-                                        logger.warning(
-                                            i18n.tr(
-                                                "{record_name} 画质降级：设置 {record_quality_zh}({record_quality})"
-                                                " 实际 {actual_quality_zh}({actual_quality_code})",
-                                                record_name=record_name,
-                                                record_quality_zh=record_quality_zh,
-                                                record_quality=record_quality,
-                                                actual_quality_zh=actual_quality_zh,
-                                                actual_quality_code=actual_quality_code,
-                                            )
-                                        )
-                                    state.recording_time_list[record_name] = [
-                                        start_record_time,
-                                        record_quality_zh,
-                                        actual_quality_zh,
-                                    ]
-                            rec_info_anchor_name = anchor_name
-                            rec_info_full_path = full_path
-                            if state.show_url:
-                                re_plat = ("WinkTV", "PandaTV", "ShowRoom", "CHZZK", "YouTube")
-                                if platform in re_plat:
-                                    logger.info(
-                                        i18n.tr(
-                                            "{platform} | {anchor_name} | 直播源地址: {m3u8_url}",
-                                            platform=platform,
-                                            anchor_name=anchor_name,
-                                            m3u8_url=utils.mask_credentials(str(port_info.get("m3u8_url") or "")),
-                                        )
-                                    )
-                                else:
-                                    logger.info(
-                                        i18n.tr(
-                                            "{platform} | {anchor_name} | 直播源地址: {real_url}",
-                                            platform=platform,
-                                            anchor_name=anchor_name,
-                                            real_url=utils.mask_credentials(real_url),
-                                        )
-                                    )
-
-                            only_audio_record = False
-                            only_audio_platform_list = ["猫耳FM直播", "Look直播"]
-                            if platform in only_audio_platform_list:
-                                only_audio_record = True
-
-                            record_save_type = state.video_save_type
-
-                            if real_url == port_info.get("flv_url") and port_info.get("flv_url"):
-                                codec = network_urls.query_values(cast(str, port_info["flv_url"]), "codec")
-                                if (
-                                    isinstance(codec, list)
-                                    and bool(codec)
-                                    and codec[0] == "h265"
-                                    and record_save_type.upper() not in ("TS", "MKV", "MP4")
-                                ):
-                                    logger.warning(
-                                        i18n.tr("FLV is not supported for h265 codec, use TS format instead")
-                                    )
-                                    record_save_type = "TS"
-
-                            if only_audio_record or any(i in record_save_type for i in ["MP3", "M4A"]):
-                                save_file_path = _build_record_output_path(
-                                    full_path,
-                                    anchor_name,
-                                    title_in_name,
-                                    now,
-                                    record_save_type,
-                                    state.split_video_by_time,
-                                    is_audio=True,
-                                )
-                                if state.split_video_by_time:
-                                    print(
-                                        i18n.tr(
-                                            "\r{anchor_name} 准备开始录制音频: {save_file_path}",
-                                            anchor_name=anchor_name,
-                                            save_file_path=save_file_path,
-                                        )
-                                    )
-                                ffmpeg_command.extend(
-                                    _build_ffmpeg_output_args(
-                                        save_file_path,
-                                        record_save_type,
-                                        state.split_video_by_time,
-                                        state.split_time,
-                                        is_audio=True,
-                                    )
-                                )
-                                started, comment_end = _run_ffmpeg_record(
-                                    record_name,
-                                    record_url,
-                                    record_host,
-                                    ffmpeg_command,
-                                    record_save_type,
-                                    state.custom_script,
-                                    platform,
-                                    record_danmaku_args,
-                                )
-                                if started:
-                                    record_finished = True
-                                if comment_end:
-                                    return
-
-                            elif only_flv_record:
-                                logger.info(
-                                    i18n.tr(
-                                        "Use Direct Downloader to Download FLV Stream: {record_url}",
-                                        record_url=utils.mask_credentials(record_url),
-                                    )
-                                )
-                                filename = f"{anchor_name}_{title_in_name}{now}_00.flv"
-                                save_file_path = f"{full_path}/{filename}"
-                                print(
-                                    i18n.tr(
-                                        "\r{anchor_name} 准备开始录制视频: {full_path}/{filename}",
-                                        anchor_name=rec_info_anchor_name,
-                                        full_path=rec_info_full_path,
-                                        filename=filename,
-                                    )
-                                )
-
-                                subs_file_path = save_file_path.rsplit(".", maxsplit=1)[0]
-                                subs_thread_name = f"subs_{Path(subs_file_path).name}"
-
-                                try:
-                                    flv_url = port_info.get("flv_url")
-                                    if isinstance(flv_url, str) and flv_url:
-                                        with state.record_state_lock:
-                                            state.recording.add(record_name)
-                                            start_record_time = datetime.datetime.now()
-                                            actual_quality_value = port_info.get("actual_quality")
-                                            actual_quality_code = (
-                                                actual_quality_value if isinstance(actual_quality_value, str) else None
-                                            )
-                                            actual_quality_zh = (
-                                                code_to_zh(actual_quality_code) if actual_quality_code else ""
-                                            )
-                                            if actual_quality_code and _is_downgrade(
-                                                record_quality, actual_quality_code
-                                            ):
-                                                logger.warning(
-                                                    i18n.tr(
-                                                        "{record_name} 画质降级：设置 {record_quality_zh}({record_quality})"
-                                                        " 实际 {actual_quality_zh}({actual_quality_code})",
-                                                        record_name=record_name,
-                                                        record_quality_zh=record_quality_zh,
-                                                        record_quality=record_quality,
-                                                        actual_quality_zh=actual_quality_zh,
-                                                        actual_quality_code=actual_quality_code,
-                                                    )
-                                                )
-                                            state.recording_time_list[record_name] = [
-                                                start_record_time,
-                                                record_quality_zh,
-                                                actual_quality_zh,
-                                            ]
-
-                                        if state.create_time_file:
-                                            with state.record_state_lock:
-                                                state.create_var[subs_thread_name] = threading.Thread(
-                                                    target=_generate_time_subtitles,
-                                                    args=(record_name, subs_file_path, subs_thread_name),
-                                                    name=subs_thread_name,
-                                                    daemon=True,
-                                                )
-                                                try:
-                                                    state.create_var[subs_thread_name].start()
-                                                except RuntimeError:
-                                                    state.create_var.pop(subs_thread_name, None)
-
-                                        download_success = direct_download_stream(
-                                            flv_url,
-                                            save_file_path,
-                                            record_name,
-                                            record_url,
-                                            platform,
-                                            cookies=platform_cookie,
-                                        )
-
-                                        if download_success:
-                                            record_finished = True
-                                            print(
-                                                i18n.tr(
-                                                    "\n{anchor_name} {strftime} 直播录制完成\n",
-                                                    anchor_name=anchor_name,
-                                                    strftime=time.strftime("%Y-%m-%d %H:%M:%S"),
-                                                )
-                                            )
-                                            record_success(record_host)
-                                        elif (
-                                            record_url not in state.url_comments
-                                            and not state.exit_recording
-                                            and state.recording_enabled
-                                        ):
-                                            record_error(record_host)
-
-                                        clear_record_info(record_name, record_url)
-                                    else:
-                                        logger.debug(i18n.tr("未找到FLV直播流，跳过录制"))
-                                        clear_record_info(record_name, record_url)
-                                except Exception as e:
-                                    clear_record_info(record_name, record_url)
-                                    state.color_obj.print_colored(
-                                        i18n.tr(
-                                            "\n{anchor_name} {strftime} 直播录制出错,请检查网络\n",
-                                            anchor_name=anchor_name,
-                                            strftime=time.strftime("%Y-%m-%d %H:%M:%S"),
-                                        ),
-                                        state.color_obj.RED,
-                                    )
-                                    logger.error(
-                                        i18n.tr(
-                                            "错误信息: {type_name}: {e} 发生错误的行数: {get_error_line}",
-                                            type_name=type(e).__name__,
-                                            e=e,
-                                            get_error_line=_get_error_line(e),
-                                        )
-                                    )
-                                    record_error(record_host)
-
-                            elif record_save_type in ("FLV", "MKV", "MP4"):
-                                save_file_path = _build_record_output_path(
-                                    full_path,
-                                    anchor_name,
-                                    title_in_name,
-                                    now,
-                                    record_save_type,
-                                    state.split_video_by_time,
-                                )
-                                print(
-                                    i18n.tr(
-                                        "\r{anchor_name} 准备开始录制视频: {full_path}/{filename}",
-                                        anchor_name=rec_info_anchor_name,
-                                        full_path=rec_info_full_path,
-                                        filename=os.path.basename(save_file_path),
-                                    )
-                                )
-                                ffmpeg_command.extend(
-                                    _build_ffmpeg_output_args(
-                                        save_file_path, record_save_type, state.split_video_by_time, state.split_time
-                                    )
-                                )
-                                started, comment_end = _run_ffmpeg_record(
-                                    record_name,
-                                    record_url,
-                                    record_host,
-                                    ffmpeg_command,
-                                    record_save_type,
-                                    state.custom_script,
-                                    platform,
-                                    record_danmaku_args,
-                                )
-                                if started:
-                                    record_finished = True
-                                _convert_if_flv = started and record_save_type == "FLV"
-                                if comment_end:
-                                    if _convert_if_flv:
-                                        _convert_after_record(save_file_path, state.split_video_by_time)
-                                    return
-                                if _convert_if_flv:
-                                    _convert_after_record(save_file_path, state.split_video_by_time)
-
-                            else:
-                                save_file_path = _build_record_output_path(
-                                    full_path,
-                                    anchor_name,
-                                    title_in_name,
-                                    now,
-                                    record_save_type,
-                                    state.split_video_by_time,
-                                )
-                                print(
-                                    i18n.tr(
-                                        "\r{anchor_name} 准备开始录制视频: {full_path}/{filename}",
-                                        anchor_name=rec_info_anchor_name,
-                                        full_path=rec_info_full_path,
-                                        filename=os.path.basename(save_file_path),
-                                    )
-                                )
-                                ffmpeg_command.extend(
-                                    _build_ffmpeg_output_args(
-                                        save_file_path, record_save_type, state.split_video_by_time, state.split_time
-                                    )
-                                )
-                                started, comment_end = _run_ffmpeg_record(
-                                    record_name,
-                                    record_url,
-                                    record_host,
-                                    ffmpeg_command,
-                                    record_save_type,
-                                    state.custom_script,
-                                    platform,
-                                    record_danmaku_args,
-                                )
-                                if started:
-                                    record_finished = True
-                                if comment_end:
-                                    _convert_after_record(save_file_path, state.split_video_by_time)
-                                    return
-
-                            count_time = time.time()
-
-                except Exception as e:
-                    logger.error(
-                        i18n.tr(
-                            "错误信息: {type_name}: {e} 发生错误的行数: {get_error_line}",
-                            type_name=type(e).__name__,
-                            e=e,
-                            get_error_line=_get_error_line(e),
-                        )
-                    )
-                    record_error(record_host)
-
-                num = random.randint(-5, 5) + state.delay_default
-                if num < 0:
-                    num = 0
-                x = num
-
-                if sum(state.error_window) >= 5:
-                    x = x + 60
-                    state.color_obj.print_colored("\r瞬时错误太多,延迟加60秒", state.color_obj.YELLOW)
-
-                if record_finished:
-                    count_time_end = time.time() - count_time
-                    if count_time_end < 60:
-                        x = 30
-                    record_finished = False
-
-                while x:
-                    follow_revision, follow_room = follow_monitor.get_room(record_url)
-                    if follow_room and follow_revision != last_follow_revision:
-                        last_follow_revision = follow_revision
-                        break
-                    if record_url in state.url_comments or state.exit_recording or not state.recording_enabled:
-                        break
-                    x = x - 1
-                    if state.loop_time:
-                        print(i18n.tr("\r{anchor_name}循环等待{x}秒 ", anchor_name=anchor_name, x=x), end="")
-                    time.sleep(1)
-                if state.loop_time:
-                    print("\r检测直播间中...", end="")
+            full_path = full_path.replace("\\", "/")
+            if settings.folder_by_author:
+                full_path = f"{full_path}/{anchor_name}"
+            if settings.folder_by_time:
+                full_path = f"{full_path}/{date_dir}"
+            if settings.folder_by_title and port_info.get("title"):
+                if settings.folder_by_time:
+                    full_path = f"{full_path}/{live_title}_{anchor_name}"
+                else:
+                    full_path = f"{full_path}/{date_dir}_{live_title}"
+            os.makedirs(full_path, exist_ok=True)
         except Exception as e:
             logger.error(
                 i18n.tr(
                     "错误信息: {type_name}: {e} 发生错误的行数: {get_error_line}",
                     type_name=type(e).__name__,
                     e=e,
-                    get_error_line=_get_error_line(e),
+                    get_error_line=get_error_line(e),
                 )
             )
-            record_error(record_host)
-            time.sleep(2)
-        finally:
-            if room_state is not None and record_name:
-                room_state["name"] = record_name
+            return RecordResult(retry=True)
+
+        if platform not in ("自定义录制直播", "虎牙直播"):
+            if settings.enable_https_recording and real_url.startswith("http://"):
+                real_url = real_url.replace("http://", "https://")
+            elif not settings.enable_https_recording and real_url.startswith("https://"):
+                if not any(pt_host in record_url for pt_host in OVERSEAS_PLATFORM_HOST):
+                    real_url = real_url.replace("https://", "http://")
+
+            http_record_list = ["shopee", "咪咕直播"]
+            if platform in http_record_list:
+                real_url = real_url.replace("https://", "http://")
+
+        is_overseas = any(pt_host in record_url for pt_host in OVERSEAS_PLATFORM_HOST)
+        tuning = _ffmpeg_network_tuning(is_overseas)
+        ffmpeg_command = _build_ffmpeg_input_args(
+            real_url,
+            plan.user_agent,
+            tuning,
+            headers=dict(plan.headers) if plan.headers is not None else None,
+            tls_verify=policy.should_verify_stream_tls(platform),
+            proxy_address=proxy_address,
+        )
+
+        only_flv_record = False
+        only_flv_platform_list = ["shopee", "花椒直播"]
+        if platform in only_flv_platform_list:
+            logger.debug(i18n.tr("提示: {platform} 将强制使用FLV格式录制", platform=platform))
+            only_flv_record = True
+
+        if not only_flv_record:
+            with recording_state.record_state_lock:
+                recording_state.recording.add(record_name)
+                start_record_time = datetime.datetime.now()
+                actual_quality_value = port_info.get("actual_quality")
+                actual_quality_code: str | None = (
+                    actual_quality_value if isinstance(actual_quality_value, str) else None
+                )
+                actual_quality_zh = code_to_zh(actual_quality_code) if actual_quality_code else ""
+                if actual_quality_code and _is_downgrade(record_quality, actual_quality_code):
+                    logger.warning(
+                        i18n.tr(
+                            "{record_name} 画质降级：设置 {record_quality_zh}({record_quality})"
+                            " 实际 {actual_quality_zh}({actual_quality_code})",
+                            record_name=record_name,
+                            record_quality_zh=record_quality_zh,
+                            record_quality=record_quality,
+                            actual_quality_zh=actual_quality_zh,
+                            actual_quality_code=actual_quality_code,
+                        )
+                    )
+                recording_state.recording_time_list[record_name] = [
+                    start_record_time,
+                    record_quality_zh,
+                    actual_quality_zh,
+                ]
+        rec_info_anchor_name = anchor_name
+        rec_info_full_path = full_path
+        if settings.show_url:
+            re_plat = ("WinkTV", "PandaTV", "ShowRoom", "CHZZK", "YouTube")
+            if platform in re_plat:
+                logger.info(
+                    i18n.tr(
+                        "{platform} | {anchor_name} | 直播源地址: {m3u8_url}",
+                        platform=platform,
+                        anchor_name=anchor_name,
+                        m3u8_url=utils.mask_credentials(str(port_info.get("m3u8_url") or "")),
+                    )
+                )
+            else:
+                logger.info(
+                    i18n.tr(
+                        "{platform} | {anchor_name} | 直播源地址: {real_url}",
+                        platform=platform,
+                        anchor_name=anchor_name,
+                        real_url=utils.mask_credentials(real_url),
+                    )
+                )
+
+        only_audio_record = False
+        only_audio_platform_list = ["猫耳FM直播", "Look直播"]
+        if platform in only_audio_platform_list:
+            only_audio_record = True
+
+        record_save_type = settings.video_save_type
+
+        if real_url == port_info.get("flv_url") and port_info.get("flv_url"):
+            codec = network_urls.query_values(cast(str, port_info["flv_url"]), "codec")
+            if (
+                isinstance(codec, list)
+                and bool(codec)
+                and codec[0] == "h265"
+                and record_save_type.upper() not in ("TS", "MKV", "MP4")
+            ):
+                logger.warning(i18n.tr("FLV is not supported for h265 codec, use TS format instead"))
+                record_save_type = "TS"
+
+        if only_audio_record or any(i in record_save_type for i in ["MP3", "M4A"]):
+            save_file_path = _build_record_output_path(
+                full_path,
+                anchor_name,
+                title_in_name,
+                now,
+                record_save_type,
+                settings.split_video_by_time,
+                is_audio=True,
+            )
+            if settings.split_video_by_time:
+                print(
+                    i18n.tr(
+                        "\r{anchor_name} 准备开始录制音频: {save_file_path}",
+                        anchor_name=anchor_name,
+                        save_file_path=save_file_path,
+                    )
+                )
+            ffmpeg_command.extend(
+                _build_ffmpeg_output_args(
+                    save_file_path,
+                    record_save_type,
+                    settings.split_video_by_time,
+                    settings.split_time,
+                    is_audio=True,
+                )
+            )
+            started, comment_end = _run_ffmpeg_record(
+                record_name,
+                record_url,
+                record_host,
+                ffmpeg_command,
+                record_save_type,
+                settings.custom_script,
+                platform,
+                record_danmaku_args,
+            )
+            if started:
+                record_finished = True
+            if comment_end:
+                return RecordResult(started=record_finished, comment_end=True)
+
+        elif only_flv_record:
+            logger.info(
+                i18n.tr(
+                    "Use Direct Downloader to Download FLV Stream: {record_url}",
+                    record_url=utils.mask_credentials(record_url),
+                )
+            )
+            filename = f"{anchor_name}_{title_in_name}{now}_00.flv"
+            save_file_path = f"{full_path}/{filename}"
+            print(
+                i18n.tr(
+                    "\r{anchor_name} 准备开始录制视频: {full_path}/{filename}",
+                    anchor_name=rec_info_anchor_name,
+                    full_path=rec_info_full_path,
+                    filename=filename,
+                )
+            )
+
+            subs_file_path = save_file_path.rsplit(".", maxsplit=1)[0]
+            subs_thread_name = f"subs_{Path(subs_file_path).name}"
+
+            try:
+                flv_url = port_info.get("flv_url")
+                if isinstance(flv_url, str) and flv_url:
+                    with recording_state.record_state_lock:
+                        recording_state.recording.add(record_name)
+                        start_record_time = datetime.datetime.now()
+                        actual_quality_value = port_info.get("actual_quality")
+                        actual_quality_code = actual_quality_value if isinstance(actual_quality_value, str) else None
+                        actual_quality_zh = code_to_zh(actual_quality_code) if actual_quality_code else ""
+                        if actual_quality_code and _is_downgrade(record_quality, actual_quality_code):
+                            logger.warning(
+                                i18n.tr(
+                                    "{record_name} 画质降级：设置 {record_quality_zh}({record_quality})"
+                                    " 实际 {actual_quality_zh}({actual_quality_code})",
+                                    record_name=record_name,
+                                    record_quality_zh=record_quality_zh,
+                                    record_quality=record_quality,
+                                    actual_quality_zh=actual_quality_zh,
+                                    actual_quality_code=actual_quality_code,
+                                )
+                            )
+                        recording_state.recording_time_list[record_name] = [
+                            start_record_time,
+                            record_quality_zh,
+                            actual_quality_zh,
+                        ]
+
+                    if settings.create_time_file:
+                        with recording_state.record_state_lock:
+                            recording_state.create_var[subs_thread_name] = threading.Thread(
+                                target=_generate_time_subtitles,
+                                args=(record_name, subs_file_path, subs_thread_name),
+                                name=subs_thread_name,
+                                daemon=True,
+                            )
+                            try:
+                                recording_state.create_var[subs_thread_name].start()
+                            except RuntimeError:
+                                recording_state.create_var.pop(subs_thread_name, None)
+
+                    download_success = direct_download_stream(
+                        flv_url,
+                        save_file_path,
+                        record_name,
+                        record_url,
+                        platform,
+                        cookies=platform_cookie,
+                    )
+
+                    if download_success:
+                        record_finished = True
+                        print(
+                            i18n.tr(
+                                "\n{anchor_name} {strftime} 直播录制完成\n",
+                                anchor_name=anchor_name,
+                                strftime=time.strftime("%Y-%m-%d %H:%M:%S"),
+                            )
+                        )
+                        record_success(record_host)
+                    elif (
+                        record_url not in recording_state.url_comments
+                        and not recording_state.exit_recording
+                        and recording_state.recording_enabled
+                    ):
+                        record_error(record_host)
+
+                    clear_record_info(record_name, record_url)
+                else:
+                    logger.debug(i18n.tr("未找到FLV直播流，跳过录制"))
+                    clear_record_info(record_name, record_url)
+            except Exception as e:
+                clear_record_info(record_name, record_url)
+                console.color_obj.print_colored(
+                    i18n.tr(
+                        "\n{anchor_name} {strftime} 直播录制出错,请检查网络\n",
+                        anchor_name=anchor_name,
+                        strftime=time.strftime("%Y-%m-%d %H:%M:%S"),
+                    ),
+                    console.color_obj.RED,
+                )
+                logger.error(
+                    i18n.tr(
+                        "错误信息: {type_name}: {e} 发生错误的行数: {get_error_line}",
+                        type_name=type(e).__name__,
+                        e=e,
+                        get_error_line=get_error_line(e),
+                    )
+                )
+                record_error(record_host)
+
+        elif record_save_type in ("FLV", "MKV", "MP4"):
+            save_file_path = _build_record_output_path(
+                full_path,
+                anchor_name,
+                title_in_name,
+                now,
+                record_save_type,
+                settings.split_video_by_time,
+            )
+            print(
+                i18n.tr(
+                    "\r{anchor_name} 准备开始录制视频: {full_path}/{filename}",
+                    anchor_name=rec_info_anchor_name,
+                    full_path=rec_info_full_path,
+                    filename=os.path.basename(save_file_path),
+                )
+            )
+            ffmpeg_command.extend(
+                _build_ffmpeg_output_args(
+                    save_file_path, record_save_type, settings.split_video_by_time, settings.split_time
+                )
+            )
+            started, comment_end = _run_ffmpeg_record(
+                record_name,
+                record_url,
+                record_host,
+                ffmpeg_command,
+                record_save_type,
+                settings.custom_script,
+                platform,
+                record_danmaku_args,
+            )
+            if started:
+                record_finished = True
+            _convert_if_flv = started and record_save_type == "FLV"
+            if comment_end:
+                if _convert_if_flv:
+                    _convert_after_record(save_file_path, settings.split_video_by_time)
+                return RecordResult(started=record_finished, comment_end=True)
+            if _convert_if_flv:
+                _convert_after_record(save_file_path, settings.split_video_by_time)
+
+        else:
+            save_file_path = _build_record_output_path(
+                full_path,
+                anchor_name,
+                title_in_name,
+                now,
+                record_save_type,
+                settings.split_video_by_time,
+            )
+            print(
+                i18n.tr(
+                    "\r{anchor_name} 准备开始录制视频: {full_path}/{filename}",
+                    anchor_name=rec_info_anchor_name,
+                    full_path=rec_info_full_path,
+                    filename=os.path.basename(save_file_path),
+                )
+            )
+            ffmpeg_command.extend(
+                _build_ffmpeg_output_args(
+                    save_file_path, record_save_type, settings.split_video_by_time, settings.split_time
+                )
+            )
+            started, comment_end = _run_ffmpeg_record(
+                record_name,
+                record_url,
+                record_host,
+                ffmpeg_command,
+                record_save_type,
+                settings.custom_script,
+                platform,
+                record_danmaku_args,
+            )
+            if started:
+                record_finished = True
+            if comment_end:
+                _convert_after_record(save_file_path, settings.split_video_by_time)
+                return RecordResult(started=record_finished, comment_end=True)
+
+        return RecordResult(started=record_finished)

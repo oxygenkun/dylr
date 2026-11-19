@@ -34,3 +34,6 @@ class Color:
     @staticmethod
     def print_colored(text: str, color: str) -> None:
         print(f"{color}{text}{Color.RESET}")
+
+
+color_obj = Color()

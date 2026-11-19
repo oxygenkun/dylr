@@ -28,18 +28,29 @@ from urllib.parse import urlsplit
 import httpx
 import pytest
 
+from src.config import settings
+from src.danmaku import service as danmaku_service
+from src.platforms.live import spider
 from src.recording import session as recording
-from src.recording import state
+from src.recording import state as recording_state
+from src.recording.pipeline import dispatch as platform_dispatch
+from src.recording.pipeline import selection as stream_select
+from src.recording.pipeline import stream
+from src.recording.plan import RecordResult
 from src.recording.scheduler import host_of
-from src.streams import dispatch as platform_dispatch
-from src.streams import selection as stream_select
-from src.streams import spider, stream
+from src.recording.sources import room as room_poller
 from src.support import i18n
 
 ROOT = Path(__file__).resolve().parents[1]
 MAIN_SRC = ROOT / "src/recording/engine.py"
 ENGINE_SOURCES = tuple(
-    ROOT / "src" / name for name in ("recording/engine.py", "recording/session.py", "streams/dispatch.py")
+    ROOT / "src" / name
+    for name in (
+        "recording/engine.py",
+        "recording/session.py",
+        "recording/sources/room.py",
+        "recording/pipeline/dispatch.py",
+    )
 )
 
 
@@ -258,6 +269,9 @@ class TestFlvConvertBeforeCommentEnd:
             "save_file_path": f"D:/rec/a.{save_type.lower()}",
             "split_video_by_time": False,
             "_convert_after_record": lambda p, s: calls.append(p),
+            "RecordResult": RecordResult,
+            "record_finished": started,
+            "settings": types.SimpleNamespace(split_video_by_time=False),
         }
         exec(compile(src, "<flv-branch>", "exec"), namespace)
         # comment_end=True 即「停止录制 / URL 被注释」导致的提前结束——修复前 FLV 在此路径
@@ -390,38 +404,38 @@ def _prime_check_subprocess(
     # 装配 check_subprocess 运行所需的最小环境（只打桩子进程/网络/时钟/弹幕，不重写任何判定）
     calls: dict[str, list] = {"ok": [], "err": [], "term": [], "unregister": [], "marks": [], "release": []}
     sem = types.SimpleNamespace(acquire=lambda timeout=None: True, release=lambda: calls["release"].append(1))
-    monkeypatch.setattr(state, "recording_semaphore", sem)
-    monkeypatch.setattr(state, "exit_recording", False)
-    monkeypatch.setattr(state, "recording_enabled", True)
-    monkeypatch.setattr(state, "url_comments", set())
-    monkeypatch.setattr(state, "recording", set())
-    monkeypatch.setattr(state, "recording_time_list", {})
-    monkeypatch.setattr(state, "running_list", [])
-    monkeypatch.setattr(state, "record_state_lock", threading.Lock())
-    monkeypatch.setattr(state, "enable_danmaku", False)
-    monkeypatch.setattr(state, "enable_danmaku_monitor", False)
-    monkeypatch.setattr(state, "danmaku_platforms", [])
-    monkeypatch.setattr(state, "create_time_file", False)
-    monkeypatch.setattr(state, "converts_to_mp4", False)
-    monkeypatch.setattr(state, "delete_origin_file", False)
-    monkeypatch.setattr(recording, "register_ffmpeg_process", lambda proc: None)
-    monkeypatch.setattr(recording, "unregister_ffmpeg_process", lambda proc: calls["unregister"].append(proc))
-    monkeypatch.setattr(recording, "clear_ffmpeg_reject", lambda url, platform: None)
-    monkeypatch.setattr(recording, "mark_ffmpeg_reject", lambda url, platform: calls["marks"].append((url, platform)))
-    monkeypatch.setattr(recording, "record_success", lambda key=None: calls["ok"].append(key))
-    monkeypatch.setattr(recording, "record_error", lambda key=None: calls["err"].append(key))
+    monkeypatch.setattr(recording_state, "recording_semaphore", sem)
+    monkeypatch.setattr(recording_state, "exit_recording", False)
+    monkeypatch.setattr(recording_state, "recording_enabled", True)
+    monkeypatch.setattr(recording_state, "url_comments", set())
+    monkeypatch.setattr(recording_state, "recording", set())
+    monkeypatch.setattr(recording_state, "recording_time_list", {})
+    monkeypatch.setattr(recording_state, "running_list", [])
+    monkeypatch.setattr(recording_state, "record_state_lock", threading.Lock())
+    monkeypatch.setattr(settings, "enable_danmaku", False)
+    monkeypatch.setattr(settings, "enable_danmaku_monitor", False)
+    monkeypatch.setattr(settings, "danmaku_platforms", [])
+    monkeypatch.setattr(settings, "create_time_file", False)
+    monkeypatch.setattr(settings, "converts_to_mp4", False)
+    monkeypatch.setattr(settings, "delete_origin_file", False)
+    _patch(monkeypatch, "register_ffmpeg_process", lambda proc: None)
+    _patch(monkeypatch, "unregister_ffmpeg_process", lambda proc: calls["unregister"].append(proc))
+    _patch(monkeypatch, "clear_ffmpeg_reject", lambda url, platform: None)
+    _patch(monkeypatch, "mark_ffmpeg_reject", lambda url, platform: calls["marks"].append((url, platform)))
+    _patch(monkeypatch, "record_success", lambda key=None: calls["ok"].append(key))
+    _patch(monkeypatch, "record_error", lambda key=None: calls["err"].append(key))
 
     def _terminate(proc: Any, timeout: int = 30) -> bool:
         calls["term"].append(proc)
         return True
 
-    monkeypatch.setattr(recording, "_terminate_ffmpeg_process", _terminate)
+    _patch(monkeypatch, "_terminate_ffmpeg_process", _terminate)
     shim = types.SimpleNamespace(**vars(subprocess))
     shim.Popen = popen_cls
-    monkeypatch.setattr(recording, "subprocess", shim)
+    _patch(monkeypatch, "subprocess", shim)
     if time_shim is None:
         time_shim = _time_shim(sleep=lambda seconds: None)
-    monkeypatch.setattr(recording, "time", time_shim)
+    _patch(monkeypatch, "time", time_shim)
     return calls
 
 
@@ -458,10 +472,8 @@ class TestSegmentTemplateSinglePercent:
             )
             assert "%" not in path, f"{save_type} 非分段输出仍含 % : {path}"
 
-    def test_filename_filter_rstr_contains_percent(self) -> None:
-        # 第一道防线（rstr 清洗）与第二道（_sanitize_output_name_base）互不替代：
-        # rstr 由 src/stream_select.clean_name 经 main.rstr 消费，掉了 % 就等于放开入口面
-        assert "%" in state.rstr, "rstr 必须过滤 `%`（SEV-2202 第一道防线）"
+    def test_clean_name_filters_percent(self) -> None:
+        assert stream_select.clean_name("主播%名") == "主播_名"
 
     def test_sanitizer_logs_a_warning_when_stripping(self) -> None:
         # 静默改名会让用户查不到「文件名怎么少了个 %」，必须留一条可检索告警
@@ -547,31 +559,32 @@ class TestDiskLimitedRecoverable:
                 for stmt in ast.walk(node)
                 if isinstance(stmt, ast.Assign)
                 for t in stmt.targets
-                if isinstance(t, ast.Attribute) and isinstance(t.value, ast.Name) and t.value.id == "state"
+                if isinstance(t, ast.Attribute)
+                and isinstance(t.value, ast.Name)
+                and t.value.id in {"state", "recording_state"}
             }
             if "disk_limited" in assigned and "exit_recording" in assigned:
                 return ast.unparse(node)
         raise AssertionError(
-            "src/main.py 里找不到 `if disk_free_gb < state.disk_space_limit:` 磁盘限制块（SEV-2206 形态已丢失）"
+            "src/main.py 里找不到 `if disk_free_gb < settings.disk_space_limit:` 磁盘限制块（SEV-2206 形态已丢失）"
         )
 
     @classmethod
     def _drive(cls, **state: Any) -> tuple[bool, bool] | None:
         src = "def _branch(disk_free_gb, disk_space_limit, disk_limited, exit_recording, recording, non_interactive):\n"
         src += textwrap.indent(cls._disk_block_src(), "    ") + "\n"
-        src += "    return state.disk_limited, state.exit_recording\n"
+        src += "    return recording_state.disk_limited, recording_state.exit_recording\n"
+        values = {key: value for key, value in state.items() if key != "_shutdown"}
         ns: dict[str, Any] = {
-            "state": types.SimpleNamespace(**{key: value for key, value in state.items() if key != "_shutdown"}),
+            "recording_state": types.SimpleNamespace(**values),
+            "settings": types.SimpleNamespace(disk_space_limit=state["disk_space_limit"]),
             "logger": _QuietLogger(),
             "i18n": i18n,
             "sys": _SysStub(),
             "_shutdown_postprocess_executor": lambda: state["_shutdown"].append(1),
         }
         exec(compile(src, "<disk-block>", "exec"), ns)
-        # 收敛点必须在「返回值」而不是「被调用对象」上：cast(Any, fn)(...) 的结果仍是 Any，
-        # warn_return_any 照样报 no-any-return。ns 是 dict[str, Any]（exec 注入，静态无从推断），
-        # 故显式收窄为本函数声明的类型，不牺牲运行期行为。
-        return cast("tuple[bool, bool] | None", ns["_branch"](**{k: v for k, v in state.items() if k != "_shutdown"}))
+        return cast("tuple[bool, bool] | None", ns["_branch"](**values))
 
     def test_disk_limited_is_recoverable(self) -> None:
         # ① 空间不足且仍有录制在跑 → 两个标志一起置位（停流但不退出）
@@ -642,7 +655,7 @@ class TestDiskLimitedRecoverable:
     def test_entry_condition_still_in_place(self) -> None:
         # 静态锁（防再被删成无条件进入）：磁盘限制块的 test 必须仍是 disk_free_gb < disk_space_limit
         src = self._disk_block_src()
-        assert src.startswith("if disk_free_gb < state.disk_space_limit:"), src.splitlines()[0]
+        assert src.startswith("if disk_free_gb < settings.disk_space_limit:"), src.splitlines()[0]
 
     def test_disk_flags_are_written_to_shared_state(self) -> None:
         tree = ast.parse(self._disk_block_src())
@@ -651,7 +664,9 @@ class TestDiskLimitedRecoverable:
             for node in ast.walk(tree)
             if isinstance(node, ast.Assign)
             for target in node.targets
-            if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name) and target.value.id == "state"
+            if isinstance(target, ast.Attribute)
+            and isinstance(target.value, ast.Name)
+            and target.value.id in {"state", "recording_state"}
         }
         assert {"disk_limited", "exit_recording"} <= assigned
 
@@ -664,19 +679,21 @@ class TestDiskFullPauseCleanupStillRuns:
     def test_room_thread_cleanup_survives_disk_full_pause(self, monkeypatch: pytest.MonkeyPatch) -> None:
         import src.notifications.notify as notify_module
 
-        monkeypatch.setattr(state, "exit_recording", True)
-        monkeypatch.setattr(state, "running_list", ["https://room.example/1", "https://room.example/2"])
-        monkeypatch.setattr(state, "monitoring", 2)
+        monkeypatch.setattr(recording_state, "exit_recording", True)
+        monkeypatch.setattr(recording_state, "running_list", ["https://room.example/1", "https://room.example/2"])
+        monkeypatch.setattr(recording_state, "monitoring", 2)
         notify_module.remove_room_from_running("https://room.example/1")
-        assert state.running_list == ["https://room.example/2"], "磁盘满暂停期退出的房间未从 running_list 清理"
-        assert state.monitoring == 1, "移除房间时未同步扣减监控计数"
+        assert recording_state.running_list == ["https://room.example/2"], (
+            "磁盘满暂停期退出的房间未从 running_list 清理"
+        )
+        assert recording_state.monitoring == 1, "移除房间时未同步扣减监控计数"
         # 幂等：已被 clear_record_info 或上一轮移除的 URL 再次传入为无操作
         notify_module.remove_room_from_running("https://room.example/1")
-        assert state.running_list == ["https://room.example/2"]
-        assert state.monitoring == 1
+        assert recording_state.running_list == ["https://room.example/2"]
+        assert recording_state.monitoring == 1
         # 空串 URL 不做任何事（守卫保留）
         notify_module.remove_room_from_running("")
-        assert state.running_list == ["https://room.example/2"]
+        assert recording_state.running_list == ["https://room.example/2"]
 
 
 class _QuietLogger:
@@ -809,17 +826,17 @@ class TestSubprocessUnwind:
 
         _prime_check_subprocess(monkeypatch, _Popen, out_ts="")
         collector = _CollectorStub()
-        monkeypatch.setattr(recording, "get_danmaku_collector", lambda **kw: collector)
-        monkeypatch.setattr(state, "enable_danmaku", True)
-        monkeypatch.setattr(state, "danmaku_platforms", ["虎牙直播"])
+        monkeypatch.setattr(danmaku_service, "get_danmaku_collector", lambda **kw: collector)
+        monkeypatch.setattr(settings, "enable_danmaku", True)
+        monkeypatch.setattr(settings, "danmaku_platforms", ["虎牙直播"])
 
         class _ExplodingDict(dict):
             # 现实形态：字幕线程 Thread.start() 抛「can't start new thread」（80+ 房间各持线程）
             def __setitem__(self, key: object, value: object) -> None:
                 raise RuntimeError("can't start new thread")
 
-        monkeypatch.setattr(state, "create_var", cast(Any, _ExplodingDict()))
-        monkeypatch.setattr(state, "create_time_file", True)
+        monkeypatch.setattr(recording_state, "create_var", cast(Any, _ExplodingDict()))
+        monkeypatch.setattr(settings, "create_time_file", True)
         out = tmp_path / "主播_2026-09-23_00-00-00.ts"
 
         with pytest.raises(RuntimeError):
@@ -844,13 +861,13 @@ class TestSubprocessUnwind:
             rc = 0
 
         calls = _prime_check_subprocess(monkeypatch, _Popen, out_ts="")
-        monkeypatch.setattr(state, "recording", {"主播名"})
-        monkeypatch.setattr(state, "recording_time_list", {"主播名": []})
+        monkeypatch.setattr(recording_state, "recording", {"主播名"})
+        monkeypatch.setattr(recording_state, "recording_time_list", {"主播名": []})
 
         def _register_raises(proc: Any) -> None:
             raise RuntimeError("can't start new thread")
 
-        monkeypatch.setattr(recording, "register_ffmpeg_process", _register_raises)
+        _patch(monkeypatch, "register_ffmpeg_process", _register_raises)
         out = tmp_path / "主播_2026-09-23_00-00-00.ts"
 
         with pytest.raises(RuntimeError):
@@ -861,8 +878,8 @@ class TestSubprocessUnwind:
                 "TS",
             )
         assert len(calls["unregister"]) == 1, "进程已自然退出时也必须注销（否则 _ffmpeg_processes 只增不清）"
-        assert state.recording == set(), "进程已自然退出时也必须回收 recording，否则面板恒显「录制中」"
-        assert state.recording_time_list == {}
+        assert recording_state.recording == set(), "进程已自然退出时也必须回收 recording，否则面板恒显「录制中」"
+        assert recording_state.recording_time_list == {}
         assert calls["term"] == [], "进程已退出，terminate 仍应被跳过（存活判定只约束终止动作）"
         assert calls["release"] == [1], "finally 必须无条件归还录制槽"
 
@@ -984,7 +1001,7 @@ class TestCredentialWritebackResilience:
             raise OSError("Read-only file system")
 
         utils_shim.update_config = cast(Any, _boom)
-        monkeypatch.setattr(state, "global_proxy", True)
+        monkeypatch.setattr(recording_state, "global_proxy", True)
         ctx = platform_dispatch._PlatformResolveContext("https://www.flextv.co.kr/channels/1", None, "原画")
         platform_dispatch._resolve_flextv_co_kr(ctx)  # 不得冒异常
         assert ctx.unrecognized is False, "凭据回写失败被冒成「未识别」→ 整轮流地址被丢弃"
@@ -1114,7 +1131,7 @@ class TestDirectDownloadUserAgent:
         # httpx 是全进程共享的三方模块本体 → 按 MID-66 口径改走浅拷贝替身
         httpx_shim = types.SimpleNamespace(**vars(httpx))
         httpx_shim.Client = cast(Any, _Client)
-        monkeypatch.setattr(recording, "httpx", httpx_shim)
+        _patch(monkeypatch, "httpx", httpx_shim)
 
     @pytest.mark.parametrize(
         "platform_ua,expected", [("", stream_select.MOBILE_UA), ("desktop-ua-for-huya", "desktop-ua-for-huya")]
@@ -1124,9 +1141,9 @@ class TestDirectDownloadUserAgent:
     ) -> None:
         captured: dict[str, str] = {}
         self._install_httpx_capture(monkeypatch, captured)
-        monkeypatch.setattr(recording, "get_record_headers", lambda *a, **k: {})
+        _patch(monkeypatch, "get_record_headers", lambda *a, **k: {})
         # 花椒/shopee 这类「强制直下」平台在 get_record_user_agent 里返回空 → 必须回落常量
-        monkeypatch.setattr(recording, "get_record_user_agent", lambda *a, **k: platform_ua)
+        _patch(monkeypatch, "get_record_user_agent", lambda *a, **k: platform_ua)
 
         assert (
             recording.direct_download_stream(
@@ -1145,8 +1162,8 @@ class TestDirectDownloadUserAgent:
 
     def test_fallback_ua_is_the_same_constant_as_ffmpeg_path(self) -> None:
         # AGENTS「UA 双端一字不差」：回落值必须与 ffmpeg 拉流路径共用 stream_select.MOBILE_UA。
-        # 延迟 import：src.streams.selection 在模块级 import 会经 main 形成循环导入。
-        from src.streams import selection as stream_select
+        # 延迟 import：src.recording.pipeline.selection 在模块级 import 会经 main 形成循环导入。
+        from src.recording.pipeline import selection as stream_select
 
         assert stream_select.MOBILE_UA == stream_select.MOBILE_UA
 
@@ -1215,3 +1232,10 @@ class TestPendingMainCatalog:
         # 占位符与关键字实参必须一一对齐，否则 tr 内部格式化失败后静默退回原文模板
         for msgid in self.NEW_MSGIDS:
             assert i18n.tr(msgid, directory="D:/rec") == msgid.replace("{directory}", "D:/rec")
+
+
+def _patch(monkeypatch: pytest.MonkeyPatch, name: str, value: object) -> None:
+    """同一符号可能位于录制执行层或房间轮询层，按实际归属同时补桩。"""
+    for module in (recording, room_poller):
+        if hasattr(module, name):
+            monkeypatch.setattr(module, name, value)

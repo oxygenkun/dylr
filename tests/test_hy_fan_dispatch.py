@@ -18,8 +18,9 @@ from typing import Any
 
 import pytest
 
-from src.recording import state
-from src.streams import dispatch as platform_dispatch
+from src.config import settings
+from src.recording import state as recording_state
+from src.recording.pipeline import dispatch as platform_dispatch
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 
@@ -51,10 +52,10 @@ def dispatch_env(main_mod: Any, monkeypatch: pytest.MonkeyPatch) -> tuple[Any, l
     monkeypatch.setattr(platform_dispatch, "spider", _RecordingShim(calls), raising=False)
     monkeypatch.setattr(platform_dispatch, "stream", _RecordingShim(calls), raising=False)
     # main() 运行期才赋值的全局量：import 期不存在，需补齐否则 NameError（同 test_platform_dispatch）
-    if not hasattr(state, "hy_cookie"):
-        monkeypatch.setattr(state, "hy_cookie", "", raising=False)
-    if not hasattr(state, "semaphore"):
-        monkeypatch.setattr(state, "semaphore", threading.Semaphore(8), raising=False)
+    if not hasattr(settings, "hy_cookie"):
+        monkeypatch.setattr(settings, "hy_cookie", "", raising=False)
+    if not hasattr(recording_state, "semaphore"):
+        monkeypatch.setattr(recording_state, "semaphore", threading.Semaphore(8), raising=False)
     # 短码解析缓存按用例隔离：模块级 dict 会跨用例残留，换成空 dict 等价于「每例新进程」，
     # 让「缓存命中后解析桩不再被调」的断言不依赖用例执行顺序。
     monkeypatch.setattr(platform_dispatch, "_HY_FAN_ROOM_CACHE", {}, raising=False)

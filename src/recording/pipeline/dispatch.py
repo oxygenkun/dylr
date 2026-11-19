@@ -12,12 +12,16 @@ from urllib.parse import urlsplit
 from loguru import logger
 
 from src.config import files as config_files
+from src.config import lock as config_lock
+from src.config import paths as config_paths
+from src.config import settings
 from src.config.store import ConfigError
-from src.monitors.registry import follow_monitor
 from src.network.http import request
-from src.recording import state
-from src.streams import spider, stream
-from src.streams.selection import _douyin_rate_limit
+from src.platforms.live import spider
+from src.recording import state as recording_state
+from src.recording.pipeline import stream
+from src.recording.pipeline.selection import _douyin_rate_limit
+from src.recording.sources.account import follow_monitor
 from src.support import i18n, utils
 
 PLATFORM_HOST = [
@@ -192,19 +196,19 @@ def _resolve_douyin_com(ctx: _PlatformResolveContext) -> None:
     _, follow_room = follow_monitor.get_room(ctx.record_url)
     if follow_room is None:
         _douyin_rate_limit()
-    with state.semaphore:
+    with recording_state.semaphore:
         if follow_room is not None:
             json_data = follow_room
         elif "v.douyin.com" not in ctx.record_url and "/user/" not in ctx.record_url:
             json_data = asyncio.run(
                 spider.get_douyin_web_stream_data(
-                    url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=state.dy_cookie
+                    url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=settings.dy_cookie
                 )
             )
         else:
             json_data = asyncio.run(
                 spider.get_douyin_app_stream_data(
-                    url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=state.dy_cookie
+                    url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=settings.dy_cookie
                 )
             )
         _douyin_room_id = ""
@@ -214,18 +218,18 @@ def _resolve_douyin_com(ctx: _PlatformResolveContext) -> None:
             ctx.record_danmaku_args = {
                 "room_id": _douyin_room_id,
                 "user_id": str(random.randint(10**11, 10**12 - 1)),
-                "cookie": state.dy_cookie or "",
+                "cookie": settings.dy_cookie or "",
             }
         ctx.port_info = asyncio.run(stream.get_douyin_stream_url(json_data, ctx.record_quality, ctx.proxy_address))
 
 
 def _resolve_tiktok_com(ctx: _PlatformResolveContext) -> None:
     ctx.platform = "TikTok直播"
-    with state.semaphore:
-        if state.global_proxy or ctx.proxy_address:
+    with recording_state.semaphore:
+        if recording_state.global_proxy or ctx.proxy_address:
             tiktok_data = asyncio.run(
                 spider.get_tiktok_stream_data(
-                    url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=state.tiktok_cookie
+                    url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=settings.tiktok_cookie
                 )
             )
             json_data = tiktok_data if tiktok_data is not None else cast(dict[str, object], {"is_live": False})
@@ -236,19 +240,23 @@ def _resolve_tiktok_com(ctx: _PlatformResolveContext) -> None:
 
 def _resolve_live_kuaishou_com(ctx: _PlatformResolveContext) -> None:
     ctx.platform = "快手直播"
-    with state.semaphore:
+    with recording_state.semaphore:
         json_data = asyncio.run(
-            spider.get_kuaishou_stream_data(url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=state.ks_cookie)
+            spider.get_kuaishou_stream_data(
+                url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=settings.ks_cookie
+            )
         )
         ctx.port_info = asyncio.run(stream.get_kuaishou_stream_url(json_data, ctx.record_quality))
 
 
 def _resolve_huya_com(ctx: _PlatformResolveContext) -> None:
     ctx.platform = "虎牙直播"
-    with state.semaphore:
+    with recording_state.semaphore:
         if ctx.record_quality not in ["OD", "BD", "UHD"]:
             json_data = asyncio.run(
-                spider.get_huya_stream_data(url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=state.hy_cookie)
+                spider.get_huya_stream_data(
+                    url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=settings.hy_cookie
+                )
             )
             ctx.port_info = asyncio.run(stream.get_huya_stream_url(json_data, ctx.record_quality))
             try:
@@ -275,7 +283,7 @@ def _resolve_huya_com(ctx: _PlatformResolveContext) -> None:
         else:
             ctx.port_info = asyncio.run(
                 spider.get_huya_app_stream_url(
-                    url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=state.hy_cookie
+                    url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=settings.hy_cookie
                 )
             )
             try:
@@ -397,9 +405,9 @@ def _resolve_hy_fan(ctx: _PlatformResolveContext) -> None:
 
 def _resolve_douyu_com(ctx: _PlatformResolveContext) -> None:
     ctx.platform = "斗鱼直播"
-    with state.semaphore:
+    with recording_state.semaphore:
         json_data = asyncio.run(
-            spider.get_douyu_info_data(url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=state.douyu_cookie)
+            spider.get_douyu_info_data(url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=settings.douyu_cookie)
         )
         _douyu_rid = str(json_data.get("room_id") or "") if isinstance(json_data, dict) else ""
         if _douyu_rid:
@@ -408,7 +416,7 @@ def _resolve_douyu_com(ctx: _PlatformResolveContext) -> None:
             stream.get_douyu_stream_url(
                 json_data,
                 video_quality=ctx.record_quality,
-                cookies=state.douyu_cookie,
+                cookies=settings.douyu_cookie,
                 proxy_addr=ctx.proxy_address,
             )
         )
@@ -416,24 +424,26 @@ def _resolve_douyu_com(ctx: _PlatformResolveContext) -> None:
 
 def _resolve_yy_com(ctx: _PlatformResolveContext) -> None:
     ctx.platform = "YY直播"
-    with state.semaphore:
+    with recording_state.semaphore:
         json_data = asyncio.run(
-            spider.get_yy_stream_data(url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=state.yy_cookie)
+            spider.get_yy_stream_data(url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=settings.yy_cookie)
         )
         ctx.port_info = asyncio.run(stream.get_yy_stream_url(json_data))
 
 
 def _resolve_live_bilibili_com(ctx: _PlatformResolveContext) -> None:
     ctx.platform = "B站直播"
-    with state.semaphore:
+    with recording_state.semaphore:
         json_data = asyncio.run(
-            spider.get_bilibili_room_info(url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=state.bili_cookie)
+            spider.get_bilibili_room_info(
+                url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=settings.bili_cookie
+            )
         )
         ctx.port_info = asyncio.run(
             stream.get_bilibili_stream_url(
                 json_data,
                 video_quality=ctx.record_quality,
-                cookies=state.bili_cookie,
+                cookies=settings.bili_cookie,
                 proxy_addr=ctx.proxy_address,
             )
         )
@@ -441,7 +451,7 @@ def _resolve_live_bilibili_com(ctx: _PlatformResolveContext) -> None:
             try:
                 ctx.record_danmaku_args = asyncio.run(
                     spider.get_bilibili_danmaku_info(
-                        url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=state.bili_cookie
+                        url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=settings.bili_cookie
                     )
                 )
             except Exception as e:
@@ -526,9 +536,9 @@ def _resolve_b23_tv(ctx: _PlatformResolveContext) -> None:
 
 def _resolve_xhslink_com(ctx: _PlatformResolveContext) -> None:
     ctx.platform = "小红书直播"
-    with state.semaphore:
+    with recording_state.semaphore:
         ctx.port_info = asyncio.run(
-            spider.get_xhs_stream_url(ctx.record_url, proxy_addr=ctx.proxy_address, cookies=state.xhs_cookie)
+            spider.get_xhs_stream_url(ctx.record_url, proxy_addr=ctx.proxy_address, cookies=settings.xhs_cookie)
         )
     _error = str(ctx.port_info.get("error") or "")
     if _error:
@@ -547,38 +557,38 @@ def _resolve_xhslink_com(ctx: _PlatformResolveContext) -> None:
 
 def _resolve_bigo_tv(ctx: _PlatformResolveContext) -> None:
     ctx.platform = "bigo"
-    with state.semaphore:
+    with recording_state.semaphore:
         ctx.port_info = asyncio.run(
-            spider.get_bigo_stream_url(ctx.record_url, proxy_addr=ctx.proxy_address, cookies=state.bigo_cookie)
+            spider.get_bigo_stream_url(ctx.record_url, proxy_addr=ctx.proxy_address, cookies=settings.bigo_cookie)
         )
 
 
 def _resolve_app_blued_cn(ctx: _PlatformResolveContext) -> None:
     ctx.platform = "blued"
-    with state.semaphore:
+    with recording_state.semaphore:
         ctx.port_info = asyncio.run(
-            spider.get_blued_stream_url(ctx.record_url, proxy_addr=ctx.proxy_address, cookies=state.blued_cookie)
+            spider.get_blued_stream_url(ctx.record_url, proxy_addr=ctx.proxy_address, cookies=settings.blued_cookie)
         )
 
 
 def _resolve_sooplive_co_kr(ctx: _PlatformResolveContext) -> None:
     ctx.platform = "SOOP(原AfreecaTV)"
-    with state.semaphore:
-        if state.global_proxy or ctx.proxy_address:
+    with recording_state.semaphore:
+        if recording_state.global_proxy or ctx.proxy_address:
             json_data = asyncio.run(
                 spider.get_sooplive_stream_data(
                     url=ctx.record_url,
                     proxy_addr=ctx.proxy_address,
-                    cookies=state.sooplive_cookie,
-                    username=state.sooplive_username,
-                    password=state.sooplive_password,
+                    cookies=settings.sooplive_cookie,
+                    username=settings.sooplive_username,
+                    password=settings.sooplive_password,
                 )
             )
             if json_data and json_data.get("new_cookies"):
                 try:
-                    with state.file_update_lock:  # 与主循环 config.read/其他写入方互斥，防止半写
+                    with config_lock.file_update_lock:  # 与主循环 config.read/其他写入方互斥，防止半写
                         config_files.update_config(
-                            state.config_file,
+                            config_paths.config_file,
                             "Cookie",
                             "sooplive_cookie",
                             cast(str, json_data["new_cookies"]),
@@ -598,10 +608,10 @@ def _resolve_sooplive_co_kr(ctx: _PlatformResolveContext) -> None:
 
 def _resolve_cc_163_com(ctx: _PlatformResolveContext) -> None:
     ctx.platform = "网易CC直播"
-    with state.semaphore:
+    with recording_state.semaphore:
         json_data = asyncio.run(
             spider.get_netease_stream_data(
-                url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=state.netease_cookie
+                url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=settings.netease_cookie
             )
         )
         ctx.port_info = asyncio.run(stream.get_netease_stream_url(json_data, ctx.record_quality))
@@ -609,21 +619,21 @@ def _resolve_cc_163_com(ctx: _PlatformResolveContext) -> None:
 
 def _resolve_qiandurebo_com(ctx: _PlatformResolveContext) -> None:
     ctx.platform = "千度热播"
-    with state.semaphore:
+    with recording_state.semaphore:
         ctx.port_info = asyncio.run(
             spider.get_qiandurebo_stream_data(
-                url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=state.qiandurebo_cookie
+                url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=settings.qiandurebo_cookie
             )
         )
 
 
 def _resolve_pandalive_co_kr(ctx: _PlatformResolveContext) -> None:
     ctx.platform = "PandaTV"
-    with state.semaphore:
-        if state.global_proxy or ctx.proxy_address:
+    with recording_state.semaphore:
+        if recording_state.global_proxy or ctx.proxy_address:
             json_data = asyncio.run(
                 spider.get_pandatv_stream_data(
-                    url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=state.pandatv_cookie
+                    url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=settings.pandatv_cookie
                 )
             )
             ctx.port_info = asyncio.run(stream.get_stream_url(json_data, ctx.record_quality, spec=True))
@@ -633,21 +643,21 @@ def _resolve_pandalive_co_kr(ctx: _PlatformResolveContext) -> None:
 
 def _resolve_fm_missevan_com(ctx: _PlatformResolveContext) -> None:
     ctx.platform = "猫耳FM直播"
-    with state.semaphore:
+    with recording_state.semaphore:
         ctx.port_info = asyncio.run(
             spider.get_maoerfm_stream_url(
-                url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=state.maoerfm_cookie
+                url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=settings.maoerfm_cookie
             )
         )
 
 
 def _resolve_winktv_co_kr(ctx: _PlatformResolveContext) -> None:
     ctx.platform = "WinkTV"
-    with state.semaphore:
-        if state.global_proxy or ctx.proxy_address:
+    with recording_state.semaphore:
+        if recording_state.global_proxy or ctx.proxy_address:
             json_data = asyncio.run(
                 spider.get_winktv_stream_data(
-                    url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=state.winktv_cookie
+                    url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=settings.winktv_cookie
                 )
             )
             ctx.port_info = asyncio.run(stream.get_stream_url(json_data, ctx.record_quality, spec=True))
@@ -657,22 +667,22 @@ def _resolve_winktv_co_kr(ctx: _PlatformResolveContext) -> None:
 
 def _resolve_flextv_co_kr(ctx: _PlatformResolveContext) -> None:
     ctx.platform = "TTingLive(原Flextv)"
-    with state.semaphore:
-        if state.global_proxy or ctx.proxy_address:
+    with recording_state.semaphore:
+        if recording_state.global_proxy or ctx.proxy_address:
             json_data = asyncio.run(
                 spider.get_flextv_stream_data(
                     url=ctx.record_url,
                     proxy_addr=ctx.proxy_address,
-                    cookies=state.flextv_cookie,
-                    username=state.flextv_username,
-                    password=state.flextv_password,
+                    cookies=settings.flextv_cookie,
+                    username=settings.flextv_username,
+                    password=settings.flextv_password,
                 )
             )
             if json_data and json_data.get("new_cookies"):
                 try:
-                    with state.file_update_lock:  # 与主循环 config.read/其他写入方互斥，防止半写
+                    with config_lock.file_update_lock:  # 与主循环 config.read/其他写入方互斥，防止半写
                         config_files.update_config(
-                            state.config_file, "Cookie", "flextv_cookie", cast(str, json_data["new_cookies"])
+                            config_paths.config_file, "Cookie", "flextv_cookie", cast(str, json_data["new_cookies"])
                         )
                 except (ConfigError, OSError) as e:
                     logger.warning(
@@ -692,31 +702,33 @@ def _resolve_flextv_co_kr(ctx: _PlatformResolveContext) -> None:
 
 def _resolve_look_163_com(ctx: _PlatformResolveContext) -> None:
     ctx.platform = "Look直播"
-    with state.semaphore:
+    with recording_state.semaphore:
         ctx.port_info = asyncio.run(
-            spider.get_looklive_stream_url(url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=state.look_cookie)
+            spider.get_looklive_stream_url(
+                url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=settings.look_cookie
+            )
         )
 
 
 def _resolve_popkontv_com(ctx: _PlatformResolveContext) -> None:
     ctx.platform = "PopkonTV"
-    with state.semaphore:
-        if state.global_proxy or ctx.proxy_address:
+    with recording_state.semaphore:
+        if recording_state.global_proxy or ctx.proxy_address:
             ctx.port_info = asyncio.run(
                 spider.get_popkontv_stream_url(
                     url=ctx.record_url,
                     proxy_addr=ctx.proxy_address,
-                    access_token=state.popkontv_access_token,
-                    username=state.popkontv_username,
-                    password=state.popkontv_password,
-                    partner_code=state.popkontv_partner_code,
+                    access_token=settings.popkontv_access_token,
+                    username=settings.popkontv_username,
+                    password=settings.popkontv_password,
+                    partner_code=settings.popkontv_partner_code,
                 )
             )
             if ctx.port_info and ctx.port_info.get("new_token"):
                 try:
-                    with state.file_update_lock:  # 与主循环 config.read/其他写入方互斥，防止半写
+                    with config_lock.file_update_lock:  # 与主循环 config.read/其他写入方互斥，防止半写
                         config_files.update_config(
-                            file_path=state.config_file,
+                            file_path=config_paths.config_file,
                             section="Authorization",
                             key="popkontv_token",
                             new_value=cast(str, ctx.port_info["new_token"]),
@@ -736,24 +748,24 @@ def _resolve_popkontv_com(ctx: _PlatformResolveContext) -> None:
 
 def _resolve_twitcasting_tv(ctx: _PlatformResolveContext) -> None:
     ctx.platform = "TwitCasting"
-    with state.semaphore:
+    with recording_state.semaphore:
         json_data = asyncio.run(
             spider.get_twitcasting_stream_url(
                 url=ctx.record_url,
                 proxy_addr=ctx.proxy_address,
-                cookies=state.twitcasting_cookie,
-                account_type=state.twitcasting_account_type,
-                username=state.twitcasting_username,
-                password=state.twitcasting_password,
+                cookies=settings.twitcasting_cookie,
+                account_type=settings.twitcasting_account_type,
+                username=settings.twitcasting_username,
+                password=settings.twitcasting_password,
             )
         )
         ctx.port_info = asyncio.run(stream.get_stream_url(json_data, ctx.record_quality, spec=False))
 
         if json_data and json_data.get("new_cookies"):
             try:
-                with state.file_update_lock:  # 与主循环 config.read/其他写入方互斥，防止半写
+                with config_lock.file_update_lock:  # 与主循环 config.read/其他写入方互斥，防止半写
                     config_files.update_config(
-                        file_path=state.config_file,
+                        file_path=config_paths.config_file,
                         section="Cookie",
                         key="twitcasting_cookie",
                         new_value=cast(str, json_data["new_cookies"]),
@@ -770,37 +782,41 @@ def _resolve_twitcasting_tv(ctx: _PlatformResolveContext) -> None:
 
 def _resolve_live_baidu_com(ctx: _PlatformResolveContext) -> None:
     ctx.platform = "百度直播"
-    with state.semaphore:
+    with recording_state.semaphore:
         json_data = asyncio.run(
-            spider.get_baidu_stream_data(url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=state.baidu_cookie)
+            spider.get_baidu_stream_data(
+                url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=settings.baidu_cookie
+            )
         )
         ctx.port_info = asyncio.run(stream.get_stream_url(json_data, ctx.record_quality))
 
 
 def _resolve_weibo_com(ctx: _PlatformResolveContext) -> None:
     ctx.platform = "微博直播"
-    with state.semaphore:
+    with recording_state.semaphore:
         json_data = asyncio.run(
-            spider.get_weibo_stream_data(url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=state.weibo_cookie)
+            spider.get_weibo_stream_data(
+                url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=settings.weibo_cookie
+            )
         )
         ctx.port_info = asyncio.run(stream.get_stream_url(json_data, ctx.record_quality, hls_extra_key="m3u8_url"))
 
 
 def _resolve_kugou_com(ctx: _PlatformResolveContext) -> None:
     ctx.platform = "酷狗直播"
-    with state.semaphore:
+    with recording_state.semaphore:
         ctx.port_info = asyncio.run(
-            spider.get_kugou_stream_url(url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=state.kugou_cookie)
+            spider.get_kugou_stream_url(url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=settings.kugou_cookie)
         )
 
 
 def _resolve_twitch_tv(ctx: _PlatformResolveContext) -> None:
     ctx.platform = "TwitchTV"
-    with state.semaphore:
-        if state.global_proxy or ctx.proxy_address:
+    with recording_state.semaphore:
+        if recording_state.global_proxy or ctx.proxy_address:
             json_data = asyncio.run(
                 spider.get_twitchtv_stream_data(
-                    url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=state.twitch_cookie
+                    url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=settings.twitch_cookie
                 )
             )
             ctx.port_info = asyncio.run(stream.get_stream_url(json_data, ctx.record_quality, spec=True))
@@ -824,12 +840,12 @@ def _resolve_twitch_tv(ctx: _PlatformResolveContext) -> None:
 
 
 def _resolve_liveme_com(ctx: _PlatformResolveContext) -> None:
-    if state.global_proxy or ctx.proxy_address:
+    if recording_state.global_proxy or ctx.proxy_address:
         ctx.platform = "LiveMe"
-        with state.semaphore:
+        with recording_state.semaphore:
             ctx.port_info = asyncio.run(
                 spider.get_liveme_stream_url(
-                    url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=state.liveme_cookie
+                    url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=settings.liveme_cookie
                 )
             )
     else:
@@ -838,30 +854,30 @@ def _resolve_liveme_com(ctx: _PlatformResolveContext) -> None:
 
 def _resolve_huajiao_com(ctx: _PlatformResolveContext) -> None:
     ctx.platform = "花椒直播"
-    with state.semaphore:
+    with recording_state.semaphore:
         ctx.port_info = asyncio.run(
             spider.get_huajiao_stream_url(
-                url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=state.huajiao_cookie
+                url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=settings.huajiao_cookie
             )
         )
 
 
 def _resolve_n7u66_com(ctx: _PlatformResolveContext) -> None:
     ctx.platform = "流星直播"
-    with state.semaphore:
+    with recording_state.semaphore:
         ctx.port_info = asyncio.run(
             spider.get_liuxing_stream_url(
-                url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=state.liuxing_cookie
+                url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=settings.liuxing_cookie
             )
         )
 
 
 def _resolve_showroom_live_com(ctx: _PlatformResolveContext) -> None:
     ctx.platform = "ShowRoom"
-    with state.semaphore:
+    with recording_state.semaphore:
         json_data = asyncio.run(
             spider.get_showroom_stream_data(
-                url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=state.showroom_cookie
+                url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=settings.showroom_cookie
             )
         )
         ctx.port_info = asyncio.run(stream.get_stream_url(json_data, ctx.record_quality, spec=True))
@@ -869,9 +885,11 @@ def _resolve_showroom_live_com(ctx: _PlatformResolveContext) -> None:
 
 def _resolve_live_acfun_cn(ctx: _PlatformResolveContext) -> None:
     ctx.platform = "Acfun"
-    with state.semaphore:
+    with recording_state.semaphore:
         json_data = asyncio.run(
-            spider.get_acfun_stream_data(url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=state.acfun_cookie)
+            spider.get_acfun_stream_data(
+                url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=settings.acfun_cookie
+            )
         )
         ctx.port_info = asyncio.run(
             stream.get_stream_url(json_data, ctx.record_quality, url_type="flv", flv_extra_key="url")
@@ -880,112 +898,128 @@ def _resolve_live_acfun_cn(ctx: _PlatformResolveContext) -> None:
 
 def _resolve_live_tlclw_com(ctx: _PlatformResolveContext) -> None:
     ctx.platform = "畅聊直播"
-    with state.semaphore:
+    with recording_state.semaphore:
         ctx.port_info = asyncio.run(
             spider.get_changliao_stream_url(
-                url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=state.changliao_cookie
+                url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=settings.changliao_cookie
             )
         )
 
 
 def _resolve_ybw1666_com(ctx: _PlatformResolveContext) -> None:
     ctx.platform = "音播直播"
-    with state.semaphore:
+    with recording_state.semaphore:
         ctx.port_info = asyncio.run(
-            spider.get_yinbo_stream_url(url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=state.yinbo_cookie)
+            spider.get_yinbo_stream_url(url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=settings.yinbo_cookie)
         )
 
 
 def _resolve_inke_cn(ctx: _PlatformResolveContext) -> None:
     ctx.platform = "映客直播"
-    with state.semaphore:
+    with recording_state.semaphore:
         ctx.port_info = asyncio.run(
-            spider.get_yingke_stream_url(url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=state.yingke_cookie)
+            spider.get_yingke_stream_url(
+                url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=settings.yingke_cookie
+            )
         )
 
 
 def _resolve_zhihu_com(ctx: _PlatformResolveContext) -> None:
     ctx.platform = "知乎直播"
-    with state.semaphore:
+    with recording_state.semaphore:
         ctx.port_info = asyncio.run(
-            spider.get_zhihu_stream_url(url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=state.zhihu_cookie)
+            spider.get_zhihu_stream_url(url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=settings.zhihu_cookie)
         )
 
 
 def _resolve_chzzk_naver_com(ctx: _PlatformResolveContext) -> None:
     ctx.platform = "CHZZK"
-    with state.semaphore:
+    with recording_state.semaphore:
         json_data = asyncio.run(
-            spider.get_chzzk_stream_data(url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=state.chzzk_cookie)
+            spider.get_chzzk_stream_data(
+                url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=settings.chzzk_cookie
+            )
         )
         ctx.port_info = asyncio.run(stream.get_stream_url(json_data, ctx.record_quality, spec=True))
 
 
 def _resolve_haixiutv_com(ctx: _PlatformResolveContext) -> None:
     ctx.platform = "嗨秀直播"
-    with state.semaphore:
+    with recording_state.semaphore:
         ctx.port_info = asyncio.run(
-            spider.get_haixiu_stream_url(url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=state.haixiu_cookie)
+            spider.get_haixiu_stream_url(
+                url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=settings.haixiu_cookie
+            )
         )
 
 
 def _resolve_vvxqiu_com(ctx: _PlatformResolveContext) -> None:
     ctx.platform = "VV星球"
-    with state.semaphore:
+    with recording_state.semaphore:
         ctx.port_info = asyncio.run(
-            spider.get_vvxqiu_stream_url(url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=state.vvxqiu_cookie)
+            spider.get_vvxqiu_stream_url(
+                url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=settings.vvxqiu_cookie
+            )
         )
 
 
 def _resolve_n17_live(ctx: _PlatformResolveContext) -> None:
     ctx.platform = "17Live"
-    with state.semaphore:
+    with recording_state.semaphore:
         ctx.port_info = asyncio.run(
             spider.get_17live_stream_url(
-                url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=state.yiqilive_cookie
+                url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=settings.yiqilive_cookie
             )
         )
 
 
 def _resolve_lang_live(ctx: _PlatformResolveContext) -> None:
     ctx.platform = "浪Live"
-    with state.semaphore:
+    with recording_state.semaphore:
         ctx.port_info = asyncio.run(
             spider.get_langlive_stream_url(
-                url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=state.langlive_cookie
+                url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=settings.langlive_cookie
             )
         )
 
 
 def _resolve_m_pp_weimipopo_com(ctx: _PlatformResolveContext) -> None:
     ctx.platform = "飘飘直播"
-    with state.semaphore:
+    with recording_state.semaphore:
         ctx.port_info = asyncio.run(
-            spider.get_pplive_stream_url(url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=state.pplive_cookie)
+            spider.get_pplive_stream_url(
+                url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=settings.pplive_cookie
+            )
         )
 
 
 def _resolve_n6_cn(ctx: _PlatformResolveContext) -> None:
     ctx.platform = "六间房直播"
-    with state.semaphore:
+    with recording_state.semaphore:
         ctx.port_info = asyncio.run(
-            spider.get_6room_stream_url(url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=state.six_room_cookie)
+            spider.get_6room_stream_url(
+                url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=settings.six_room_cookie
+            )
         )
 
 
 def _resolve_lehaitv_com(ctx: _PlatformResolveContext) -> None:
     ctx.platform = "乐嗨直播"
-    with state.semaphore:
+    with recording_state.semaphore:
         ctx.port_info = asyncio.run(
-            spider.get_haixiu_stream_url(url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=state.lehaitv_cookie)
+            spider.get_haixiu_stream_url(
+                url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=settings.lehaitv_cookie
+            )
         )
 
 
 def _resolve_h_catshow168_com(ctx: _PlatformResolveContext) -> None:
     ctx.platform = "花猫直播"
-    with state.semaphore:
+    with recording_state.semaphore:
         ctx.port_info = asyncio.run(
-            spider.get_pplive_stream_url(url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=state.huamao_cookie)
+            spider.get_pplive_stream_url(
+                url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=settings.huamao_cookie
+            )
         )
 
 
@@ -1019,9 +1053,11 @@ def _build_shopee_record_url(record_url: str, uid: str) -> str:
 
 def _resolve_live_shopee(ctx: _PlatformResolveContext) -> None:
     ctx.platform = "shopee"
-    with state.semaphore:
+    with recording_state.semaphore:
         ctx.port_info = asyncio.run(
-            spider.get_shopee_stream_url(url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=state.shopee_cookie)
+            spider.get_shopee_stream_url(
+                url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=settings.shopee_cookie
+            )
         )
         if ctx.port_info.get("uid"):
             ctx.new_record_url = _build_shopee_record_url(ctx.record_url, str(ctx.port_info["uid"]))
@@ -1029,10 +1065,10 @@ def _resolve_live_shopee(ctx: _PlatformResolveContext) -> None:
 
 def _resolve_youtube_com(ctx: _PlatformResolveContext) -> None:
     ctx.platform = "YouTube"
-    with state.semaphore:
+    with recording_state.semaphore:
         json_data = asyncio.run(
             spider.get_youtube_stream_url(
-                url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=state.youtube_cookie
+                url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=settings.youtube_cookie
             )
         )
         ctx.port_info = asyncio.run(stream.get_stream_url(json_data, ctx.record_quality, spec=True))
@@ -1040,9 +1076,11 @@ def _resolve_youtube_com(ctx: _PlatformResolveContext) -> None:
 
 def _resolve_tb_cn(ctx: _PlatformResolveContext) -> None:
     ctx.platform = "淘宝直播"
-    with state.semaphore:
+    with recording_state.semaphore:
         json_data = asyncio.run(
-            spider.get_taobao_stream_url(url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=state.taobao_cookie)
+            spider.get_taobao_stream_url(
+                url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=settings.taobao_cookie
+            )
         )
         ctx.port_info = asyncio.run(
             stream.get_stream_url(
@@ -1057,19 +1095,19 @@ def _resolve_tb_cn(ctx: _PlatformResolveContext) -> None:
 
 def _resolve_n3_cn(ctx: _PlatformResolveContext) -> None:
     ctx.platform = "京东直播"
-    with state.semaphore:
+    with recording_state.semaphore:
         ctx.port_info = asyncio.run(
-            spider.get_jd_stream_url(url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=state.jd_cookie)
+            spider.get_jd_stream_url(url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=settings.jd_cookie)
         )
 
 
 def _resolve_faceit_com(ctx: _PlatformResolveContext) -> None:
     ctx.platform = "faceit"
-    with state.semaphore:
-        if state.global_proxy or ctx.proxy_address:
+    with recording_state.semaphore:
+        if recording_state.global_proxy or ctx.proxy_address:
             json_data = asyncio.run(
                 spider.get_faceit_stream_data(
-                    url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=state.faceit_cookie
+                    url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=settings.faceit_cookie
                 )
             )
             ctx.port_info = asyncio.run(stream.get_stream_url(json_data, ctx.record_quality, spec=True))
@@ -1079,36 +1117,38 @@ def _resolve_faceit_com(ctx: _PlatformResolveContext) -> None:
 
 def _resolve_miguvideo_com(ctx: _PlatformResolveContext) -> None:
     ctx.platform = "咪咕直播"
-    with state.semaphore:
+    with recording_state.semaphore:
         ctx.port_info = asyncio.run(
-            spider.get_migu_stream_url(url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=state.migu_cookie)
+            spider.get_migu_stream_url(url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=settings.migu_cookie)
         )
 
 
 def _resolve_show_lailianjie_com(ctx: _PlatformResolveContext) -> None:
     ctx.platform = "连接直播"
-    with state.semaphore:
+    with recording_state.semaphore:
         ctx.port_info = asyncio.run(
             spider.get_lianjie_stream_url(
-                url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=state.lianjie_cookie
+                url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=settings.lianjie_cookie
             )
         )
 
 
 def _resolve_imkktv_com(ctx: _PlatformResolveContext) -> None:
     ctx.platform = "来秀直播"
-    with state.semaphore:
+    with recording_state.semaphore:
         ctx.port_info = asyncio.run(
-            spider.get_laixiu_stream_url(url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=state.laixiu_cookie)
+            spider.get_laixiu_stream_url(
+                url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=settings.laixiu_cookie
+            )
         )
 
 
 def _resolve_picarto_tv(ctx: _PlatformResolveContext) -> None:
     ctx.platform = "Picarto"
-    with state.semaphore:
+    with recording_state.semaphore:
         ctx.port_info = asyncio.run(
             spider.get_picarto_stream_url(
-                url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=state.picarto_cookie
+                url=ctx.record_url, proxy_addr=ctx.proxy_address, cookies=settings.picarto_cookie
             )
         )
 

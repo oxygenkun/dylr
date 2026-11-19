@@ -24,7 +24,7 @@ from loguru import logger
 
 import src.app.log_archive as la
 import src.support.logger as logger_mod
-from src.danmaku.monitor import DanmakuMonitorHub
+from src.danmaku.hub import DanmakuMonitorHub
 
 
 # 在隔离 logs 目录内创建一个待归档日志文件

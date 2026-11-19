@@ -438,7 +438,7 @@ class TestGetResponseStatusSslPolicy:
 
     @pytest.mark.asyncio
     async def test_legacy_proxy_addr_keyword_still_accepted(self) -> None:
-        # 迁移期兼容：src/streams/stream.py 现有调用用 proxy_addr= 关键字，不得因签名改造而炸
+        # 迁移期兼容：src/recording/pipeline/stream.py 现有调用用 proxy_addr= 关键字，不得因签名改造而炸
         mock_client = AsyncMock()
         head = MagicMock()
         head.status_code = 200

@@ -21,12 +21,12 @@ import pytest
 from loguru import logger
 
 import src.support.utils as utils_module
+from src.config import lock as config_lock
 from src.config.files import read_ini_value, remove_duplicate_lines, replace_url, update_config
 from src.network.urls import format_cookies, normalize_proxy_url, parse_jsonp
-from src.recording import state
+from src.platforms.live.errors import trace_error_decorator, trace_error_decorator_or_none
 from src.runtime import javascript
 from src.runtime.javascript import ProgramError, run_node_script_async
-from src.streams.errors import trace_error_decorator, trace_error_decorator_or_none
 from src.support.utils import (
     atomic_write_text,
     check_disk_capacity,
@@ -373,7 +373,7 @@ class TestTraceErrorGuard:
 async def test_error_guard_preserves_logging_and_fresh_fallback(
     monkeypatch: pytest.MonkeyPatch, asynchronous: bool, error_type: type[Exception], level: str
 ) -> None:
-    from src.streams import errors
+    from src.platforms.live import errors
 
     logged: list[tuple[str, str]] = []
     monkeypatch.setattr(
@@ -686,7 +686,7 @@ class TestUrlConfigWritePaths:
         f = tmp_path / "URL_config.ini"
         _ = f.write_text("https://old.example/1\n", encoding="utf-8-sig")
         recorder = _LockRecorder()
-        monkeypatch.setattr(state, "file_update_lock", recorder)
+        monkeypatch.setattr(config_lock, "file_update_lock", recorder)
         replace_url(f, "https://old.example/1", "https://new.example/1")
         assert recorder.entered == 1
         assert "https://new.example/1" in f.read_text(encoding="utf-8-sig")
@@ -696,7 +696,7 @@ class TestUrlConfigWritePaths:
         f = tmp_path / "URL_config.ini"
         _ = f.write_text("a\na\nb\n", encoding="utf-8-sig")
         recorder = _LockRecorder()
-        monkeypatch.setattr(state, "file_update_lock", recorder)
+        monkeypatch.setattr(config_lock, "file_update_lock", recorder)
         remove_duplicate_lines(f)
         assert recorder.entered == 1
         assert f.read_text(encoding="utf-8-sig").split() == ["a", "b"]

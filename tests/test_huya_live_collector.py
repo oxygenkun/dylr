@@ -12,9 +12,9 @@ from typing import Any, cast
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from src.danmaku.collector import DanmakuCollector
-from src.danmaku.platforms.huya import HuyaDanmaku
-from src.streams import spider
+from src.danmaku.session import DanmakuCollector
+from src.platforms.danmaku.huya import HuyaDanmaku
+from src.platforms.live import spider
 
 # 虎牙弹幕走私有二进制/JSON 混合协议：须先经 get_huya_app_stream_url 取
 # yyid/频道/子频道三元组才能进房，纯 web 页无法直连，故本脚本走 app 路径。

@@ -1,12 +1,12 @@
-# src/danmaku/platforms/douyin.py 测试：抖音弹幕链路「凭据被平台拒绝 → 作废进程级缓存」的接线
+# src/platforms/danmaku/douyin.py 测试：抖音弹幕链路「凭据被平台拒绝 → 作废进程级缓存」的接线
 # （MID-33 的弹幕侧半边）。
 #
 # 契约（三条，缺一不可）：
 #   ① WS 握手被服务端以 HTTP 200 拒绝（抖音对失效 ttwid 的实测形态：不返回 4xx，而是 200 +
-#      不升级协议）时必须触发 src.streams.ttwid.invalidate_ttwid()，使下一轮重新获取，而不是等
+#      不升级协议）时必须触发 src.platforms.live.ttwid.invalidate_ttwid()，使下一轮重新获取，而不是等
 #      cookie_cache 的 30 分钟 TTL 自然过期；
 #   ② 网络类失败（超时 / 连接被拒 / DNS）与 4xx/5xx 不得触发作废——重复拉 ttwid 本身就是风控
-#      触发源（见 src/streams/room.py 的并发去重锁注释），误判会把断网放大成打主页接口；
+#      触发源（见 src/platforms/live/room.py 的并发去重锁注释），误判会把断网放大成打主页接口；
 #   ③ 只有「本轮 cookie 来自 get_ttwid() 动态获取」才判定；用户自填的录制 cookie 不走该缓存，
 #      作废它既无效又多余。
 #
@@ -19,8 +19,8 @@ from typing import Any
 
 import pytest
 
-from src.danmaku.platforms import douyin as douyin_module
-from src.streams import ttwid as ttwid_module
+from src.platforms.danmaku import douyin as douyin_module
+from src.platforms.live import ttwid as ttwid_module
 
 # websockets 17.1 对非 101 应答的异常文案（读库 exceptions.py 核对，legacy 同文案），
 # 而 WebSocketClient 只把 str(e) 透传给回调 —— 这正是判定只能按状态码文本做的原因。

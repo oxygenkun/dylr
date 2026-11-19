@@ -2,8 +2,8 @@
 #
 # 教训（2026-09-10 审查）：早期版本在测试内自行实现锁 / 凭证缓存 / 限流器再断言自己，
 # 把 src/ 的实现整个删掉仍全绿（典型假绿）。现改为直接驱动真实入口：
-#   - src.streams.ttwid.get_ttwid()               并发去重（多线程各自 asyncio.run，复刻房间线程模型）
-#   - src.streams.selection._throttle_probe() 同 host 探针最小间隔节流（真实限流器）
+#   - src.platforms.live.ttwid.get_ttwid()               并发去重（多线程各自 asyncio.run，复刻房间线程模型）
+#   - src.recording.pipeline.selection._throttle_probe() 同 host 探针最小间隔节流（真实限流器）
 #
 # 判据必须是「删掉生产实现就会失败」，因此这里只打桩网络层（_fetch_ttwid）与时间常量，
 # 去重与节流逻辑本身一律走真实代码。
@@ -14,8 +14,8 @@ from typing import Any
 
 import pytest
 
-import src.streams.selection as stream_select
-import src.streams.ttwid as ttwid_module
+import src.platforms.live.ttwid as ttwid_module
+import src.recording.pipeline.selection as stream_select
 
 
 # 清空 ttwid 进程级缓存，并屏蔽 config.ini 的预置值：否则开发者本地填过 ttwid 时

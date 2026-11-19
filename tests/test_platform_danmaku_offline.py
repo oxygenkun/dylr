@@ -22,10 +22,10 @@ from typing import Any, cast
 import brotli
 import pytest
 
-import src.danmaku.platforms.bilibili as bilibili
-import src.danmaku.platforms.douyu as douyu
-import src.danmaku.platforms.twitch as twitch
-from src.danmaku.base import DanmakuMessageType
+import src.platforms.danmaku.bilibili as bilibili
+import src.platforms.danmaku.douyu as douyu
+import src.platforms.danmaku.twitch as twitch
+from src.platforms.danmaku.base import DanmakuMessageType
 
 # 三个平台的「收包 → 解帧 → 分发」三段式同构于 DanmakuBase，故按「平台 × 阶段」而非缺陷编号组织。
 #
@@ -617,7 +617,7 @@ class TestBilibiliLifecycle:
         assert rejected == []
 
     async def test_reject_auth_closes_ws_and_invalidates_buvid(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        import src.streams.spider as spider
+        import src.platforms.live.spider as spider
 
         ws = FakeWs()
         client = bilibili.BilibiliDanmaku()
@@ -637,7 +637,7 @@ class TestBilibiliLifecycle:
 
     async def test_reject_auth_survives_buvid_invalidation_failure(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # 缓存失效只是“顺手优化”，失败不得把断开流程带崩——它已经在退出路径上。
-        import src.streams.spider as spider
+        import src.platforms.live.spider as spider
 
         def boom() -> None:
             raise RuntimeError("cache lock lost")
@@ -660,7 +660,7 @@ class TestBilibiliLifecycle:
         await bilibili.BilibiliDanmaku().stop()
 
     def test_header_constant_is_shared(self) -> None:
-        source = (Path(__file__).resolve().parents[1] / "src" / "danmaku" / "platforms" / "bilibili.py").read_text(
+        source = (Path(__file__).resolve().parents[1] / "src" / "platforms" / "danmaku" / "bilibili.py").read_text(
             encoding="utf-8"
         )
         assert "HEADER_LEN = 16" in source

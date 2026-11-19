@@ -8,8 +8,10 @@ import time
 from loguru import logger
 
 from src.app.graceful_shutdown import ShutdownRequested, shutdown_manager
-from src.recording import state
-from src.support import i18n, utils
+from src.config import paths as config_paths
+from src.config import settings
+from src.recording import state as recording_state
+from src.support import console, i18n, utils
 
 _REENCODE_SECONDS_PER_MB = 1.5
 _REMUX_SECONDS_PER_MB = 0.04
@@ -146,7 +148,7 @@ def _run_ffmpeg_checked(command: list[str], timeout: int = 600) -> str:
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
-        startupinfo=get_startup_info(state.os_type),
+        startupinfo=get_startup_info(os.name),
     ) as process:
         try:
             out, _ = process.communicate(timeout=timeout)
@@ -214,9 +216,9 @@ def converts_mp4(converts_file_path: str, is_original_delete: bool = True, timeo
     try:
         if os.path.exists(converts_file_path) and os.path.getsize(converts_file_path) > 0:
             out_path = converts_file_path.rsplit(".", maxsplit=1)[0] + ".mp4"
-            re_encoding = bool(state.converts_to_h264)
+            re_encoding = bool(settings.converts_to_h264)
             if re_encoding:
-                state.color_obj.print_colored("正在转码为MP4格式并重新编码为h264\n", state.color_obj.YELLOW)
+                console.color_obj.print_colored("正在转码为MP4格式并重新编码为h264\n", console.color_obj.YELLOW)
                 ffmpeg_command = [
                     "ffmpeg",
                     "-i",
@@ -237,7 +239,7 @@ def converts_mp4(converts_file_path: str, is_original_delete: bool = True, timeo
                     out_path,
                 ]
             else:
-                state.color_obj.print_colored("正在转码为MP4格式\n", state.color_obj.YELLOW)
+                console.color_obj.print_colored("正在转码为MP4格式\n", console.color_obj.YELLOW)
                 ffmpeg_command = [
                     "ffmpeg",
                     "-i",
@@ -343,7 +345,7 @@ def generate_subtitles(record_name: str, ass_filename: str, sub_format: str = "s
             sub_total_failures += 1
         else:
             try:
-                with open(sub_out_path, "a", encoding=state.text_encoding) as f:
+                with open(sub_out_path, "a", encoding=config_paths.text_encoding) as f:
                     _ = f.write(txt)
             except OSError as e:
                 sub_window_failures += 1
@@ -377,8 +379,8 @@ def generate_subtitles(record_name: str, ass_filename: str, sub_format: str = "s
                     sub_next_warn_at = 0
                     sub_next_retry_at = 0
 
-        with state.record_state_lock:
-            still_recording = record_name in state.recording
+        with recording_state.record_state_lock:
+            still_recording = record_name in recording_state.recording
         if not still_recording:
             return
         time.sleep(1)

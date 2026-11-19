@@ -11,8 +11,10 @@ from typing import Self
 import pytest
 from pytest import MonkeyPatch
 
+from src.config import files as config_files
 from src.config import io as config_io
-from src.recording import state
+from src.config import lock as config_lock
+from src.config import paths as config_paths
 
 
 class _RecordingLock:
@@ -56,7 +58,7 @@ class TestDeleteLineLineEndings:
         kept_url = "https://live.douyin.com/111111111111\n"
         gone_url = "https://live.douyin.com/222222222222\n"
         _write_lines(target, [kept_url.replace("\n", "\r\n"), gone_url.replace("\n", "\r\n")])
-        monkeypatch.setattr(state, "url_config_file", str(tmp_path / "other.ini"))
+        monkeypatch.setattr(config_paths, "url_config_file", str(tmp_path / "other.ini"))
 
         # 调用方传的是 universal newlines 读出的 \n 结尾行（web_api 的 raw_line / main 的 origin_line）
         assert config_io.delete_line(str(target), gone_url) is True
@@ -69,7 +71,7 @@ class TestDeleteLineLineEndings:
     def test_lf_file_still_removes_line(self, tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
         target = tmp_path / "URL_config.ini"
         _write_lines(target, ["https://a.example/1\n", "https://a.example/2\n"])
-        monkeypatch.setattr(state, "url_config_file", str(tmp_path / "other.ini"))
+        monkeypatch.setattr(config_paths, "url_config_file", str(tmp_path / "other.ini"))
 
         assert config_io.delete_line(str(target), "https://a.example/1\n") is True
         assert _read_raw(target) == ["https://a.example/2\n"]
@@ -78,7 +80,7 @@ class TestDeleteLineLineEndings:
         target = tmp_path / "URL_config.ini"
         original = ["https://a.example/1\r\n", "#https://a.example/2\r\n"]
         _write_lines(target, original)
-        monkeypatch.setattr(state, "url_config_file", str(tmp_path / "other.ini"))
+        monkeypatch.setattr(config_paths, "url_config_file", str(tmp_path / "other.ini"))
 
         assert config_io.delete_line(str(target), "https://a.example/999\n") is False
         assert _read_raw(target) == original
@@ -88,7 +90,7 @@ class TestDeleteLineLineEndings:
         target = tmp_path / "URL_config.ini"
         original = ["#https://a.example/1\r\n"]
         _write_lines(target, original)
-        monkeypatch.setattr(state, "url_config_file", str(tmp_path / "other.ini"))
+        monkeypatch.setattr(config_paths, "url_config_file", str(tmp_path / "other.ini"))
 
         assert config_io.delete_line(str(target), "https://a.example/1\n") is False
         assert _read_raw(target) == original
@@ -97,7 +99,7 @@ class TestDeleteLineLineEndings:
         target = tmp_path / "URL_config.ini"
         dup = "https://a.example/1\r\n"
         _write_lines(target, [dup, "https://a.example/2\r\n", dup])
-        monkeypatch.setattr(state, "url_config_file", str(tmp_path / "other.ini"))
+        monkeypatch.setattr(config_paths, "url_config_file", str(tmp_path / "other.ini"))
 
         assert config_io.delete_line(str(target), "https://a.example/1\n", delete_all=True) is True
         assert _read_raw(target) == ["https://a.example/2\r\n"]
@@ -106,14 +108,14 @@ class TestDeleteLineLineEndings:
         target = tmp_path / "URL_config.ini"
         dup = "https://a.example/1\r\n"
         _write_lines(target, [dup, dup])
-        monkeypatch.setattr(state, "url_config_file", str(tmp_path / "other.ini"))
+        monkeypatch.setattr(config_paths, "url_config_file", str(tmp_path / "other.ini"))
 
         assert config_io.delete_line(str(target), "https://a.example/1\n") is True
         assert _read_raw(target) == [dup]
 
     def test_read_failure_returns_false(self, tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
         missing = tmp_path / "not-here.ini"
-        monkeypatch.setattr(state, "url_config_file", str(tmp_path / "other.ini"))
+        monkeypatch.setattr(config_paths, "url_config_file", str(tmp_path / "other.ini"))
         assert config_io.delete_line(str(missing), "https://a.example/1\n") is False
 
 
@@ -124,8 +126,8 @@ class TestDeleteLineWriteContract:
         target = tmp_path / "URL_config.ini"
         _write_lines(target, ["https://a.example/1\r\n", "https://a.example/2\r\n"])
         recorder = _RecordingLock()
-        monkeypatch.setattr(state, "file_update_lock", recorder)
-        monkeypatch.setattr(state, "url_config_file", str(tmp_path / "other.ini"))
+        monkeypatch.setattr(config_lock, "file_update_lock", recorder)
+        monkeypatch.setattr(config_paths, "url_config_file", str(tmp_path / "other.ini"))
 
         assert config_io.delete_line(str(target), "https://a.example/1\n") is True
         assert recorder.entered == 1
@@ -135,7 +137,7 @@ class TestDeleteLineWriteContract:
         target = tmp_path / "URL_config.ini"
         original = ["https://a.example/1\r\n"]
         _write_lines(target, original)
-        monkeypatch.setattr(state, "url_config_file", str(tmp_path / "other.ini"))
+        monkeypatch.setattr(config_paths, "url_config_file", str(tmp_path / "other.ini"))
         monkeypatch.setattr(config_io, "_atomic_write_text", lambda *a, **kw: False)
 
         assert config_io.delete_line(str(target), "https://a.example/1\n") is False
@@ -144,12 +146,12 @@ class TestDeleteLineWriteContract:
     def test_snapshot_updated_for_url_config_file(self, tmp_path: Path, monkeypatch: MonkeyPatch) -> None:
         target = tmp_path / "URL_config.ini"
         _write_lines(target, ["https://a.example/1\r\n", "https://a.example/2\r\n"])
-        monkeypatch.setattr(state, "url_config_file", str(target))
-        monkeypatch.setattr(state, "ini_URL_content", "OLD-SNAPSHOT")
+        monkeypatch.setattr(config_paths, "url_config_file", str(target))
+        monkeypatch.setattr(config_files, "ini_URL_content", "OLD-SNAPSHOT")
 
         assert config_io.delete_line(str(target), "https://a.example/1\n") is True
         # 快照更新为「已落盘内容」，供 update_file 的异常恢复基线使用
-        assert state.ini_URL_content == "https://a.example/2\r\n"
+        assert config_files.ini_URL_content == "https://a.example/2\r\n"
 
 
 class TestMissingKeyWritebackIdempotency:
@@ -171,7 +173,7 @@ class TestMissingKeyWritebackIdempotency:
 
         target = tmp_path / "config.toml"
         target.write_text('["录制设置"]\n"循环时间(秒)" = 60\n', encoding="utf-8")
-        monkeypatch.setattr(state, "config_file", str(target))
+        monkeypatch.setattr(config_paths, "config_file", str(target))
         store = ConfigStore(target)
         store.read()
 
@@ -191,7 +193,7 @@ class TestMissingKeyWritebackIdempotency:
 
         target = tmp_path / "config.toml"
         target.write_text(f'["录制设置"]\n"{self._KEY}" = false\n', encoding="utf-8")
-        monkeypatch.setattr(state, "config_file", str(target))
+        monkeypatch.setattr(config_paths, "config_file", str(target))
         store = ConfigStore(target)
         store.read()
 

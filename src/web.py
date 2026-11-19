@@ -10,9 +10,10 @@ import uvicorn
 
 from src.api.config import is_loopback_bind_host, read_web_config
 from src.api.routes import create_app
+from src.config import paths as config_paths
 from src.network.http import close_clients
 from src.recording import engine as recorder
-from src.recording import state
+from src.recording import state as recording_state
 from src.support import i18n
 from src.support.console import configure_encoding
 from src.support.logger import logger, rebind_console_sink
@@ -143,10 +144,10 @@ def _is_loopback_host(host: str) -> bool:
 
 def run() -> None:
     """Web 面板模式：启动录制引擎守护线程与 uvicorn HTTP 服务（由 src.main 按配置调用）。"""
-    config_file = state.config_file
-    url_config_file = state.url_config_file
-    downloads_root = state.default_path
-    logs_dir = os.path.join(state.script_path, "logs")
+    config_file = config_paths.config_file
+    url_config_file = config_paths.url_config_file
+    downloads_root = config_paths.default_path
+    logs_dir = os.path.join(config_paths.script_path, "logs")
     os.makedirs(logs_dir, exist_ok=True)
 
     web_cfg = read_web_config(config_file)
@@ -189,7 +190,7 @@ def run() -> None:
         _enter_background_mode(logs_dir, host, port)
 
     _auto_start = os.environ.get("DOUYIN_WEB_AUTO_START_RECORDING", "").strip().lower() in ("1", "true", "yes")
-    state.recording_enabled = _auto_start
+    recording_state.recording_enabled = _auto_start
 
     recorder.initialize_process()
     recorder_thread = threading.Thread(
@@ -199,7 +200,7 @@ def run() -> None:
         kwargs={"non_interactive": True},
     )
     recorder_thread.start()
-    state._recorder_thread = recorder_thread  # 供 get_status() 检测存活（I6）
+    recording_state._recorder_thread = recorder_thread  # 供 get_status() 检测存活（I6）
     print(i18n.tr("[web] 录制引擎已在守护线程启动 (tid={ident})", ident=recorder_thread.ident))
 
     app = create_app(

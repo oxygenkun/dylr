@@ -1,3 +1,21 @@
+import os
+import threading
+import types
+from collections.abc import Generator
+from pathlib import Path
+from typing import Any, cast
+
+import pytest
+from httpx import Response
+from starlette.testclient import TestClient
+
+from src.app import version as app_version
+from src.config import files as config_files
+from src.config import io as config_io
+from src.config import lock as config_lock
+from src.config import paths as config_paths
+from src.network import targets
+
 # src/api/routes.py 测试：Web 面板 Starlette 应用的安全与健壮性回归。聚焦七类契约 ——
 # ① 鉴权中间件（启用认证时所有 /api/* 须 401，禁用时开放）；② 登录限流（防 XFF 伪造绕过、
 # 失败计数与成功重置、密码变更吊销 token）；③ 写接口的注入/越权防护（quality 含换行被 422、
@@ -17,19 +35,7 @@
 # · 全程打桩 DNS seam（_resolve_host_ips）：SEV-03 之后房间地址要过 getaddrinfo，
 #   不打桩则「live.douyin.com 是否放行」会变成对宿主网络可达性的断言。桩只替换解析这一步，
 #   内网/回环/保留段的分类逻辑仍走真实代码（tests/test_web_config.py 逐条锁定）。
-import os
-import threading
-import types
-from collections.abc import Generator
-from pathlib import Path
-from typing import Any, cast
-
-import pytest
-from httpx import Response
-from starlette.testclient import TestClient
-
-from src.config import io as config_io
-from src.network import targets
+from src.recording import state as recording_state
 from src.recording import status as recorder_status
 
 # 面板对外声称的访问地址（同时决定 Host 允许名单），与 _write_web_section 里的 web_host 一致
@@ -50,21 +56,41 @@ def _stub_public_dns(monkeypatch: pytest.MonkeyPatch) -> None:
 
 @pytest.fixture
 def fake_main(monkeypatch: pytest.MonkeyPatch) -> Generator[types.ModuleType]:
-    from src.recording import state
 
-    for key, value in {
-        "file_update_lock": threading.RLock(),
-        "record_state_lock": threading.Lock(),
-        "max_request_lock": threading.Lock(),
-        "running_list": [],
-        "recording": set(),
-        "recording_enabled": False,
-        "text_encoding": "utf-8-sig",
-        "url_config_file": "",
-        "ini_URL_content": "",
-    }.items():
-        monkeypatch.setattr(state, key, value)
-    yield state
+    for module, values in (
+        (
+            config_lock,
+            {
+                "file_update_lock": threading.RLock(),
+            },
+        ),
+        (
+            recording_state,
+            {
+                "record_state_lock": threading.Lock(),
+                "max_request_lock": threading.Lock(),
+                "running_list": [],
+                "recording": set(),
+                "recording_enabled": False,
+            },
+        ),
+        (
+            config_paths,
+            {
+                "text_encoding": "utf-8-sig",
+                "url_config_file": "",
+            },
+        ),
+        (
+            config_files,
+            {
+                "ini_URL_content": "",
+            },
+        ),
+    ):
+        for name, value in values.items():
+            monkeypatch.setattr(module, name, value)
+    yield recording_state
 
 
 def _write_web_section(
@@ -258,9 +284,7 @@ class TestHealthEndpoint:
         assert resp.status_code == 200
         body = resp.json()
         assert body["status"] == "ok"
-        # version 与 /health 的数据来源同源（Starlette 无 FastAPI 的 app.version 元数据，
-        # 阶段2 后以 web_api._APP_VERSION 为同一事实），避免面板与探活报告各写一份版本号
-        assert body["version"] == app_env.wa._APP_VERSION
+        assert body["version"] == app_version.version.removeprefix("v")
 
     def test_health_ignores_engine_state(
         self, app_env: types.SimpleNamespace, fake_main: types.ModuleType, monkeypatch: pytest.MonkeyPatch
@@ -625,7 +649,7 @@ class TestInternalErrorNotEchoed:
     def test_danmaku_error_field_is_code_only(
         self, app_env: types.SimpleNamespace, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        import src.danmaku.monitor as dm
+        import src.danmaku.hub as dm
 
         def _boom(since: int) -> dict[str, object]:
             raise RuntimeError("C:\\Users\\dev\\logs\\danmaku_monitor.jsonl locked")

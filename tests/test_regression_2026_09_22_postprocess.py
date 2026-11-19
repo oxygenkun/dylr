@@ -25,7 +25,10 @@ from typing import Any
 import pytest
 
 import src.recording.postprocess as vp
-from src.recording import state
+from src.config import paths as config_paths
+from src.config import settings
+from src.recording import state as recording_state
+from src.support import console
 
 ROOT = Path(__file__).resolve().parents[1]
 _PLACEHOLDER_RE = re.compile(r"\{([^{}]+)\}")
@@ -42,11 +45,13 @@ NEW_MSGIDS = [
 @pytest.fixture(autouse=True)
 def _stub_main_globals(monkeypatch: pytest.MonkeyPatch) -> None:
     # 三个入口都在运行时惰性读 main 的少量全局，这里全部打桩，避免依赖真实 config.ini
-    monkeypatch.setattr(state, "converts_to_h264", False, raising=False)
-    monkeypatch.setattr(state, "os_type", "nt", raising=False)
-    monkeypatch.setattr(state, "text_encoding", "utf-8", raising=False)
-    monkeypatch.setattr(state, "recording", set(), raising=False)
-    monkeypatch.setattr(state, "record_state_lock", threading.Lock(), raising=False)
+    monkeypatch.setattr(settings, "converts_to_h264", False, raising=False)
+    process_os = types.SimpleNamespace(**vars(vp.os))
+    process_os.name = "nt"
+    monkeypatch.setattr(vp, "os", process_os)
+    monkeypatch.setattr(config_paths, "text_encoding", "utf-8", raising=False)
+    monkeypatch.setattr(recording_state, "recording", set(), raising=False)
+    monkeypatch.setattr(recording_state, "record_state_lock", threading.Lock(), raising=False)
 
     class _Color:
         YELLOW = ""
@@ -54,7 +59,7 @@ def _stub_main_globals(monkeypatch: pytest.MonkeyPatch) -> None:
         def print_colored(self, *_a: Any, **_k: Any) -> None:
             return None
 
-    monkeypatch.setattr(state, "color_obj", _Color(), raising=False)
+    monkeypatch.setattr(console, "color_obj", _Color(), raising=False)
 
 
 @pytest.fixture()
@@ -261,11 +266,11 @@ def _run_subtitles_for(monkeypatch: pytest.MonkeyPatch, room: str, stop_after: i
     def _sleep(seconds: float) -> None:
         ticks["n"] += 1
         if ticks["n"] >= stop_after:
-            state.recording.discard(room)
+            recording_state.recording.discard(room)
 
     shim.sleep = _sleep
     monkeypatch.setattr(vp, "time", shim)
-    state.recording.add(room)
+    recording_state.recording.add(room)
 
 
 class TestSubtitleWriteGuard:
@@ -337,7 +342,7 @@ class TestSubtitleWriteGuard:
     def test_non_oserror_is_not_swallowed(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         # 守卫只捕 OSError：main.text_encoding 配成非法编码名属真 bug（LookupError），
         # 在这里吞掉会让「字幕永远不生成」再次变成无解释的现象
-        monkeypatch.setattr(state, "text_encoding", "no-such-codec", raising=False)
+        monkeypatch.setattr(config_paths, "text_encoding", "no-such-codec", raising=False)
         _run_subtitles_for(monkeypatch, "room-e", 3)
         with pytest.raises(LookupError):
             vp.generate_subtitles("room-e", str(tmp_path / "sub"))

@@ -1,10 +1,3 @@
-# 阶段2（Web 后端 FastAPI → Starlette）路由契约动态断言：取代 web_api_routes_baseline.json 的静态
-# 逐字节比对。静态基线既撞 SENSITIVE_APPROVAL 检查、又会因手工维护而漂移；本测试直接遍历 app.routes，
-# 断言 Starlette 应用注册的 24 条路由（method/path 精确集合）+ /web 静态挂载点不变，
-# 任何增删或改 method 的回归都会让集合断言转红（drift-proof，不依赖运行期快照）。
-#
-# 构建 app 并遍历路由表；使用临时配置和隔离的录制状态。
-
 import threading
 import types
 from collections.abc import Generator
@@ -14,24 +7,56 @@ import pytest
 from starlette.applications import Starlette
 from starlette.routing import Mount, Route
 
+from src.config import files as config_files
+from src.config import lock as config_lock
+from src.config import paths as config_paths
+
+# 阶段2（Web 后端 FastAPI → Starlette）路由契约动态断言：取代 web_api_routes_baseline.json 的静态
+# 逐字节比对。静态基线既撞 SENSITIVE_APPROVAL 检查、又会因手工维护而漂移；本测试直接遍历 app.routes，
+# 断言 Starlette 应用注册的 24 条路由（method/path 精确集合）+ /web 静态挂载点不变，
+# 任何增删或改 method 的回归都会让集合断言转红（drift-proof，不依赖运行期快照）。
+#
+# 构建 app 并遍历路由表；使用临时配置和隔离的录制状态。
+from src.recording import state as recording_state
+
 
 @pytest.fixture
 def fake_main(monkeypatch: pytest.MonkeyPatch) -> Generator[types.ModuleType]:
-    from src.recording import state
 
-    for key, value in {
-        "file_update_lock": threading.RLock(),
-        "record_state_lock": threading.Lock(),
-        "max_request_lock": threading.Lock(),
-        "running_list": [],
-        "recording": set(),
-        "recording_enabled": False,
-        "text_encoding": "utf-8-sig",
-        "url_config_file": "",
-        "ini_URL_content": "",
-    }.items():
-        monkeypatch.setattr(state, key, value)
-    yield state
+    for module, values in (
+        (
+            config_lock,
+            {
+                "file_update_lock": threading.RLock(),
+            },
+        ),
+        (
+            recording_state,
+            {
+                "record_state_lock": threading.Lock(),
+                "max_request_lock": threading.Lock(),
+                "running_list": [],
+                "recording": set(),
+                "recording_enabled": False,
+            },
+        ),
+        (
+            config_paths,
+            {
+                "text_encoding": "utf-8-sig",
+                "url_config_file": "",
+            },
+        ),
+        (
+            config_files,
+            {
+                "ini_URL_content": "",
+            },
+        ),
+    ):
+        for name, value in values.items():
+            monkeypatch.setattr(module, name, value)
+    yield recording_state
 
 
 def _write_web_section(cfg_path: Path) -> None:

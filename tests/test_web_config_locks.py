@@ -1,3 +1,15 @@
+import threading
+import types
+from collections.abc import Generator
+from pathlib import Path
+
+import pytest
+from starlette.testclient import TestClient
+
+from src.config import files as config_files
+from src.config import lock as config_lock
+from src.config import paths as config_paths
+
 # src/api/config.py / src/api/routes.py「敏感配置不得被空值覆盖」的回归锁（MID-69 补，2026-09-21）。
 #
 # 范围刻意收窄：MID-69 点名的三个符号里，_looks_like_secret_value 与 _validate_room_url_target
@@ -19,14 +31,7 @@
 # 现在也被后端拒成 400（src/api/routes.py 的 `elif value.strip() == SENSITIVE_MASK`），由
 # tests/test_web_api.py::TestSensitiveValueBlankRejected::test_mask_sensitive_value_rejected 锁定；
 # 本文件只负责「空值覆盖」那半边，掩码那半边不在此重述以免形成第二份事实源。
-
-import threading
-import types
-from collections.abc import Generator
-from pathlib import Path
-
-import pytest
-from starlette.testclient import TestClient
+from src.recording import state as recording_state
 
 _BASE_URL = "http://127.0.0.1:8000"
 # 与 src/api/routes.py 里 raise HTTPException(400, ...) 的原文逐字一致：文案是契约的一部分，
@@ -36,21 +41,41 @@ _BLANK_SENSITIVE_DETAIL = "敏感配置项不得清空：如需移除请显式�
 
 @pytest.fixture
 def fake_main(monkeypatch: pytest.MonkeyPatch) -> Generator[types.ModuleType]:
-    from src.recording import state
 
-    for key, value in {
-        "file_update_lock": threading.RLock(),
-        "record_state_lock": threading.Lock(),
-        "max_request_lock": threading.Lock(),
-        "running_list": [],
-        "recording": set(),
-        "recording_enabled": False,
-        "text_encoding": "utf-8-sig",
-        "url_config_file": "",
-        "ini_URL_content": "",
-    }.items():
-        monkeypatch.setattr(state, key, value)
-    yield state
+    for module, values in (
+        (
+            config_lock,
+            {
+                "file_update_lock": threading.RLock(),
+            },
+        ),
+        (
+            recording_state,
+            {
+                "record_state_lock": threading.Lock(),
+                "max_request_lock": threading.Lock(),
+                "running_list": [],
+                "recording": set(),
+                "recording_enabled": False,
+            },
+        ),
+        (
+            config_paths,
+            {
+                "text_encoding": "utf-8-sig",
+                "url_config_file": "",
+            },
+        ),
+        (
+            config_files,
+            {
+                "ini_URL_content": "",
+            },
+        ),
+    ):
+        for name, value in values.items():
+            monkeypatch.setattr(module, name, value)
+    yield recording_state
 
 
 @pytest.fixture()

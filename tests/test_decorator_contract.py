@@ -170,7 +170,7 @@ def test_decorator_names_are_still_defined_and_used() -> None:
     # 守卫就可能救不回来（两个名字都换新、新名字同样挂满全仓 → 命中数不降）。这条额外钉住
     # 「判定名确实定义在 src/support/utils.py、且仓库里仍有 @该名 的挂点」，让「改名 + 同步改测试」
     # 不能一次性骗过两面。
-    utils_src = (ROOT / "src" / "streams/errors.py").read_text(encoding="utf-8-sig")
+    utils_src = (ROOT / "src" / "platforms/live/errors.py").read_text(encoding="utf-8-sig")
     corpus = chr(10).join(path.read_text(encoding="utf-8-sig", errors="replace") for path in _iter_py_files())
     for name in sorted(_DEC_NAMES):
         assert f"def {name}" in utils_src, (

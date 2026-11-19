@@ -19,8 +19,10 @@ from typing import Any
 import httpx
 import pytest
 
+from src.config import settings
 from src.recording import session as recording
-from src.recording import state
+from src.recording import state as recording_state
+from src.recording.sources import room as room_poller
 
 # ffmpeg 输出路径必须落在**真实存在**的目录里：check_subprocess 以「输出父目录不存在」判定输出侧
 # 本地 IO 失败并豁免探针退避（MID-02 引入、MID-N01 于 2026-09-22 收敛为单判据）。旧写法 "/tmp/out.ts"
@@ -77,26 +79,26 @@ def _setup_common(
     returncode: int,
 ) -> tuple[list[tuple[str, str | None]], list[tuple[str, str | None]], list[tuple[str, str | None]]]:
     # 装配 check_subprocess 运行所需的外部依赖 mock；返回 (成功样本, 失败样本, 退避标记) 捕获列表。
-    monkeypatch.setattr(state, "enable_danmaku", False)
-    monkeypatch.setattr(state, "enable_danmaku_monitor", False)
-    monkeypatch.setattr(state, "create_time_file", False)
-    monkeypatch.setattr(state, "converts_to_mp4", False)
-    monkeypatch.setattr(state, "exit_recording", False)
-    monkeypatch.setattr(state, "url_comments", set())
-    monkeypatch.setattr(recording, "register_ffmpeg_process", lambda proc: None)
-    monkeypatch.setattr(recording, "unregister_ffmpeg_process", lambda proc: None)
+    monkeypatch.setattr(settings, "enable_danmaku", False)
+    monkeypatch.setattr(settings, "enable_danmaku_monitor", False)
+    monkeypatch.setattr(settings, "create_time_file", False)
+    monkeypatch.setattr(settings, "converts_to_mp4", False)
+    monkeypatch.setattr(recording_state, "exit_recording", False)
+    monkeypatch.setattr(recording_state, "url_comments", set())
+    _patch(monkeypatch, "register_ffmpeg_process", lambda proc: None)
+    _patch(monkeypatch, "unregister_ffmpeg_process", lambda proc: None)
     # 只把 sleep 变成 no-op；time.time / time.strftime 保持真实实现（快速失败判定要用）
     _time_shim = _module_shim(time)
     _time_shim.sleep = lambda seconds: None
-    monkeypatch.setattr(recording, "time", _time_shim)
-    monkeypatch.setattr(recording, "subprocess", _make_subprocess_shim(returncode))
+    _patch(monkeypatch, "time", _time_shim)
+    _patch(monkeypatch, "subprocess", _make_subprocess_shim(returncode))
 
     successes: list[tuple[str, str | None]] = []
     failures: list[tuple[str, str | None]] = []
     marks: list[tuple[str, str | None]] = []
-    monkeypatch.setattr(recording, "record_success", lambda key=None: successes.append(("success", key)))
-    monkeypatch.setattr(recording, "record_error", lambda key=None: failures.append(("error", key)))
-    monkeypatch.setattr(recording, "mark_ffmpeg_reject", lambda url, platform: marks.append((url, platform)))
+    _patch(monkeypatch, "record_success", lambda key=None: successes.append(("success", key)))
+    _patch(monkeypatch, "record_error", lambda key=None: failures.append(("error", key)))
+    _patch(monkeypatch, "mark_ffmpeg_reject", lambda url, platform: marks.append((url, platform)))
     return successes, failures, marks
 
 
@@ -148,7 +150,7 @@ def test_check_subprocess_interrupts_when_recording_disabled(main_mod: Any, monk
     # 一直运行，验证中断只能来自 recording_enabled 检测点。
     main = main_mod
     successes, failures, _marks = _setup_common(monkeypatch, main, 0)
-    monkeypatch.setattr(state, "recording_enabled", False)
+    monkeypatch.setattr(recording_state, "recording_enabled", False)
 
     class _RunningPopen:
         # 恒运行替身：poll 永远 None，__class_getitem__ 供 def 时注解求值（见 _setup_common 注释）
@@ -166,7 +168,7 @@ def test_check_subprocess_interrupts_when_recording_disabled(main_mod: Any, monk
 
     shim = types.SimpleNamespace(**vars(subprocess))
     shim.Popen = _RunningPopen
-    monkeypatch.setattr(recording, "subprocess", shim)
+    _patch(monkeypatch, "subprocess", shim)
 
     terminated: list[object] = []
 
@@ -174,7 +176,7 @@ def test_check_subprocess_interrupts_when_recording_disabled(main_mod: Any, monk
         terminated.append(proc)
         return True
 
-    monkeypatch.setattr(recording, "_terminate_ffmpeg_process", _fake_terminate)
+    _patch(monkeypatch, "_terminate_ffmpeg_process", _fake_terminate)
 
     result = recording.check_subprocess(
         "主播名",
@@ -199,7 +201,7 @@ def test_check_subprocess_slow_failure_skips_backoff_mark(main_mod: Any, monkeyp
     # 避免 patch stdlib time.time 扰动 harness 守护线程。
     main = main_mod
     successes, failures, marks = _setup_common(monkeypatch, main, 1)
-    monkeypatch.setattr(recording, "_FFMPEG_FAST_FAIL_SECONDS", -1.0)
+    _patch(monkeypatch, "_FFMPEG_FAST_FAIL_SECONDS", -1.0)
 
     result = recording.check_subprocess(
         "主播名",
@@ -240,14 +242,14 @@ def test_live_network_capacity_fallback_and_scheduler_value(main_mod: Any, monke
     # （2026-08-23 实测：容量自适应 12/20 而旧显示固定打印配置值 3，严重误导）
     from src.recording.status import _live_network_capacity
 
-    monkeypatch.setattr(state, "max_request", 3)
+    monkeypatch.setattr(settings, "max_request", 3)
 
-    monkeypatch.setattr(state, "scheduler", None)
+    monkeypatch.setattr(recording_state, "scheduler", None)
     assert _live_network_capacity() == 3
 
     # SEV-01：控制台显示的并发容量取调度器的 capacity（上限），不再是 value（剩余许可）
     fake_scheduler = types.SimpleNamespace(network_semaphore=types.SimpleNamespace(value=12, capacity=12))
-    monkeypatch.setattr(state, "scheduler", fake_scheduler)
+    monkeypatch.setattr(recording_state, "scheduler", fake_scheduler)
     assert _live_network_capacity() == 12
 
 
@@ -287,12 +289,12 @@ def test_direct_download_stream_rejects_non_200_as_failure(
 ) -> None:
     # CDN 拒绝（非 200）＝真-失败签名：吞异常返回 False、不写半截文件后假装完成；
     # 调用方（start_record 直下分支）依据「未被注释且无退出标志」将 False 记入熔断失败样本
-    monkeypatch.setattr(recording, "get_record_headers", lambda *a, **k: {})
-    monkeypatch.setattr(recording, "get_record_user_agent", lambda *a, **k: "")
+    _patch(monkeypatch, "get_record_headers", lambda *a, **k: {})
+    _patch(monkeypatch, "get_record_user_agent", lambda *a, **k: "")
     # MID-66：httpx 同样是全进程共享的三方模块本体，改走浅拷贝替身
     _httpx_shim = _module_shim(httpx)
     _httpx_shim.Client = lambda **kw: _FakeHttpClient(_FakeStreamResponse(403, []))
-    monkeypatch.setattr(recording, "httpx", _httpx_shim)
+    _patch(monkeypatch, "httpx", _httpx_shim)
     save_path = tmp_path / "out.flv"
 
     assert (
@@ -307,15 +309,15 @@ def test_direct_download_stream_writes_chunks_on_success(
     main_mod: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     # 正常拉流：逐块写入文件并返回 True（调用方据此记 record_success 样本）
-    monkeypatch.setattr(recording, "get_record_headers", lambda *a, **k: {})
-    monkeypatch.setattr(recording, "get_record_user_agent", lambda *a, **k: "")
+    _patch(monkeypatch, "get_record_headers", lambda *a, **k: {})
+    _patch(monkeypatch, "get_record_user_agent", lambda *a, **k: "")
     # MID-06 后「200 + 零/极小响应体」不再算成功，替身体量必须过 `_MIN_VALID_RECORD_BYTES`
     # 门槛，否则失败原因与断言不符（门槛本身由 tests/test_record_watchdog.py 逐条锁定）。
     payload = [b"flv-header", b"chunk" * 500, b"tail"]
     assert sum(len(c) for c in payload) > recording._MIN_VALID_RECORD_BYTES, "替身须大于直下成功门槛"
     _httpx_shim = _module_shim(httpx)
     _httpx_shim.Client = lambda **kw: _FakeHttpClient(_FakeStreamResponse(200, payload))
-    monkeypatch.setattr(recording, "httpx", _httpx_shim)
+    _patch(monkeypatch, "httpx", _httpx_shim)
     save_path = tmp_path / "out.flv"
 
     assert (
@@ -325,3 +327,10 @@ def test_direct_download_stream_writes_chunks_on_success(
         is True
     )
     assert save_path.read_bytes() == b"".join(payload)
+
+
+def _patch(monkeypatch: pytest.MonkeyPatch, name: str, value: object) -> None:
+    """同一符号可能位于录制执行层或房间轮询层，按实际归属同时补桩。"""
+    for module in (recording, room_poller):
+        if hasattr(module, name):
+            monkeypatch.setattr(module, name, value)

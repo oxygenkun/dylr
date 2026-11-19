@@ -9,11 +9,11 @@ from typing import Any
 import brotli
 from loguru import logger
 
-from src.danmaku.base import DanmakuBase, DanmakuMessage, DanmakuMessageType, spawn_danmaku_task
-from src.danmaku.compression import MAX_DECOMPRESSED_BYTES, decompress_zlib
 from src.network.websocket import WebSocketClient
-from src.streams import spider
+from src.platforms.danmaku.base import DanmakuBase, DanmakuMessage, DanmakuMessageType, spawn_danmaku_task
+from src.platforms.live import spider
 from src.support import i18n
+from src.support.compression import MAX_DECOMPRESSED_BYTES, decompress_zlib
 
 HEADER_LEN = 16
 

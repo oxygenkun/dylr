@@ -46,7 +46,7 @@ dist/dylr/
 
 源码运行以项目根目录定位资源；冻结运行区分可写的 exe 同级数据与 `_internal/` 打包资源：
 
-- [state.py](../src/recording/state.py) 定位配置、录制及备份，[logger.py](../src/support/logger.py) 定位日志。
+- [paths.py](../src/config/paths.py) 定位配置、录制及备份，[logger.py](../src/support/logger.py) 定位日志。
 - [ffmpeg.py](../src/runtime/ffmpeg.py) / [node.py](../src/runtime/node.py) 定位外部程序，[resources.py](../src/runtime/resources.py) 读取统一下载清单。
 - [i18n.py](../src/support/i18n.py) / [routes.py](../src/api/routes.py) 定位翻译 / Web 资源；JS 路径由 [resources.py](../src/runtime/resources.py) 的 `JS_SCRIPT_PATH` 提供。
 

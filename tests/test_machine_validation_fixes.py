@@ -21,7 +21,7 @@ import pytest
 
 
 def test_spider_safe_loads_returns_none_on_bad_json() -> None:
-    from src.streams.spider import _safe_loads
+    from src.platforms.live.spider import _safe_loads
 
     # 合法 JSON 但非 dict（如数组）：应返回 None（供调用方按业务判空）
     assert _safe_loads("[1,2,3]") is None

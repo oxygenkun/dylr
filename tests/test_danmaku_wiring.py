@@ -14,10 +14,13 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.danmaku.collector import DanmakuCollector
+from src.config import settings
+from src.danmaku import service as danmaku_service
+from src.danmaku.session import DanmakuCollector
 from src.danmaku.srt_writer import SrtWriter
 from src.recording import session as recording
-from src.recording import state
+from src.recording import state as recording_state
+from src.recording.sources import room as room_poller
 
 
 @pytest.fixture(scope="module")
@@ -61,19 +64,19 @@ def _setup_common(monkeypatch: pytest.MonkeyPatch, main: Any, poll_results: list
     # poll_results 是 FakePopen.poll() 的逐次返回值：None=还在录（循环继续），0=ffmpeg 已退出；
     # [None, None, None, 0] 为 3 轮后自然结束，[0] 为启动即退，[None] 配合 url_comments 触发提前中断。
     # 默认开录制弹幕、关监控、平台仅抖音直播，便于各用例按需覆写开关验证分支。
-    monkeypatch.setattr(state, "enable_danmaku", True)
-    monkeypatch.setattr(state, "enable_danmaku_monitor", False)
-    monkeypatch.setattr(state, "danmaku_platforms", ["抖音直播"])
+    monkeypatch.setattr(settings, "enable_danmaku", True)
+    monkeypatch.setattr(settings, "enable_danmaku_monitor", False)
+    monkeypatch.setattr(settings, "danmaku_platforms", ["抖音直播"])
     # 1800.0 = 默认 30 分钟分段阈值，决定采集器是否启用按时间分片，原样透传给 segment_seconds
-    monkeypatch.setattr(state, "danmaku_split_time", 1800.0)
+    monkeypatch.setattr(settings, "danmaku_split_time", 1800.0)
     # 关闭时间文件/转 mp4/退出录制等副作用开关，聚焦弹幕接线；url_comments 置空（无提前中断）
-    monkeypatch.setattr(state, "create_time_file", False)
-    monkeypatch.setattr(state, "converts_to_mp4", False)
-    monkeypatch.setattr(state, "exit_recording", False)
-    monkeypatch.setattr(state, "url_comments", set())
+    monkeypatch.setattr(settings, "create_time_file", False)
+    monkeypatch.setattr(settings, "converts_to_mp4", False)
+    monkeypatch.setattr(recording_state, "exit_recording", False)
+    monkeypatch.setattr(recording_state, "url_comments", set())
     # 注册/注销 ffmpeg 进程为无操作（真实实现会写入全局守护列表，测试无需）。
-    monkeypatch.setattr(recording, "register_ffmpeg_process", lambda proc: None)
-    monkeypatch.setattr(recording, "unregister_ffmpeg_process", lambda proc: None)
+    _patch(monkeypatch, "register_ffmpeg_process", lambda proc: None)
+    _patch(monkeypatch, "unregister_ffmpeg_process", lambda proc: None)
     # 只替换 main 命名空间内的 time 引用：main.time 就是 stdlib time 模块，直接 patch 它的 sleep
     # 会把全进程的 sleep 换成 no-op（含其它用例与后台线程，在 -p xdist 下互相污染）。
     # 与 subprocess shim 同一思路：浅拷贝真实模块属性，只覆盖 sleep。
@@ -81,12 +84,12 @@ def _setup_common(monkeypatch: pytest.MonkeyPatch, main: Any, poll_results: list
         **{k: getattr(recording.time, k) for k in dir(recording.time) if not k.startswith("_")}
     )
     _time_shim.sleep = lambda seconds: None  # 轮询不等真实 1 秒
-    monkeypatch.setattr(recording, "time", _time_shim)
-    monkeypatch.setattr(recording, "subprocess", _make_subprocess_shim(poll_results))
+    _patch(monkeypatch, "time", _time_shim)
+    _patch(monkeypatch, "subprocess", _make_subprocess_shim(poll_results))
 
     factory = MagicMock(name="get_danmaku_collector")
     factory.return_value = MagicMock(name="danmaku_collector")
-    monkeypatch.setattr(recording, "get_danmaku_collector", factory)
+    monkeypatch.setattr(danmaku_service, "get_danmaku_collector", factory)
     return factory
 
 
@@ -94,7 +97,7 @@ def test_wiring_starts_collector_with_platform_and_args(main_mod: Any, monkeypat
     # 接线回归：platform/danmaku_args 必须送达弹幕工厂，采集器随 ffmpeg 启动。
     main = main_mod
     # 开启按时间分片：segment_seconds 由 danmaku_split_time(1800) 注入，SRT 按分段落盘。
-    monkeypatch.setattr(state, "split_video_by_time", True)
+    monkeypatch.setattr(settings, "split_video_by_time", True)
     factory = _setup_common(monkeypatch, main, [0])
 
     save_path = "/tmp/主播名_2026-08-16_10-00-00_%03d.ts"
@@ -115,6 +118,7 @@ def test_wiring_starts_collector_with_platform_and_args(main_mod: Any, monkeypat
         danmaku_args={"room_id": "999"},
         base_filename="/tmp/主播名_2026-08-16_10-00-00",
         segment_seconds=1800.0,
+        only_fans=None,
         room_name="主播名",
         write_srt=True,
     )
@@ -126,10 +130,10 @@ def test_monitor_only_mode_skips_srt(main_mod: Any, monkeypatch: pytest.MonkeyPa
     # 弹幕监控独立开关回归：录制弹幕关、弹幕监控开时仍创建采集器（write_srt=False），
     # 且房间名（监控显示名）正确透传。
     main = main_mod
-    monkeypatch.setattr(state, "split_video_by_time", False)
+    monkeypatch.setattr(settings, "split_video_by_time", False)
     factory = _setup_common(monkeypatch, main, [0])
-    monkeypatch.setattr(state, "enable_danmaku", False)
-    monkeypatch.setattr(state, "enable_danmaku_monitor", True)
+    monkeypatch.setattr(settings, "enable_danmaku", False)
+    monkeypatch.setattr(settings, "enable_danmaku_monitor", True)
     # 仅开监控开关：验证采集器仍被创建（write_srt=False），监控显示名正确透传。
     result = recording.check_subprocess(
         "主播名",
@@ -147,6 +151,7 @@ def test_monitor_only_mode_skips_srt(main_mod: Any, monkeypatch: pytest.MonkeyPa
         danmaku_args={"room_id": "999"},
         base_filename="/tmp/主播名_2026-08-16_10-00-00",
         segment_seconds=None,
+        only_fans=None,
         room_name="主播名",
         write_srt=False,
     )
@@ -155,10 +160,10 @@ def test_monitor_only_mode_skips_srt(main_mod: Any, monkeypatch: pytest.MonkeyPa
 def test_no_danmaku_when_both_switches_off(main_mod: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     # 双开关全关时不创建采集器（不建立弹幕连接）。
     main = main_mod
-    monkeypatch.setattr(state, "split_video_by_time", False)
+    monkeypatch.setattr(settings, "split_video_by_time", False)
     factory = _setup_common(monkeypatch, main, [0])
-    monkeypatch.setattr(state, "enable_danmaku", False)
-    monkeypatch.setattr(state, "enable_danmaku_monitor", False)
+    monkeypatch.setattr(settings, "enable_danmaku", False)
+    monkeypatch.setattr(settings, "enable_danmaku_monitor", False)
 
     result = recording.check_subprocess(
         "主播名",
@@ -179,7 +184,7 @@ def test_stop_called_once_after_loop_not_per_iteration(main_mod: Any, monkeypatc
     # stop 位置回归：轮询 3 轮后 ffmpeg 自然退出，stop() 必须恰好调用一次
     # （修复前 stop 在循环体内，此场景会被调用 3 次，弹幕 1 秒即被终止）。
     main = main_mod
-    monkeypatch.setattr(state, "split_video_by_time", False)
+    monkeypatch.setattr(settings, "split_video_by_time", False)
     factory = _setup_common(monkeypatch, main, [None, None, None, 0])
 
     result = recording.check_subprocess(
@@ -201,7 +206,7 @@ def test_stop_called_once_after_loop_not_per_iteration(main_mod: Any, monkeypatc
 def test_srt_base_strips_02d_and_03d_placeholders(main_mod: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     # 占位符剥离回归：_%02d(音频/历史 FLV) 与 _%03d(视频分段) 都必须从 SRT 基名剥除。
     main = main_mod
-    monkeypatch.setattr(state, "split_video_by_time", True)
+    monkeypatch.setattr(settings, "split_video_by_time", True)
 
     for template in ("_%02d.flv", "_%03d.ts"):
         factory = _setup_common(monkeypatch, main, [0])
@@ -221,13 +226,13 @@ def test_srt_base_strips_02d_and_03d_placeholders(main_mod: Any, monkeypatch: py
 def test_early_interrupt_stops_danmaku_and_terminates(main_mod: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     # 提前中断回归：URL 被注释时弹幕立即停止、ffmpeg 被终止、返回 True 通知线程退出。
     main = main_mod
-    monkeypatch.setattr(state, "split_video_by_time", False)
+    monkeypatch.setattr(settings, "split_video_by_time", False)
     record_url = "https://live.douyin.com/123456"
     factory = _setup_common(monkeypatch, main, [None])
-    monkeypatch.setattr(state, "url_comments", {record_url})
+    monkeypatch.setattr(recording_state, "url_comments", {record_url})
     terminate = MagicMock(return_value=True)
-    monkeypatch.setattr(recording, "_terminate_ffmpeg_process", terminate)
-    monkeypatch.setattr(recording, "clear_record_info", lambda name, url: None)
+    _patch(monkeypatch, "_terminate_ffmpeg_process", terminate)
+    _patch(monkeypatch, "clear_record_info", lambda name, url: None)
 
     result = recording.check_subprocess(
         "主播名",
@@ -251,7 +256,7 @@ def test_early_interrupt_stops_danmaku_and_terminates(main_mod: Any, monkeypatch
 def test_unsupported_platform_skips_collector(main_mod: Any, monkeypatch: pytest.MonkeyPatch) -> None:
     # 负向用例：平台不在弹幕列表时不创建采集器，录制流程不受影响。
     main = main_mod
-    monkeypatch.setattr(state, "split_video_by_time", False)
+    monkeypatch.setattr(settings, "split_video_by_time", False)
     # 平台「某不支持平台」不在 danmaku_platforms（仅含抖音直播）列表中。
     factory = _setup_common(monkeypatch, main, [0])
 
@@ -301,7 +306,7 @@ def test_collector_stop_idempotent(tmp_path: Path) -> None:
 
 async def test_douyin_empty_cookie_fetches_ttwid(monkeypatch: pytest.MonkeyPatch) -> None:
     # 动态凭据回归：空 cookie 时必须调用 get_ttwid 并把结果放进 WS 握手头。
-    import src.danmaku.platforms.douyin as dy_mod
+    import src.platforms.danmaku.douyin as dy_mod
 
     # _FakeWs 捕获 connect 时的关键字参数（含 headers），用于断言 ttwid 注入握手头。
     captured: dict = {}
@@ -329,7 +334,7 @@ async def test_douyin_empty_cookie_fetches_ttwid(monkeypatch: pytest.MonkeyPatch
 
 async def test_douyin_ttwid_fetch_failure_warns_but_continues(monkeypatch: pytest.MonkeyPatch) -> None:
     # 兜底回归：get_ttwid 异常不向上传播（弹幕失败不影响录像），cookie 置空。
-    import src.danmaku.platforms.douyin as dy_mod
+    import src.platforms.danmaku.douyin as dy_mod
 
     captured: dict = {}
 
@@ -356,3 +361,10 @@ async def test_douyin_ttwid_fetch_failure_warns_but_continues(monkeypatch: pytes
 
 if __name__ == "__main__":
     raise SystemExit(pytest.main([__file__, "-v"]))
+
+
+def _patch(monkeypatch: pytest.MonkeyPatch, name: str, value: object) -> None:
+    """同一符号可能位于录制执行层或房间轮询层，按实际归属同时补桩。"""
+    for module in (recording, room_poller):
+        if hasattr(module, name):
+            monkeypatch.setattr(module, name, value)

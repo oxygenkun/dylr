@@ -14,10 +14,10 @@ from typing import Any
 
 import pytest
 
-import src.danmaku.monitor as dm
-from src.danmaku.base import DanmakuBase, DanmakuMessage, DanmakuMessageType
-from src.danmaku.collector import DanmakuCollector
-from src.danmaku.monitor import DanmakuMonitorHub
+import src.danmaku.hub as dm
+from src.danmaku.hub import DanmakuMonitorHub
+from src.danmaku.session import DanmakuCollector
+from src.platforms.danmaku.base import DanmakuBase, DanmakuMessage, DanmakuMessageType
 
 
 # 可长期阻塞的弹幕客户端替身：start() 长睡眠模拟常驻连接，collector 经 loop.stop() 中断
@@ -317,7 +317,7 @@ def test_collector_forwards_all_types_and_lifecycle(tmp_path: Path) -> None:
 
 def test_factory_passthrough_room_name_and_write_srt(tmp_path: Path) -> None:
     # 工厂透传：write_srt=False 采集器不创建 SrtWriter；平台不支持返回 None。
-    from src.danmaku.factory import get_danmaku_collector
+    from src.danmaku.service import get_danmaku_collector
 
     collector = get_danmaku_collector(
         platform="抖音直播",

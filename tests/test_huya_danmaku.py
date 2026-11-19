@@ -17,8 +17,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from typing import Any, cast
 
-from src.danmaku.platforms._tars import TarsInputStream, TarsOutputStream
-from src.streams import spider
+from src.platforms.danmaku._tars import TarsInputStream, TarsOutputStream
+from src.platforms.live import spider
 
 # 与线上 profileRoom 返回结构对齐(字段名采集自 2026-08 真实响应)
 PROFILEROOM_SAMPLE = {
@@ -80,7 +80,7 @@ def test_int64_branch() -> None:
 
 def test_join_data_ayyuid_overflow() -> None:
     # 真实超 int32 的 ayyuid 也能用 _make_join_data 编码,不抛 struct.error。
-    from src.danmaku.platforms.huya import HuyaDanmaku
+    from src.platforms.danmaku.huya import HuyaDanmaku
 
     inst = HuyaDanmaku()
     inst._args = {"ayyuid": 5000000000, "topSid": 1346609715, "subSid": 1346609715}

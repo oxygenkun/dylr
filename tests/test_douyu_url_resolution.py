@@ -16,7 +16,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from src.streams import spider
+from src.platforms.live import spider
 
 ROOM_ID = "8751648"
 

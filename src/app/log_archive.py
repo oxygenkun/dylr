@@ -5,7 +5,7 @@ import threading
 from datetime import datetime
 from typing import TextIO
 
-from src.danmaku.monitor import close_monitor_file, resume_monitor_writes, suspend_monitor_writes
+from src.danmaku.hub import close_monitor_file, resume_monitor_writes, suspend_monitor_writes
 from src.support import i18n
 from src.support.logger import add_file_sinks, logger, rebind_console_sink, remove_file_sinks, script_path
 

@@ -79,7 +79,8 @@ def _run_web_main(monkeypatch: pytest.MonkeyPatch, tmp_path: Path, env_value: st
     cfg = _write_web_config(tmp_path)
     engine = _FakeEngineModule(tmp_path, cfg)
 
-    monkeypatch.setattr(web, "state", engine)
+    monkeypatch.setattr(web, "config_paths", engine)
+    monkeypatch.setattr(web, "recording_state", engine)
     monkeypatch.setattr(web, "recorder", engine)
     monkeypatch.setattr(web, "uvicorn", types.SimpleNamespace(Server=_FakeServer, Config=lambda *a, **kw: None))
     monkeypatch.setattr(web, "create_app", lambda **kwargs: None)

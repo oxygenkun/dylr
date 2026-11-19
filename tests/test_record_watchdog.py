@@ -1,3 +1,19 @@
+import subprocess
+import threading
+import time
+import types
+from collections.abc import Callable
+from pathlib import Path
+from typing import Any
+from unittest.mock import MagicMock
+
+import pytest
+
+from src.config import paths as config_paths
+from src.config import settings
+from src.notifications import notify
+from src.recording import session as recording
+
 # 录制守护（看门狗）与录制状态收尾的回归测试（离线：不触网、不起真实 ffmpeg）。
 #
 # 覆盖 CODE_REVIEW_2026-09-20 条目（判据一律「删掉生产实现就该失败」：只打桩子进程 / 网络 / 时钟 /
@@ -11,20 +27,9 @@
 #
 # 写法约定（AGENTS.md）：main 引用的 stdlib / 第三方模块（time / subprocess / httpx）一律用浅拷贝
 # shim 替换 main 命名空间里的全局名，绝不 setattr 到模块本体（会波及同进程守护线程）。
-import subprocess
-import threading
-import time
-import types
-from collections.abc import Callable
-from pathlib import Path
-from typing import Any
-from unittest.mock import MagicMock
-
-import pytest
-
-from src.notifications import notify
-from src.recording import session as recording
-from src.recording import state
+from src.recording import state as recording_state
+from src.recording.sources import room as room_poller
+from src.support import console
 
 _REPO_ROOT = Path(__file__).resolve().parent.parent
 _HUYA_URL = "https://www.huya.com/16028551"
@@ -106,26 +111,26 @@ def _prime(main: Any, monkeypatch: pytest.MonkeyPatch, clock: _Clock) -> dict[st
     # （acquire 恒假 + Popen 桩抛错，才能证明「放弃分支发生在 Popen 之前」——槽位必须先 acquire）。
     samples: dict[str, list] = {"ok": [], "err": [], "term": [], "unregister": [], "marks": []}
     sem = types.SimpleNamespace(acquire=lambda timeout=None: True, release=lambda: None)
-    monkeypatch.setattr(state, "recording_semaphore", sem)
-    monkeypatch.setattr(state, "exit_recording", False)
-    monkeypatch.setattr(state, "recording_enabled", True)
-    monkeypatch.setattr(state, "url_comments", set())
-    monkeypatch.setattr(state, "recording", set())
-    monkeypatch.setattr(state, "recording_time_list", {})
-    monkeypatch.setattr(state, "record_state_lock", threading.Lock())
-    monkeypatch.setattr(state, "enable_danmaku", False)
-    monkeypatch.setattr(state, "enable_danmaku_monitor", False)
-    monkeypatch.setattr(state, "danmaku_platforms", [])
-    monkeypatch.setattr(state, "create_time_file", False)
-    monkeypatch.setattr(state, "converts_to_mp4", False)
-    monkeypatch.setattr(state, "delete_origin_file", False)
-    monkeypatch.setattr(recording, "register_ffmpeg_process", lambda proc: None)
-    monkeypatch.setattr(recording, "unregister_ffmpeg_process", lambda proc: samples["unregister"].append(proc))
-    monkeypatch.setattr(recording, "clear_ffmpeg_reject", lambda url, platform: None)
-    monkeypatch.setattr(recording, "mark_ffmpeg_reject", lambda url, platform: samples["marks"].append(url))
-    monkeypatch.setattr(recording, "record_success", lambda key=None: samples["ok"].append(key))
-    monkeypatch.setattr(recording, "record_error", lambda key=None: samples["err"].append(key))
-    monkeypatch.setattr(recording, "time", clock.shim())
+    monkeypatch.setattr(recording_state, "recording_semaphore", sem)
+    monkeypatch.setattr(recording_state, "exit_recording", False)
+    monkeypatch.setattr(recording_state, "recording_enabled", True)
+    monkeypatch.setattr(recording_state, "url_comments", set())
+    monkeypatch.setattr(recording_state, "recording", set())
+    monkeypatch.setattr(recording_state, "recording_time_list", {})
+    monkeypatch.setattr(recording_state, "record_state_lock", threading.Lock())
+    monkeypatch.setattr(settings, "enable_danmaku", False)
+    monkeypatch.setattr(settings, "enable_danmaku_monitor", False)
+    monkeypatch.setattr(settings, "danmaku_platforms", [])
+    monkeypatch.setattr(settings, "create_time_file", False)
+    monkeypatch.setattr(settings, "converts_to_mp4", False)
+    monkeypatch.setattr(settings, "delete_origin_file", False)
+    _patch(monkeypatch, "register_ffmpeg_process", lambda proc: None)
+    _patch(monkeypatch, "unregister_ffmpeg_process", lambda proc: samples["unregister"].append(proc))
+    _patch(monkeypatch, "clear_ffmpeg_reject", lambda url, platform: None)
+    _patch(monkeypatch, "mark_ffmpeg_reject", lambda url, platform: samples["marks"].append(url))
+    _patch(monkeypatch, "record_success", lambda key=None: samples["ok"].append(key))
+    _patch(monkeypatch, "record_error", lambda key=None: samples["err"].append(key))
+    _patch(monkeypatch, "time", clock.shim())
     return samples
 
 
@@ -144,8 +149,8 @@ def _install_ffmpeg(
 
     shim = types.SimpleNamespace(**vars(subprocess))
     shim.Popen = _factory
-    monkeypatch.setattr(recording, "subprocess", shim)
-    monkeypatch.setattr(recording, "_terminate_ffmpeg_process", _terminate)
+    _patch(monkeypatch, "subprocess", shim)
+    _patch(monkeypatch, "_terminate_ffmpeg_process", _terminate)
 
 
 def _writer(out_file: Path, until: float, chunk: int = 64) -> Callable[[float], None]:
@@ -221,7 +226,7 @@ class TestStallWatchdogBaseline:
         assert samples["err"] == [_HUYA_HOST]
         assert samples["ok"] == []
         # 停滞收尾必须清掉录制状态，否则面板永久「录制中」
-        assert state.recording == set()
+        assert recording_state.recording == set()
 
 
 class TestRecordTimeLimit:
@@ -239,7 +244,7 @@ class TestRecordTimeLimit:
         seg.write_bytes(b"\x00" * 4096)
         clock = _Clock()
         samples = _prime(main, monkeypatch, clock)
-        monkeypatch.setattr(state, "max_record_seconds", 60)
+        monkeypatch.setattr(settings, "max_record_seconds", 60)
         # 时序：上限判定在「30s 最小采样间隔」闸门**之前**，故 60s 上限会在第 61 次 1s 轮询
         # 立即命中，不必等采样窗口；同时传给 check_subprocess 的是含 %03d 的模板路径，
         # stat 恒失败 → 停滞分支必然不参与，本案与 SEV-08 的判据互不干扰（否则同一红有两种成因）
@@ -267,7 +272,7 @@ class TestRecordTimeLimit:
         out.write_bytes(b"\x00" * 4096)
         clock = _Clock()
         samples = _prime(main, monkeypatch, clock)
-        monkeypatch.setattr(state, "max_record_seconds", 60)
+        monkeypatch.setattr(settings, "max_record_seconds", 60)
         clock.on_advance = _writer(out, until=200.0)
         _install_ffmpeg(main, monkeypatch, clock, alive_at=200.0, samples=samples)
 
@@ -288,21 +293,20 @@ class TestRecordTimeLimit:
         # <= 2×采样间隔，「连续 10 分钟无增长」就退化成「相邻两次采样字节不变」，45s 空档用例随之
         # 失去区分度，而常量比较仍全绿。
         assert recording._RECORD_STALL_SECONDS > recording._RECORD_STALL_PROBE_INTERVAL * 2
-        assert recording._MAX_RECORD_SECONDS == 6 * 60 * 60
 
 
 class TestRecordingStateUnwind:
     # MID-01 / MID-12：任何出口都必须把录制状态与子进程收敛干净
 
     def test_giving_up_slot_wait_clears_recording_state(self, main_mod: Any, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(state, "recording", {"主播名"})
-        monkeypatch.setattr(state, "recording_time_list", {"主播名": []})
-        monkeypatch.setattr(state, "url_comments", {_DOUYIN_URL})
-        monkeypatch.setattr(state, "running_list", [])
-        monkeypatch.setattr(state, "record_state_lock", threading.Lock())
+        monkeypatch.setattr(recording_state, "recording", {"主播名"})
+        monkeypatch.setattr(recording_state, "recording_time_list", {"主播名": []})
+        monkeypatch.setattr(recording_state, "url_comments", {_DOUYIN_URL})
+        monkeypatch.setattr(recording_state, "running_list", [])
+        monkeypatch.setattr(recording_state, "record_state_lock", threading.Lock())
         # acquire 恒失败 → 只能走「等待期间检测到停止信号，放弃本轮」分支
         monkeypatch.setattr(
-            state,
+            recording_state,
             "recording_semaphore",
             types.SimpleNamespace(acquire=lambda timeout=None: False, release=lambda: None),
         )
@@ -312,11 +316,11 @@ class TestRecordingStateUnwind:
 
         shim = types.SimpleNamespace(**vars(subprocess))
         shim.Popen = _boom
-        monkeypatch.setattr(recording, "subprocess", shim)
+        _patch(monkeypatch, "subprocess", shim)
 
         assert recording.check_subprocess("主播名", _DOUYIN_URL, ["ffmpeg", "-i", "x", "/tmp/out.ts"], "TS") is True
-        assert state.recording == set(), "放弃录制槽等待时必须回收 recording 条目"
-        assert state.recording_time_list == {}
+        assert recording_state.recording == set(), "放弃录制槽等待时必须回收 recording 条目"
+        assert recording_state.recording_time_list == {}
 
     def test_exception_after_popen_terminates_process_and_clears_state(
         self, main_mod: Any, monkeypatch: pytest.MonkeyPatch
@@ -327,13 +331,13 @@ class TestRecordingStateUnwind:
         clock = _Clock()
         samples = _prime(main, monkeypatch, clock)
         _install_ffmpeg(main, monkeypatch, clock, alive_at=float("inf"), samples=samples)
-        monkeypatch.setattr(state, "recording", {"主播名"})
-        monkeypatch.setattr(state, "recording_time_list", {"主播名": []})
+        monkeypatch.setattr(recording_state, "recording", {"主播名"})
+        monkeypatch.setattr(recording_state, "recording_time_list", {"主播名": []})
 
         def _register_raises(proc: Any) -> None:
             raise RuntimeError("can't start new thread")
 
-        monkeypatch.setattr(recording, "register_ffmpeg_process", _register_raises)
+        _patch(monkeypatch, "register_ffmpeg_process", _register_raises)
 
         with pytest.raises(RuntimeError):
             recording.check_subprocess(
@@ -341,8 +345,8 @@ class TestRecordingStateUnwind:
             )
 
         assert len(samples["term"]) == 1, "异常出口必须终止已启动的 ffmpeg"
-        assert state.recording == set(), "异常出口必须回收 recording 条目"
-        assert state.recording_time_list == {}
+        assert recording_state.recording == set(), "异常出口必须回收 recording 条目"
+        assert recording_state.recording_time_list == {}
 
 
 class _FakeStreamResponse:
@@ -378,13 +382,13 @@ class TestDirectDownloadResultContract:
     # MID-06：直下路径（shopee / 花椒）的成功判定必须与 ffmpeg 路径的「产物达标」口径一致
 
     def _download(self, main: Any, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, chunks: list[bytes]) -> bool:
-        monkeypatch.setattr(recording, "get_record_headers", lambda *a, **k: {})
-        monkeypatch.setattr(recording, "get_record_user_agent", lambda *a, **k: "")
+        _patch(monkeypatch, "get_record_headers", lambda *a, **k: {})
+        _patch(monkeypatch, "get_record_user_agent", lambda *a, **k: "")
         response = _FakeStreamResponse(200, chunks)
         # 只替换 main 命名空间里的 httpx 引用（不改第三方模块本体）
         shim = types.SimpleNamespace(**vars(recording.httpx))
         shim.Client = lambda **kw: _FakeHttpClient(response)
-        monkeypatch.setattr(recording, "httpx", shim)
+        _patch(monkeypatch, "httpx", shim)
         save_path = tmp_path / "out.flv"
         return bool(
             recording.direct_download_stream(
@@ -424,70 +428,90 @@ def _prime_start_record(
     # 装配 start_record 单轮运行所需的全部模块全局（与 test_start_record_command_golden
     # 的 harness 同一组键）；返回字幕线程 / 直下调用 / 状态清理的捕获容器。
     captured: dict[str, list] = {"subs": [], "downloads": [], "clears": [], "ok": [], "err": []}
-    plain: dict[str, Any] = {
-        "exit_recording": False,
-        "recording_enabled": True,
-        "recording": set(),
-        "recording_time_list": {},
-        "record_state_lock": threading.Lock(),
-        "need_update_line_list": [],
-        "not_record_list": [],
-        "error_window": [],
-        "url_comments": set(),
-        "running_list": [],
-        "monitoring": 0,
-        "scheduler": None,
-        "auto_update_anchor_name": False,
-        "show_url": False,
-        "live_status_push": "",
-        "begin_show_push": False,
-        "over_show_push": False,
-        "over_push_message_text": "",
-        "begin_push_message_text": "",
-        "disable_record": False,
-        "push_check_seconds": 0,
-        "create_time_file": True,  # SEV-09 的触发前提：勾选「生成时间字幕文件」
-        "converts_to_mp4": False,
-        "delete_origin_file": False,
-        "custom_script": "",
-        "video_save_path": "",
-        "folder_by_author": False,
-        "folder_by_time": False,
-        "folder_by_title": False,
-        "filename_by_title": False,
-        "default_path": str(tmp_path),
-        "enable_https_recording": False,
-        "loop_time": False,
-        "delay_default": 0,
-        "video_save_type": "FLV",
-        "split_video_by_time": False,
-        "split_time": "600",
-        "proxy_addr": "",
-        "proxy_addr_bak": "",
-        "enable_proxy_platform_list": [],
-        "extra_enable_proxy_platform_list": [],
-        "OVERSEAS_PLATFORM_HOST": [],
-        "color_obj": MagicMock(),
-        "create_var": {},
-    }
-    for name, value in plain.items():
-        monkeypatch.setattr(recording if name == "OVERSEAS_PLATFORM_HOST" else state, name, value)
+    for module, values in (
+        (
+            recording_state,
+            {
+                "exit_recording": False,
+                "recording_enabled": True,
+                "recording": set(),
+                "recording_time_list": {},
+                "record_state_lock": threading.Lock(),
+                "need_update_line_list": [],
+                "not_record_list": [],
+                "error_window": [],
+                "url_comments": set(),
+                "running_list": [],
+                "monitoring": 0,
+                "scheduler": None,
+                "create_var": {},
+            },
+        ),
+        (
+            settings,
+            {
+                "auto_update_anchor_name": False,
+                "show_url": False,
+                "live_status_push": "",
+                "begin_show_push": False,
+                "over_show_push": False,
+                "over_push_message_text": "",
+                "begin_push_message_text": "",
+                "disable_record": False,
+                "push_check_seconds": 0,
+                "create_time_file": True,  # SEV-09 的触发前提：勾选「生成时间字幕文件」
+                "converts_to_mp4": False,
+                "delete_origin_file": False,
+                "custom_script": "",
+                "video_save_path": "",
+                "folder_by_author": False,
+                "folder_by_time": False,
+                "folder_by_title": False,
+                "filename_by_title": False,
+                "enable_https_recording": False,
+                "loop_time": False,
+                "delay_default": 0,
+                "video_save_type": "FLV",
+                "split_video_by_time": False,
+                "split_time": "600",
+                "proxy_addr": "",
+                "proxy_addr_bak": "",
+                "enable_proxy_platform_list": [],
+                "extra_enable_proxy_platform_list": [],
+            },
+        ),
+        (
+            config_paths,
+            {
+                "default_path": str(tmp_path),
+            },
+        ),
+        (
+            console,
+            {
+                "color_obj": MagicMock(),
+            },
+        ),
+    ):
+        for name, value in values.items():
+            monkeypatch.setattr(module, name, value)
+    _patch(monkeypatch, "OVERSEAS_PLATFORM_HOST", [])
     for ck in ("shopee_cookie", "huajiao_cookie", "dy_cookie", "hy_cookie"):
-        monkeypatch.setattr(state, ck, "")
+        monkeypatch.setattr(settings, ck, "")
 
-    monkeypatch.setattr(recording, "_resolve_platform_stream", lambda *a, **k: (platform, port_info, None, ""))
+    _patch(monkeypatch, "_resolve_platform_stream", lambda *a, **k: (platform, port_info, None, ""))
     # 只有 m3u8、没有 flv_url 时，选源仍给出可用地址（游客态/接口结构变更的真实形态），
     # 否则会在「本轮未获取到可用流地址」处提前 continue，测不到 only_flv 分支
-    monkeypatch.setattr(recording, "select_source_url", lambda *a, **k: port_info.get("m3u8_url") or "")
-    monkeypatch.setattr(recording, "get_record_headers", lambda *a, **k: None)
-    monkeypatch.setattr(recording, "get_record_user_agent", lambda *a, **k: None)
+    _patch(monkeypatch, "select_source_url", lambda *a, **k: port_info.get("m3u8_url") or "")
+    _patch(monkeypatch, "get_record_headers", lambda *a, **k: None)
+    _patch(monkeypatch, "get_record_user_agent", lambda *a, **k: None)
     # 时间字幕线程体：只登记线程名即返回（真实实现是 while True 每秒追加一行 SRT）
     _real_current = threading.current_thread
 
     def _fake_generate_subtitles(record_name: str, subs_file_path: str) -> None:
         captured["subs"].append(_real_current().name)
 
-    monkeypatch.setattr(recording, "generate_subtitles", _fake_generate_subtitles)
+    _patch(monkeypatch, "generate_subtitles", _fake_generate_subtitles)
 
     def _fake_download(
         flv_url: str, save_file_path: str, record_name: str, record_url: str, platform: str, cookies: str | None = None
@@ -495,9 +519,9 @@ def _prime_start_record(
         captured["downloads"].append(flv_url)
         return True
 
-    monkeypatch.setattr(recording, "direct_download_stream", _fake_download)
-    monkeypatch.setattr(recording, "record_success", lambda key=None: captured["ok"].append(key))
-    monkeypatch.setattr(recording, "record_error", lambda key=None: captured["err"].append(key))
+    _patch(monkeypatch, "direct_download_stream", _fake_download)
+    _patch(monkeypatch, "record_success", lambda key=None: captured["ok"].append(key))
+    _patch(monkeypatch, "record_error", lambda key=None: captured["err"].append(key))
 
     # 真实 clear_record_info（负责回收 recording/recording_time_list）+ 记录调用 + 结束本轮：
     # start_record 是 while True，靠置 exit_recording 让线程在下一轮顶部干净退出
@@ -506,15 +530,15 @@ def _prime_start_record(
     def _spy_clear(record_name: str, record_url: str) -> None:
         real_clear(record_name, record_url)
         captured["clears"].append(record_name)
-        state.exit_recording = True
+        recording_state.exit_recording = True
 
-    monkeypatch.setattr(recording, "clear_record_info", _spy_clear)
+    _patch(monkeypatch, "clear_record_info", _spy_clear)
     # 轮末等待用假时钟：sleep 只推进虚拟时间、绝不真睡（delay_default=0，靠 _spy_clear 置
     # exit_recording 在下一轮顶部干净退出）；on_advance 置 no-op 因为这里不建模产物增长。
     # 仍走 shim 结构：只覆盖 time/sleep 两个属性，不动 stdlib 本体。
     idle = _Clock()
     idle.on_advance = lambda _now: None
-    monkeypatch.setattr(recording, "time", idle.shim())
+    _patch(monkeypatch, "time", idle.shim())
     return captured
 
 
@@ -540,11 +564,11 @@ class TestOnlyFlvWithoutFlvUrl:
         }
         captured = _prime_start_record(main, monkeypatch, tmp_path, port_info, "shopee")
 
-        recording.start_record(("原画", "https://live.shopee.sg/share/1", "主播名"), 1)
+        room_poller.start_record(("原画", "https://live.shopee.sg/share/1", "主播名"), 1)
 
         assert captured["downloads"] == [], "无 flv_url 时不得进入直下"
-        assert state.recording == set(), "未找到 FLV 时必须回收 recording 条目"
-        assert state.recording_time_list == {}
+        assert recording_state.recording == set(), "未找到 FLV 时必须回收 recording 条目"
+        assert recording_state.recording_time_list == {}
         assert captured["clears"], "未命中的 else 分支必须调 clear_record_info"
         assert captured["subs"] == [], "未拿到 flv_url 前不得启动时间字幕线程"
         alive_subs = [t.name for t in threading.enumerate() if t.name.startswith("subs_")]
@@ -566,8 +590,15 @@ class TestOnlyFlvWithoutFlvUrl:
         }
         captured = _prime_start_record(main, monkeypatch, tmp_path, port_info, "shopee")
 
-        recording.start_record(("原画", "https://live.shopee.sg/share/1", "主播名"), 1)
+        room_poller.start_record(("原画", "https://live.shopee.sg/share/1", "主播名"), 1)
 
         assert captured["downloads"] == [flv]
         assert len(captured["subs"]) == 1, "flv_url 校验通过后应启动时间字幕线程"
-        assert state.recording == set()
+        assert recording_state.recording == set()
+
+
+def _patch(monkeypatch: pytest.MonkeyPatch, name: str, value: object) -> None:
+    """同一符号可能位于录制执行层或房间轮询层，按实际归属同时补桩。"""
+    for module in (recording, room_poller):
+        if hasattr(module, name):
+            monkeypatch.setattr(module, name, value)

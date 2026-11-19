@@ -1,4 +1,4 @@
-# 2026-09-22 审查报告 / 组 E（src/streams/spider.py + src/danmaku/platforms/bilibili.py）修复的回归锁。
+# 2026-09-22 审查报告 / 组 E（src/platforms/live/spider.py + src/platforms/danmaku/bilibili.py）修复的回归锁。
 #
 # 判据一律落在「失效形态本身」而不是「调用了某个函数」：
 #   SEV-2204  快手 playUrls 只含 h265 / "h264": null 时必须仍判开播并给出 h265 候选；
@@ -24,7 +24,7 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 
 from src.network import targets
-from src.streams import spider as sp
+from src.platforms.live import spider as sp
 
 WAF_HTML = "<html><head><title>Access Protected</title></head><body>cf-browser-verification</body></html>"
 
@@ -299,7 +299,7 @@ class TestXhsRedirectCredentialContainment:
 
 class TestBiliDanmakuHostAllowlist:
     def test_helper_rejects_non_official_domains(self) -> None:
-        from src.danmaku.platforms.bilibili import _bili_danmaku_host_allowed
+        from src.platforms.danmaku.bilibili import _bili_danmaku_host_allowed
 
         assert _bili_danmaku_host_allowed("broadcastlv.chat.bilibili.com")
         assert _bili_danmaku_host_allowed("broadcastlv2.chat.bilibili.com")
@@ -313,7 +313,7 @@ class TestBiliDanmakuHostAllowlist:
     async def test_evil_host_never_connected_and_no_cookie(self) -> None:
         # 失效形态：getDanmuInfo 返回的 host 被直接用作 WS 主机，连接时带上登录 Cookie。
         # 修复后：evil.example.com 被跳过、不建连，且绝不把 Cookie 发给它。
-        from src.danmaku.platforms.bilibili import BilibiliDanmaku
+        from src.platforms.danmaku.bilibili import BilibiliDanmaku
 
         connected: list[dict[str, object]] = []
 
@@ -325,7 +325,7 @@ class TestBiliDanmakuHostAllowlist:
                 return None
 
         d = BilibiliDanmaku()
-        with patch("src.danmaku.platforms.bilibili.WebSocketClient", _FakeWs):
+        with patch("src.platforms.danmaku.bilibili.WebSocketClient", _FakeWs):
             await d.start(
                 {
                     "server_host": "evil.example.com",
@@ -346,7 +346,7 @@ class TestBiliDanmakuHostAllowlist:
     @pytest.mark.asyncio
     async def test_all_hosts_untrusted_degrades_without_connect(self) -> None:
         # 全部候选不可信时降级（不建连、不发凭据），而非退回去连不可信 host。
-        from src.danmaku.platforms.bilibili import BilibiliDanmaku
+        from src.platforms.danmaku.bilibili import BilibiliDanmaku
 
         connected: list[dict[str, object]] = []
         closed: list[str] = []
@@ -359,7 +359,7 @@ class TestBiliDanmakuHostAllowlist:
                 return None
 
         d = BilibiliDanmaku(on_close=lambda reason: closed.append(reason))
-        with patch("src.danmaku.platforms.bilibili.WebSocketClient", _FakeWs):
+        with patch("src.platforms.danmaku.bilibili.WebSocketClient", _FakeWs):
             await d.start(
                 {
                     "server_host": "evil.example.com",
@@ -757,7 +757,7 @@ class TestHuyaLetterRoomId:
         import ast
         from pathlib import Path
 
-        root = Path(sp.__file__).resolve().parents[2]
+        root = Path(sp.__file__).resolve().parents[3]
 
         def patterns(path: Path) -> set[str]:
             tree = ast.parse(path.read_text(encoding="utf-8-sig"))
@@ -767,7 +767,7 @@ class TestHuyaLetterRoomId:
                 if isinstance(node, ast.Constant) and isinstance(node.value, str) and "ProfileRoom" in node.value
             }
 
-        main_patterns = patterns(root / "src" / "streams/spider.py")
+        main_patterns = patterns(root / "src" / "platforms/live/spider.py")
         twin_patterns = patterns(root / "tool" / "dylr_standalone.py")
         assert main_patterns, "主实现里找不到 ProfileRoom 正则常量"
         assert main_patterns == twin_patterns, f"两副本正则串不一致: {main_patterns} != {twin_patterns}"

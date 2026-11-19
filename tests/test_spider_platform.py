@@ -1,4 +1,4 @@
-# src/streams/spider.py 批量平台函数测试：覆盖 60+ 直播平台的流地址解析函数（get_xxx_stream_url /
+# src/platforms/live/spider.py 批量平台函数测试：覆盖 60+ 直播平台的流地址解析函数（get_xxx_stream_url /
 # get_xxx_stream_data / get_xxx_room_info 等）。测试策略：用 AsyncMock 桩掉 src.network.http.request
 # （屏蔽真实网络），喂入各平台真实响应 JSON/HTML 形态，断言解析出的 anchor_name / is_live /
 # 流地址契约。
@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from src.streams.spider import (
+from src.platforms.live.spider import (
     _ensure_twitch_client_id,
     _generate_twitch_play_session_id,
     get_6room_stream_url,
@@ -93,7 +93,7 @@ class TestGenerateTwitchPlaySessionId:
 
 class TestEnsureTwitchClientId:
     # Twitch Web 端公开 Client-Id 的三态：主页 HTML 提取 / 进程内缓存命中 / 拉取失败回空串。
-    # 它是网页公共标识、非用户私人凭据（AGENTS 凭据红线不适用于本值，见 src/streams/spider.py 函数头）。
+    # 它是网页公共标识、非用户私人凭据（AGENTS 凭据红线不适用于本值，见 src/platforms/live/spider.py 函数头）。
 
     @pytest.mark.asyncio
     async def test_fetches_from_html(self) -> None:
@@ -104,9 +104,9 @@ class TestEnsureTwitchClientId:
         html = '<script>var config = {"Client-ID": "abcdef12345678901234567890ab"};</script>'
         with (
             patch("src.network.http.request", new_callable=AsyncMock, return_value=html),
-            patch("src.streams.spider._cached_twitch_client_id", ""),
+            patch("src.platforms.live.spider._cached_twitch_client_id", ""),
         ):
-            import src.streams.spider as spider_mod
+            import src.platforms.live.spider as spider_mod
 
             old = spider_mod._cached_twitch_client_id
             spider_mod._cached_twitch_client_id = ""
@@ -120,7 +120,7 @@ class TestEnsureTwitchClientId:
     async def test_returns_cached(self) -> None:
         # 缓存命中时直接返回已存 Client-ID、跳过网络拉取；锁住「免重复请求」契约，
         # 防止上层 Twitch 解析每房间都重拉凭据触发频控。
-        import src.streams.spider as spider_mod
+        import src.platforms.live.spider as spider_mod
 
         old = spider_mod._cached_twitch_client_id
         spider_mod._cached_twitch_client_id = "cached_id_value_12345678"
@@ -134,7 +134,7 @@ class TestEnsureTwitchClientId:
     async def test_network_error_returns_empty(self) -> None:
         # 拉取页面异常须返回空串而非抛错，避免上层 Twitch 解析整体失败；
         # 空 Client-ID 触发后续匿名兜底路径。
-        import src.streams.spider as spider_mod
+        import src.platforms.live.spider as spider_mod
 
         old = spider_mod._cached_twitch_client_id
         spider_mod._cached_twitch_client_id = ""
@@ -156,7 +156,7 @@ class TestTiktokStreamData:
         html = '<script id="SIGI_STATE" type="application/json">{"room":{"status":2}}</script>'
         with (
             patch("src.network.http.request", new_callable=AsyncMock, return_value=html),
-            patch("src.streams.spider.asyncio.sleep", new_callable=AsyncMock),
+            patch("src.platforms.live.spider.asyncio.sleep", new_callable=AsyncMock),
         ):
             result = await get_tiktok_stream_data("https://www.tiktok.com/@test/live")
             assert result == {"room": {"status": 2}}
@@ -166,7 +166,7 @@ class TestTiktokStreamData:
         html = "<p>\nWe regret to inform you that we have discontinued operating TikTok in this region.\n</p>"
         with (
             patch("src.network.http.request", new_callable=AsyncMock, return_value=html),
-            patch("src.streams.spider.asyncio.sleep", new_callable=AsyncMock),
+            patch("src.platforms.live.spider.asyncio.sleep", new_callable=AsyncMock),
         ):
             result = await get_tiktok_stream_data("https://www.tiktok.com/@test/live")
             assert result == {"is_live": False}
@@ -177,7 +177,7 @@ class TestTiktokStreamData:
         # 此异常响应体正是触发重试耗尽的现实形态，验证离线兜底路径。
         with (
             patch("src.network.http.request", new_callable=AsyncMock, return_value="UNEXPECTED_EOF_WHILE_READING"),
-            patch("src.streams.spider.asyncio.sleep", new_callable=AsyncMock),
+            patch("src.platforms.live.spider.asyncio.sleep", new_callable=AsyncMock),
         ):
             result = await get_tiktok_stream_data("https://www.tiktok.com/@test/live")
             assert result == {"is_live": False}
@@ -851,9 +851,11 @@ class TestKuaishouStreamData2:
         fallback = json.dumps({"is_live": False})
         with (
             patch("src.network.http.request", new_callable=AsyncMock, return_value=fallback),
-            patch("src.streams.spider._ensure_kuaishou_did", new_callable=AsyncMock, return_value="did=abc"),
+            patch("src.platforms.live.spider._ensure_kuaishou_did", new_callable=AsyncMock, return_value="did=abc"),
             patch(
-                "src.streams.spider.get_kuaishou_stream_data", new_callable=AsyncMock, return_value={"is_live": False}
+                "src.platforms.live.spider.get_kuaishou_stream_data",
+                new_callable=AsyncMock,
+                return_value={"is_live": False},
             ),
         ):
             result = await get_kuaishou_stream_data2("https://live.kuaishou.com/u/testuser")
@@ -1331,7 +1333,7 @@ class TestDouyuStreamData:
         sign_params = {"enc_data": "enc", "did": "did123", "ts": 1000, "auth": "auth123"}
         stream_resp = json.dumps({"error": 0, "data": {"url": "http://stream.example.com"}})
         with (
-            patch("src.streams.spider.get_token_js", new_callable=AsyncMock, return_value=sign_params),
+            patch("src.platforms.live.spider.get_token_js", new_callable=AsyncMock, return_value=sign_params),
             patch("src.network.http.request", new_callable=AsyncMock, return_value=stream_resp),
         ):
             result = await get_douyu_stream_data("12345")
@@ -1339,7 +1341,7 @@ class TestDouyuStreamData:
 
     @pytest.mark.asyncio
     async def test_no_sign_params(self) -> None:
-        with patch("src.streams.spider.get_token_js", new_callable=AsyncMock, return_value={}):
+        with patch("src.platforms.live.spider.get_token_js", new_callable=AsyncMock, return_value={}):
             result = await get_douyu_stream_data("12345")
             assert result["error"] == -1
 
@@ -1613,7 +1615,7 @@ class TestGetWinkTvStreamData:
         play_resp = json.dumps({"PlayList": {"hls": [{"url": "http://wink.m3u8"}]}})
         m3u8_content = "#EXTM3U\n#EXTINF:2,auth_playlist0.ts\nhttp://cdn/auth_playlist0.ts"
         with (
-            patch("src.streams.spider.get_winktv_bj_info", new_callable=AsyncMock, return_value=bj_resp),
+            patch("src.platforms.live.spider.get_winktv_bj_info", new_callable=AsyncMock, return_value=bj_resp),
             patch("src.network.http.request", new_callable=AsyncMock, side_effect=[play_resp, m3u8_content]),
         ):
             result = await get_winktv_stream_data("https://www.winktv.co.kr/testuser")
@@ -1624,7 +1626,7 @@ class TestGetWinkTvStreamData:
     @pytest.mark.asyncio
     async def test_not_live(self) -> None:
         bj_resp = ("wink_anchor", False)
-        with patch("src.streams.spider.get_winktv_bj_info", new_callable=AsyncMock, return_value=bj_resp):
+        with patch("src.platforms.live.spider.get_winktv_bj_info", new_callable=AsyncMock, return_value=bj_resp):
             result = await get_winktv_stream_data("https://www.winktv.co.kr/testuser")
             assert result["is_live"] is False
 
@@ -1632,6 +1634,8 @@ class TestGetWinkTvStreamData:
     async def test_error_returns_false(self) -> None:
         # bj_info 拉取异常 → {is_live:False}（桩掉 bj_info 隔离）；
         # 验证异常不向上抛。
-        with patch("src.streams.spider.get_winktv_bj_info", new_callable=AsyncMock, side_effect=Exception("net")):
+        with patch(
+            "src.platforms.live.spider.get_winktv_bj_info", new_callable=AsyncMock, side_effect=Exception("net")
+        ):
             result = await get_winktv_stream_data("https://www.winktv.co.kr/testuser")
             assert result == {"is_live": False}

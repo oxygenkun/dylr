@@ -9,11 +9,12 @@ from urllib.parse import urlsplit
 
 from loguru import logger
 
+from src.config import settings
 from src.notifications import msg_push
 from src.notifications.msg_push import bark, dingtalk, ntfy, pushplus, send_email, tg_bot, xizhi
-from src.recording import state
+from src.recording import state as recording_state
 from src.recording.postprocess import get_startup_info
-from src.support import i18n, utils
+from src.support import console, i18n, utils
 
 
 def get_bark_level(live_url: str, default_level: str, overrides: dict[str, str]) -> str:
@@ -34,7 +35,7 @@ def get_bark_level(live_url: str, default_level: str, overrides: dict[str, str])
 
 def build_push_title(record_name: str, push_time: str) -> str:
     """解析通知标题：自定义标题优先，未配置时兜底到带主播名的开播文案。"""
-    configured = state.push_message_title.strip()
+    configured = settings.push_message_title.strip()
     if configured:
         return msg_push.render_push_template(configured, record_name, push_time)
     return msg_push.render_push_content("{ROOM_NAME} 正在直播中", record_name, push_time)
@@ -43,41 +44,43 @@ def build_push_title(record_name: str, push_time: str) -> str:
 def push_message(record_name: str, live_url: str, content: str) -> None:
     msg_title = build_push_title(record_name, time.strftime("%Y-%m-%d %H:%M:%S"))
     push_functions = {
-        "微信": lambda: xizhi(state.xizhi_api_url, msg_title, content),
-        "钉钉": lambda: dingtalk(state.dingtalk_api_url, content, state.dingtalk_phone_num, state.dingtalk_is_atall),
+        "微信": lambda: xizhi(settings.xizhi_api_url, msg_title, content),
+        "钉钉": lambda: dingtalk(
+            settings.dingtalk_api_url, content, settings.dingtalk_phone_num, settings.dingtalk_is_atall
+        ),
         "邮箱": lambda: send_email(
-            state.email_host,
-            state.login_email,
-            state.email_password,
-            state.sender_email,
-            state.sender_name,
-            state.to_email,
+            settings.email_host,
+            settings.login_email,
+            settings.email_password,
+            settings.sender_email,
+            settings.sender_name,
+            settings.to_email,
             msg_title,
             content,
-            state.smtp_port,
-            state.open_smtp_ssl,
+            settings.smtp_port,
+            settings.open_smtp_ssl,
         ),
-        "TG": lambda: tg_bot(state.tg_chat_id, state.tg_token, content),
+        "TG": lambda: tg_bot(settings.tg_chat_id, settings.tg_token, content),
         "BARK": lambda: bark(
-            state.bark_msg_api,
+            settings.bark_msg_api,
             title=msg_title,
             content=content,
-            level=get_bark_level(live_url, state.bark_msg_level, state.bark_level_overrides),
-            sound=state.bark_msg_ring,
+            level=get_bark_level(live_url, settings.bark_msg_level, settings.bark_level_overrides),
+            sound=settings.bark_msg_ring,
         ),
         "NTFY": lambda: ntfy(
-            state.ntfy_api,
+            settings.ntfy_api,
             title=msg_title,
             content=content,
-            tags=state.ntfy_tags,
+            tags=settings.ntfy_tags,
             action_url=live_url,
-            email=state.ntfy_email,
+            email=settings.ntfy_email,
         ),
-        "PUSHPLUS": lambda: pushplus(state.pushplus_token, msg_title, content),
+        "PUSHPLUS": lambda: pushplus(settings.pushplus_token, msg_title, content),
     }
 
     for platform, func in push_functions.items():
-        if platform in state.live_status_push.upper():
+        if platform in settings.live_status_push.upper():
             try:
                 result = func()  # type: ignore[no-untyped-call]
                 result_dict = cast(dict[str, list[str | int]], result)
@@ -91,9 +94,9 @@ def push_message(record_name: str, live_url: str, content: str) -> None:
                     )
                 )
             except Exception as e:
-                state.color_obj.print_colored(
+                console.color_obj.print_colored(
                     i18n.tr("直播消息推送到{platform}失败: {e}", platform=platform, e=utils.mask_credentials(str(e))),
-                    state.color_obj.RED,
+                    console.color_obj.RED,
                 )
 
 
@@ -150,14 +153,14 @@ def _spawn_script(args: list[str]) -> subprocess.Popen[bytes]:
     """把「已脱敏的命令原文」拆成 argv 并起脚本进程；返回 Popen[bytes]（管道按字节读，解码在调用侧。"""
     if _KILL_TREE_VIA_TASKKILL:
         return subprocess.Popen(
-            args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, startupinfo=get_startup_info(state.os_type)
+            args, stdout=subprocess.PIPE, stderr=subprocess.PIPE, startupinfo=get_startup_info(os.name)
         )
     return subprocess.Popen(
         args,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         start_new_session=True,
-        startupinfo=get_startup_info(state.os_type),
+        startupinfo=get_startup_info(os.name),
     )
 
 
@@ -229,40 +232,40 @@ def run_script(command: str) -> None:
 
 def record_error(key: str | None = None) -> None:
     """线程安全记录一次错误：累计计数 error_count 加一，并向错误率窗口追加样本 1。"""
-    with state.max_request_lock:
-        state.error_count += 1
-        state.error_window.append(1)
-    scheduler = state.scheduler
+    with recording_state.max_request_lock:
+        recording_state.error_count += 1
+        recording_state.error_window.append(1)
+    scheduler = recording_state.scheduler
     if scheduler is not None:
         scheduler.record_failure(key)
 
 
 def record_success(key: str | None = None) -> None:
     """线程安全记录一次成功的检测周期：向错误率窗口追加样本 0。"""
-    with state.max_request_lock:
-        state.error_window.append(0)
-    scheduler = state.scheduler
+    with recording_state.max_request_lock:
+        recording_state.error_window.append(0)
+    scheduler = recording_state.scheduler
     if scheduler is not None:
         scheduler.record_success(key)
 
 
 def adjust_max_request() -> None:
     """守护线程主体：委托给并发调度器的自适应调速循环（自适应全局容量 + per-key 熔断）；死循环不返回。"""
-    while state.scheduler is None:
+    while recording_state.scheduler is None:
         time.sleep(1)
-    state.scheduler.adjust_loop()
+    recording_state.scheduler.adjust_loop()
 
 
 def clear_record_info(record_name: str, record_url: str) -> None:
     """清理 record_name 的录制状态；若 record_url 已被注释则从运行列表移除并把监控计数减一。"""
-    with state.record_state_lock:
-        state.recording.discard(record_name)
-        state.recording_time_list.pop(record_name, None)
-        if record_url in state.url_comments and record_url in state.running_list:
-            state.running_list.remove(record_url)
-            state.monitoring -= 1
-            state.color_obj.print_colored(
-                i18n.tr("[{record_name}]已经从录制列表中移除\n", record_name=record_name), state.color_obj.YELLOW
+    with recording_state.record_state_lock:
+        recording_state.recording.discard(record_name)
+        recording_state.recording_time_list.pop(record_name, None)
+        if record_url in recording_state.url_comments and record_url in recording_state.running_list:
+            recording_state.running_list.remove(record_url)
+            recording_state.monitoring -= 1
+            console.color_obj.print_colored(
+                i18n.tr("[{record_name}]已经从录制列表中移除\n", record_name=record_name), console.color_obj.YELLOW
             )
 
 
@@ -270,7 +273,7 @@ def remove_room_from_running(record_url: str) -> None:
     """房间线程退出时从运行列表移除 record_url 并把监控计数减一（幂等：已被 clear_record_info 移除。"""
     if not record_url:
         return
-    with state.record_state_lock:
-        if record_url in state.running_list:
-            state.running_list.remove(record_url)
-            state.monitoring -= 1
+    with recording_state.record_state_lock:
+        if record_url in recording_state.running_list:
+            recording_state.running_list.remove(record_url)
+            recording_state.monitoring -= 1

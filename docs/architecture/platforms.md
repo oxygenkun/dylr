@@ -2,7 +2,7 @@
 
 [架构导航](README.md) · [文档导航](../README.md)
 
-## 爬虫模块 (`src/streams/spider.py`)
+## 爬虫模块 (`src/platforms/live/spider.py`)
 
 **职责**: 负责从各大直播平台获取直播间数据
 
@@ -38,11 +38,11 @@
 - 错误重试机制
 - B站 spider 返回 dict 结构（含 `current_qn`/`accept_qn` 元信息），供 stream 模块回采实际画质
 
-## 直播流解析模块 (`src/streams/stream.py`)
+## 直播流解析模块 (`src/recording/pipeline/stream.py`)
 
 **职责**: 解析直播流地址，支持多种画质选择，回采平台实际下发的画质
 
-**画质代码**：映射常量只在 `src/streams/stream.py` 维护，不复制另一套字典。
+**画质代码**：映射常量只在 `src/recording/pipeline/stream.py` 维护，不复制另一套字典。
 
 基础代码与名称见 [使用说明](../usage.md#画质说明)。细分蓝光档为 `BD30/BD20/BD8/BD4`（蓝光30M/20M/8M/4M）。
 
@@ -94,7 +94,7 @@
 - 画质降级检测（`is_downgrade`），供 `src/recording/session.py` 告警使用
 - 斗鱼 FLV→m3u8 同 token HLS 候选：`get_douyu_stream_url` 在 `rtmp_live` 以 `.flv` 结尾时，将路径 `.flv` 改 `.m3u8`（查询串原样保留）附为 `m3u8_url`——斗鱼 wsAuth token 对 FLV/HLS 通用（实测 hw CDN 200 + `application/vnd.apple.mpegurl`，两级 m3u8），HLS 采集开启时经 `select_source_url` 优先校验选用、不可达自动回退 FLV；HLS 逐段拉取不维持长连接，缓解游客态 FLV 长连接约 70 秒被 CDN 掐断导致的反复分段
 
-## 直播间信息模块 (`src/streams/room.py`)
+## 直播间信息模块 (`src/platforms/live/room.py`)
 
 **职责**: 解析直播间 URL，提取房间 ID、主播信息、抖音号等
 
@@ -117,7 +117,7 @@
 
 ## 解析异常兜底
 
-`src/streams/errors.py` 同时支持同步与异步解析函数。`trace_error_decorator` 记录异常并返回 `{"is_live": False}`，`trace_error_decorator_or_none` 返回 `None`；JS 运行时异常有单独诊断，异常文本先脱敏再写日志。
+`src/platforms/live/errors.py` 同时支持同步与异步解析函数。`trace_error_decorator` 记录异常并返回 `{"is_live": False}`，`trace_error_decorator_or_none` 返回 `None`；JS 运行时异常有单独诊断，异常文本先脱敏再写日志。
 
 新增平台的操作步骤只在 [开发指南](../development.md#添加新平台支持) 维护；平台分派先归一化短链，再调用解析函数。
 

@@ -57,7 +57,7 @@ class TestTranslatedPrint:
         sibling = f"{i18n._project_root}-evil{os.sep}evil.py"
         assert i18n._should_translate(sibling) is False
         # 反向护栏：真实子路径仍必须判 True（不得把边界补成「只认相等」而整体失明）
-        child = os.path.join(i18n._project_root, "src", "streams/spider.py")
+        child = os.path.join(i18n._project_root, "src", "platforms/live/spider.py")
         assert i18n._should_translate(child) is True
 
 

@@ -146,7 +146,7 @@
 # 录制抖音必填：请填入从浏览器 live.douyin.com 复制的有效 cookie（至少包含 ttwid）
 # 留空将自动尝试获取访客 ttwid（可能触发风控，建议填写）
 "抖音cookie" = ""
-# 单独指定抖音 ttwid（留空则由 src/streams/ttwid.py 自动获取并进程级缓存）
+# 单独指定抖音 ttwid（留空则由 src/platforms/live/ttwid.py 自动获取并进程级缓存）
 "ttwid" = ""
 "快手cookie" = ""
 "tiktok_cookie" = ""

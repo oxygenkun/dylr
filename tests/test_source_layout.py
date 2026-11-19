@@ -63,10 +63,16 @@ def test_runtime_initialization_respects_skip_and_bundled_node(
     [
         "main",
         "config.io",
+        "config.files",
+        "config.paths",
+        "config.lock",
+        "config.settings",
+        "app.version",
+        "recording.state",
         "support.utils",
         "notifications.notify",
         "recording.status",
-        "streams.dispatch",
+        "recording.pipeline.dispatch",
         "recording.session",
         "recording.engine",
     ],
@@ -103,6 +109,8 @@ if module == 'main':
     assert 'src.recording.engine' not in sys.modules
 else:
     assert 'src.main' not in sys.modules
+if module.startswith('config.') or module == 'app.version':
+    assert not any(name == 'src.recording' or name.startswith('src.recording.') for name in sys.modules)
 """
     result = subprocess.run(
         [sys.executable, "-I", "-c", code, str(ROOT), module],

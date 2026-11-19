@@ -12,7 +12,7 @@
 | `src/support/console.py` | `configure_encoding()` 与 `Color` |
 | [配置存储](configuration.md) | TOML 读写、默认值、房间列表编辑与备份 |
 | `src/network/urls.py` | `format_cookies()`、`normalize_proxy_url()`、`parse_jsonp()`、`query_values()` |
-| `src/streams/errors.py` | `trace_error_decorator()`、`trace_error_decorator_or_none()` |
+| `src/platforms/live/errors.py` | `trace_error_decorator()`、`trace_error_decorator_or_none()` |
 | `src/runtime/javascript.py` | `get_compiled_js()`、`run_js_async()`、`run_node_script_async()` |
 
 ## 日志模块 (`src/support/logger.py`)
@@ -65,7 +65,7 @@
 - `set_language()` 热切换进程内译文，Web 的 `GET/PUT /api/language` 和引擎配置热加载共用该能力。
 - 源码与冻结资源路径分别支持项目根目录和 `_internal/`；翻译资源随入口打包。
 
-翻译文案分布在 `recording/`、`streams/`、`danmaku/`、`network/`、`notifications/`、`runtime/`、`config/` 和 Web 入口。直接编辑英文 JSON 目录，无需 gettext 编译；`tool/extract_i18n_strings.py` 提取并比对缺失文案，相关回归用例在 `tests/test_i18n*.py`。
+翻译文案分布在 `recording/`、`platforms/`、`danmaku/`、`network/`、`notifications/`、`runtime/`、`config/` 和 Web 入口。直接编辑英文 JSON 目录，无需 gettext 编译；`tool/extract_i18n_strings.py` 提取并比对缺失文案，相关回归用例在 `tests/test_i18n*.py`。
 
 ## 外部运行时与签名资源
 

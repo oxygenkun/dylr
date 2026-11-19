@@ -1,4 +1,4 @@
-# 本文件锁住 src/streams/selection.py 选源层的探针与选序行为，按主题分块；全程 mock httpx.Client，不触网。
+# 本文件锁住 src/recording/pipeline/selection.py 选源层的探针与选序行为，按主题分块；全程 mock httpx.Client，不触网。
 # ① 流地址校验的末位候选（last_resort）放行语义：
 # - 斗鱼 hw CDN 对探针 HEAD 回 405+text/html（禁用 HEAD 方法），ffmpeg 实际 GET 拉流正常；
 # - 末位候选（无备选可回退）稳定拒绝也仅告警放行，交由 ffmpeg 定夺；
@@ -43,11 +43,11 @@ import pytest
 from loguru import logger
 
 import src.network.http as async_http
-import src.streams.selection as ss
+import src.recording.pipeline.selection as ss
+from src.config import settings
 from src.network import targets
 from src.network.http import is_reachable
-from src.recording import state
-from src.streams.selection import (
+from src.recording.pipeline.selection import (
     _hls_selection_config,
     _is_recordable_url,
     _mark_probe_reject,
@@ -124,7 +124,7 @@ class _FakeResponse:
 
 
 class _StreamAsGet:
-    # L-11：生产侧四处探针读取统一走 client.stream(...)（见 src/streams/selection.py 的
+    # L-11：生产侧四处探针读取统一走 client.stream(...)（见 src/recording/pipeline/selection.py 的
     # _bounded_probe_get）。假客户端用本 mixin 把**既有 get 的语义**原样暴露成流式形态——
     # 同一份状态码/头/正文、同一个调用计数器与同一份请求头记录，因此旧用例里
     # 「GET 调了几次 / 带了什么头」的断言逐字不变（改的只是调用入口的形态，不是判定）。
@@ -188,24 +188,24 @@ def test_huya_record_headers_has_no_referer() -> None:
 
 def test_last_resort_text_html_released() -> None:
     # 末位候选：405+text/html 稳定拒绝也放行给 ffmpeg（探针与 ffmpeg 客户端指纹不同）
-    with patch("src.streams.selection.httpx.Client", _FakeHead405HtmlClient):
+    with patch("src.recording.pipeline.selection.httpx.Client", _FakeHead405HtmlClient):
         assert _validate_stream_url(_FLV_URL, last_resort=True) is True
 
 
 def test_non_last_resort_text_html_rejected() -> None:
     # 非末位候选：判不可达，交由上层回退下一候选（FLV→record_url）
-    with patch("src.streams.selection.httpx.Client", _FakeHead405HtmlClient):
+    with patch("src.recording.pipeline.selection.httpx.Client", _FakeHead405HtmlClient):
         assert _validate_stream_url(_FLV_URL, last_resort=False) is False
 
 
 def test_last_resort_odd_status_released() -> None:
     # 末位候选：非 200 且无法识别 content-type（空）同样仅告警放行
-    with patch("src.streams.selection.httpx.Client", _FakeHead405NoTypeClient):
+    with patch("src.recording.pipeline.selection.httpx.Client", _FakeHead405NoTypeClient):
         assert _validate_stream_url(_FLV_URL, last_resort=True) is True
 
 
 def test_non_last_resort_odd_status_rejected() -> None:
-    with patch("src.streams.selection.httpx.Client", _FakeHead405NoTypeClient):
+    with patch("src.recording.pipeline.selection.httpx.Client", _FakeHead405NoTypeClient):
         assert _validate_stream_url(_FLV_URL, last_resort=False) is False
 
 
@@ -249,7 +249,7 @@ _M3U8_URL = "https://hw3.douyucdn2.cn/live/12828016rSWtjVdN.m3u8?wsAuth=abc&toke
 def test_m3u8_range_get_retry_passes() -> None:
     # 首次 Range-GET 403（连击探针被 CDN 防护偶发拒绝），隔 0.8s 重试即 206：判可用
     cls = _m3u8_client_cls([403, 206], ["text/html", "application/vnd.apple.mpegurl"])
-    with patch("src.streams.selection.httpx.Client", cls), patch("src.streams.selection.time"):
+    with patch("src.recording.pipeline.selection.httpx.Client", cls), patch("src.recording.pipeline.selection.time"):
         assert _validate_stream_url(_M3U8_URL) is True
     # 3 次 GET = 2 次 Range-GET（403→206 重试）+ 1 次 HLS 分片层探测的播放列表 GET
     # （2026-09-13 斗鱼 hw 事故修复：列表 200/206 后必须再探分片，见 _probe_hls_segment）。
@@ -260,7 +260,7 @@ def test_m3u8_range_get_retry_passes() -> None:
 def test_m3u8_range_get_still_403_rejected() -> None:
     # 两次 Range-GET 均 403（稳定拒绝）且非末位：判不可达，回退 FLV
     cls = _m3u8_client_cls([403, 403], ["text/html", "text/html"])
-    with patch("src.streams.selection.httpx.Client", cls), patch("src.streams.selection.time"):
+    with patch("src.recording.pipeline.selection.httpx.Client", cls), patch("src.recording.pipeline.selection.time"):
         assert _validate_stream_url(_M3U8_URL, last_resort=False) is False
     assert cls.get_calls == 2
 
@@ -268,7 +268,7 @@ def test_m3u8_range_get_still_403_rejected() -> None:
 def test_m3u8_range_get_404_no_retry() -> None:
     # 404 非探针误杀类拒绝：不重试，单次探测即定罪
     cls = _m3u8_client_cls([404, 200], ["text/html", "text/html"])
-    with patch("src.streams.selection.httpx.Client", cls), patch("src.streams.selection.time"):
+    with patch("src.recording.pipeline.selection.httpx.Client", cls), patch("src.recording.pipeline.selection.time"):
         assert _validate_stream_url(_M3U8_URL) is False
     assert cls.get_calls == 1
 
@@ -276,7 +276,7 @@ def test_m3u8_range_get_404_no_retry() -> None:
 def test_m3u8_last_resort_released() -> None:
     # 两次 Range-GET 均 403 且为末位候选：仅告警放行给 ffmpeg
     cls = _m3u8_client_cls([403, 403], ["text/html", "text/html"])
-    with patch("src.streams.selection.httpx.Client", cls), patch("src.streams.selection.time"):
+    with patch("src.recording.pipeline.selection.httpx.Client", cls), patch("src.recording.pipeline.selection.time"):
         assert _validate_stream_url(_M3U8_URL, last_resort=True) is True
 
 
@@ -345,28 +345,28 @@ def _hls_segment_client_cls(segment_status: int, media_body: str = _HLS_MEDIA_BO
 def test_hls_segment_404_rejects_playlist() -> None:
     # 事故形态：列表 200 + 分片 404 → 判列表假绿不可达（非末位候选交由上层回退 FLV）
     cls = _hls_segment_client_cls(404)
-    with patch("src.streams.selection.httpx.Client", cls):
+    with patch("src.recording.pipeline.selection.httpx.Client", cls):
         assert _validate_stream_url(_M3U8_URL, last_resort=False) is False
 
 
 def test_hls_segment_200_stays_reachable() -> None:
     # 对照：分片真可达（200）→ 维持列表可达结论
     cls = _hls_segment_client_cls(200)
-    with patch("src.streams.selection.httpx.Client", cls):
+    with patch("src.recording.pipeline.selection.httpx.Client", cls):
         assert _validate_stream_url(_M3U8_URL, last_resort=False) is True
 
 
 def test_hls_segment_404_last_resort_released() -> None:
     # 末位候选（无备选可回退）：分片 404 也仅告警放行给 ffmpeg（探针≠ffmpeg 客户端指纹）
     cls = _hls_segment_client_cls(404)
-    with patch("src.streams.selection.httpx.Client", cls):
+    with patch("src.recording.pipeline.selection.httpx.Client", cls):
         assert _validate_stream_url(_M3U8_URL, last_resort=True) is True
 
 
 def test_hls_empty_media_playlist_conservative_pass() -> None:
     # 保守原则：媒体列表为空（未推流/直播刚结束）解析不出分片 → 维持列表可达，不误杀可用源
     cls = _hls_segment_client_cls(404, media_body="#EXTM3U\n#EXT-X-VERSION:3\n")
-    with patch("src.streams.selection.httpx.Client", cls):
+    with patch("src.recording.pipeline.selection.httpx.Client", cls):
         assert _validate_stream_url(_M3U8_URL, last_resort=False) is True
 
 
@@ -382,7 +382,7 @@ _INTERNAL_SEGMENT_BODY = "#EXTM3U\n#EXT-X-VERSION:3\n#EXTINF:4.000,\nhttp://127.
 def test_internal_segment_rejects_even_at_last_resort() -> None:
     # ① 末位候选（last_resort=True）不得把「正文分片指向内网」翻回可达
     cls = _hls_segment_client_cls(200, media_body=_INTERNAL_SEGMENT_BODY)
-    with patch("src.streams.selection.httpx.Client", cls):
+    with patch("src.recording.pipeline.selection.httpx.Client", cls):
         assert _validate_stream_url(_M3U8_URL, last_resort=True) is False
 
 
@@ -392,8 +392,8 @@ def test_select_source_url_rejects_record_url_same_as_internal_m3u8() -> None:
     cls = _hls_segment_client_cls(200, media_body=_INTERNAL_SEGMENT_BODY)
     stream_info = {"m3u8_url": _M3U8_URL, "flv_url": "", "record_url": _M3U8_URL}
     with (
-        patch.object(state, "hls_collection_enabled", True),
-        patch("src.streams.selection.httpx.Client", cls),
+        patch.object(settings, "hls_collection_enabled", True),
+        patch("src.recording.pipeline.selection.httpx.Client", cls),
     ):
         assert select_source_url(stream_info, platform="斗鱼直播") is None
 
@@ -434,8 +434,8 @@ def test_select_source_url_falls_back_to_flv_when_hls_segments_dead() -> None:
     # 端到端：斗鱼 m3u8 分片全 404 → select_source_url 否掉 m3u8、回退同 token 的可用 FLV。
     # 这正是「只出弹幕 SRT、无视频」的修复目标：最终拿到能真正拉流的地址。
     with (
-        patch.object(state, "hls_collection_enabled", True),
-        patch("src.streams.selection.httpx.Client", _HlsDeadFlvLiveClient),
+        patch.object(settings, "hls_collection_enabled", True),
+        patch("src.recording.pipeline.selection.httpx.Client", _HlsDeadFlvLiveClient),
     ):
         result = select_source_url({"m3u8_url": _M3U8_URL, "flv_url": _FLV_URL, "record_url": _FLV_URL}, platform=None)
     assert result == _FLV_URL
@@ -465,9 +465,9 @@ def test_same_origin_flv_ignores_query_difference() -> None:
 def test_select_source_url_logs_same_origin_flv_fallback() -> None:
     # 端到端观测：HLS 分片假绿 → 记一条「回退同 token 的 FLV 源」，便于巡检确认已按预期回退
     with (
-        patch.object(state, "hls_collection_enabled", True),
-        patch("src.streams.selection.httpx.Client", _HlsDeadFlvLiveClient),
-        patch("src.streams.selection.logger.warning") as warn,
+        patch.object(settings, "hls_collection_enabled", True),
+        patch("src.recording.pipeline.selection.httpx.Client", _HlsDeadFlvLiveClient),
+        patch("src.recording.pipeline.selection.logger.warning") as warn,
     ):
         result = select_source_url({"m3u8_url": _M3U8_URL, "flv_url": _FLV_URL, "record_url": _FLV_URL}, platform=None)
     assert result == _FLV_URL
@@ -480,9 +480,9 @@ def test_select_source_url_logs_same_origin_flv_fallback() -> None:
 def test_select_source_url_logs_choice_on_pick() -> None:
     # 选定源时记「选源结论」单行日志（platform/kind/url），一眼确认 ffmpeg 拉的是 HLS 还是 FLV
     with (
-        patch.object(state, "hls_collection_enabled", True),
-        patch("src.streams.selection.httpx.Client", _HlsDeadFlvLiveClient),
-        patch("src.streams.selection.logger.debug") as dbg,
+        patch.object(settings, "hls_collection_enabled", True),
+        patch("src.recording.pipeline.selection.httpx.Client", _HlsDeadFlvLiveClient),
+        patch("src.recording.pipeline.selection.logger.debug") as dbg,
     ):
         result = select_source_url({"m3u8_url": _M3U8_URL, "flv_url": _FLV_URL, "record_url": _FLV_URL}, platform=None)
     assert result == _FLV_URL
@@ -492,9 +492,9 @@ def test_select_source_url_logs_choice_on_pick() -> None:
 def test_select_source_url_logs_no_usable_source() -> None:
     # 全部候选不可达且无 record_url 兜底 → 补一条可检索的收束结论
     with (
-        patch.object(state, "hls_collection_enabled", True),
-        patch("src.streams.selection._validate_stream_url", return_value=False),
-        patch("src.streams.selection.logger.warning") as warn,
+        patch.object(settings, "hls_collection_enabled", True),
+        patch("src.recording.pipeline.selection._validate_stream_url", return_value=False),
+        patch("src.recording.pipeline.selection.logger.warning") as warn,
     ):
         result = select_source_url({"m3u8_url": "https://x/a.m3u8", "flv_url": "", "record_url": ""})
     assert result is None
@@ -505,29 +505,29 @@ def test_select_source_url_logs_no_usable_source() -> None:
 
 
 def test_hls_selection_config_defaults_on_missing_globals(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delattr(state, "hls_collection_enabled", raising=False)
-    monkeypatch.delattr(state, "hls_collection_exclude_platforms", raising=False)
+    monkeypatch.delattr(settings, "hls_collection_enabled", raising=False)
+    monkeypatch.delattr(settings, "hls_collection_exclude_platforms", raising=False)
     assert _hls_selection_config() == (True, ())
 
 
 def test_hls_selection_config_normalizes_comma_string(monkeypatch: pytest.MonkeyPatch) -> None:
     # 兼容「逗号分隔字符串」形态（中英文逗号 + 空白），与 main() 的解析同语义
-    monkeypatch.setattr(state, "hls_collection_enabled", False)
-    monkeypatch.setattr(state, "hls_collection_exclude_platforms", "虎牙直播， 斗鱼 ,")
+    monkeypatch.setattr(settings, "hls_collection_enabled", False)
+    monkeypatch.setattr(settings, "hls_collection_exclude_platforms", "虎牙直播， 斗鱼 ,")
     assert _hls_selection_config() == (False, ("虎牙直播", "斗鱼"))
 
 
 def test_hls_selection_config_ignores_invalid_type(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(state, "hls_collection_enabled", True)
-    monkeypatch.setattr(state, "hls_collection_exclude_platforms", 12345)
+    monkeypatch.setattr(settings, "hls_collection_enabled", True)
+    monkeypatch.setattr(settings, "hls_collection_exclude_platforms", 12345)
     assert _hls_selection_config() == (True, ())
 
 
 def test_select_source_url_survives_missing_hls_config(monkeypatch: pytest.MonkeyPatch) -> None:
     # 配置全局缺失时不再抛 AttributeError 中断选源，按安全默认（启用 HLS）正常完成选源
-    monkeypatch.delattr(state, "hls_collection_enabled", raising=False)
-    monkeypatch.delattr(state, "hls_collection_exclude_platforms", raising=False)
-    with patch("src.streams.selection.httpx.Client", _HlsDeadFlvLiveClient):
+    monkeypatch.delattr(settings, "hls_collection_enabled", raising=False)
+    monkeypatch.delattr(settings, "hls_collection_exclude_platforms", raising=False)
+    with patch("src.recording.pipeline.selection.httpx.Client", _HlsDeadFlvLiveClient):
         result = select_source_url({"m3u8_url": _M3U8_URL, "flv_url": _FLV_URL, "record_url": _FLV_URL}, platform=None)
     assert result == _FLV_URL
 
@@ -540,8 +540,8 @@ def test_select_source_url_hls_only_is_last_resort() -> None:
     # （稳定拒绝时由真实校验器内部告警放行，见 test_m3u8_last_resort_released；
     # 此处 mock 恒 False 仅验证末位传参，故 select_source_url 走回退链后返回 None）
     with (
-        patch.object(state, "hls_collection_enabled", True),
-        patch("src.streams.selection._validate_stream_url", return_value=False) as mock_v,
+        patch.object(settings, "hls_collection_enabled", True),
+        patch("src.recording.pipeline.selection._validate_stream_url", return_value=False) as mock_v,
     ):
         result = select_source_url({"m3u8_url": "https://x/a.m3u8", "flv_url": "", "record_url": ""})
     assert result is None
@@ -551,8 +551,8 @@ def test_select_source_url_hls_only_is_last_resort() -> None:
 def test_select_source_url_hls_with_fallback_not_last_resort() -> None:
     # 存在 FLV 备选：HLS 非末位，校验失败正常回退 FLV
     with (
-        patch.object(state, "hls_collection_enabled", True),
-        patch("src.streams.selection._validate_stream_url", return_value=True) as mock_v,
+        patch.object(settings, "hls_collection_enabled", True),
+        patch("src.recording.pipeline.selection._validate_stream_url", return_value=True) as mock_v,
     ):
         result = select_source_url({"m3u8_url": "https://x/a.m3u8", "flv_url": "https://x/a.flv"})
     assert result == "https://x/a.m3u8"
@@ -564,9 +564,9 @@ def test_select_source_url_h265_flv_hls_is_last_resort() -> None:
     # 保存格式钉为 FLV（不支持 HEVC 直拷）——TS/MKV/MP4 下 h265 已按 2026-10-01 放宽进常规
     # 序列（见下方放宽矩阵），本用例锁的是「不支持格式下 h265 仍被剔除」的语义
     with (
-        patch.object(state, "hls_collection_enabled", True),
-        patch.object(state, "video_save_type", "FLV"),
-        patch("src.streams.selection._validate_stream_url", return_value=False) as mock_v,
+        patch.object(settings, "hls_collection_enabled", True),
+        patch.object(settings, "video_save_type", "FLV"),
+        patch("src.recording.pipeline.selection._validate_stream_url", return_value=False) as mock_v,
     ):
         result = select_source_url(
             {"m3u8_url": "https://x/a.m3u8", "flv_url": "https://x/a.flv?codec=h265", "record_url": ""}
@@ -582,9 +582,9 @@ def test_select_source_url_h265_flv_falls_back_to_h264_from_list() -> None:
     # h264 备选，而不是「本轮无可用源」。
     h264 = "https://flv.example.com/a.flv"
     with (
-        patch.object(state, "hls_collection_enabled", False),
-        patch.object(state, "video_save_type", "FLV"),
-        patch("src.streams.selection._validate_stream_url", return_value=True) as mock_v,
+        patch.object(settings, "hls_collection_enabled", False),
+        patch.object(settings, "video_save_type", "FLV"),
+        patch("src.recording.pipeline.selection._validate_stream_url", return_value=True) as mock_v,
     ):
         result = select_source_url(
             {
@@ -605,10 +605,10 @@ def test_select_source_url_h265_only_without_fallback_yields_none() -> None:
     # HEVC 直拷（钉 FLV）时，过滤后零可用候选且 record_url（m3u8）被连带禁用 → 本轮无可用源。
     # 锁住「不支持格式 + 无备选时不得凭空放行 h265」的语义（TS/MKV/MP4 放行见下方放宽矩阵）。
     with (
-        patch.object(state, "hls_collection_enabled", False),
-        patch.object(state, "video_save_type", "FLV"),
-        patch("src.streams.selection._validate_stream_url", return_value=True) as mock_v,
-        patch("src.streams.selection.logger.warning") as warn,
+        patch.object(settings, "hls_collection_enabled", False),
+        patch.object(settings, "video_save_type", "FLV"),
+        patch("src.recording.pipeline.selection._validate_stream_url", return_value=True) as mock_v,
+        patch("src.recording.pipeline.selection.logger.warning") as warn,
     ):
         result = select_source_url(
             {
@@ -633,9 +633,9 @@ def test_select_source_url_h265_usable_when_copy_supported(fmt: str) -> None:
     # 大小写混合入参覆盖 main() 配置归一化前后两种形态（归一后大写、模块默认值小写）
     h265 = "https://flv.example.com/a.flv?codec=h265"
     with (
-        patch.object(state, "hls_collection_enabled", False),
-        patch.object(state, "video_save_type", fmt),
-        patch("src.streams.selection._validate_stream_url", return_value=True) as mock_v,
+        patch.object(settings, "hls_collection_enabled", False),
+        patch.object(settings, "video_save_type", fmt),
+        patch("src.recording.pipeline.selection._validate_stream_url", return_value=True) as mock_v,
     ):
         result = select_source_url(
             {
@@ -657,9 +657,9 @@ def test_select_source_url_h265_still_dropped_when_copy_unsupported(fmt: str) ->
     # 落到 stream.py 保留的 h264 原画备选——与上方支持格式的矩阵互为对照
     h264 = "https://flv.example.com/a.flv"
     with (
-        patch.object(state, "hls_collection_enabled", False),
-        patch.object(state, "video_save_type", fmt),
-        patch("src.streams.selection._validate_stream_url", return_value=True) as mock_v,
+        patch.object(settings, "hls_collection_enabled", False),
+        patch.object(settings, "video_save_type", fmt),
+        patch("src.recording.pipeline.selection._validate_stream_url", return_value=True) as mock_v,
     ):
         result = select_source_url(
             {
@@ -694,13 +694,13 @@ def test_select_source_url_h265_still_dropped_when_copy_unsupported(fmt: str) ->
 def test_h265_copy_format_supported_matrix(monkeypatch: pytest.MonkeyPatch, raw: object, expected: bool) -> None:
     # 容器可行性判定矩阵：大小写/空白鲁棒（覆盖 main() 归一化前后形态），
     # 域外取值与类型异常一律按「不支持」的保守语义
-    monkeypatch.setattr(state, "video_save_type", raw)
+    monkeypatch.setattr(settings, "video_save_type", raw)
     assert ss._h265_copy_format_supported() is expected
 
 
 def test_h265_copy_format_supported_missing_global(monkeypatch: pytest.MonkeyPatch) -> None:
     # main 全局缺失（启动早期/测试替身）：按「不支持」保守回退，与 _hls_selection_config 同型
-    monkeypatch.delattr(state, "video_save_type", raising=False)
+    monkeypatch.delattr(settings, "video_save_type", raising=False)
     assert ss._h265_copy_format_supported() is False
 
 
@@ -711,9 +711,9 @@ def test_select_source_url_warns_dropped_hls_when_no_source() -> None:
     # HLS 组被配置静默剔除 + 其余候选全灭 → 无源结论前必须点名「m3u8 被配置丢弃」并给
     # 恢复开关指引——这是此前唯一零日志的选源成因（2026-10-01 死锁房的排查盲区）
     with (
-        patch.object(state, "hls_collection_enabled", False),
-        patch("src.streams.selection._validate_stream_url", return_value=False),
-        patch("src.streams.selection.logger.warning") as warn,
+        patch.object(settings, "hls_collection_enabled", False),
+        patch("src.recording.pipeline.selection._validate_stream_url", return_value=False),
+        patch("src.recording.pipeline.selection.logger.warning") as warn,
     ):
         result = select_source_url(
             {
@@ -732,9 +732,9 @@ def test_select_source_url_warns_dropped_hls_when_no_source() -> None:
 def test_no_dropped_hls_warning_when_source_found() -> None:
     # HLS 被配置丢弃但 FLV 可用（健康轮）：不得打「静默丢弃」告警——观测只跟随失败轮
     with (
-        patch.object(state, "hls_collection_enabled", False),
-        patch("src.streams.selection._validate_stream_url", return_value=True),
-        patch("src.streams.selection.logger.warning") as warn,
+        patch.object(settings, "hls_collection_enabled", False),
+        patch("src.recording.pipeline.selection._validate_stream_url", return_value=True),
+        patch("src.recording.pipeline.selection.logger.warning") as warn,
     ):
         result = select_source_url(
             {
@@ -758,8 +758,8 @@ def test_select_source_url_m3u8_list_picks_first_reachable() -> None:
         return url == hs
 
     with (
-        patch.object(state, "hls_collection_enabled", True),
-        patch("src.streams.selection._validate_stream_url", side_effect=_validate) as mock_v,
+        patch.object(settings, "hls_collection_enabled", True),
+        patch("src.recording.pipeline.selection._validate_stream_url", side_effect=_validate) as mock_v,
     ):
         result = select_source_url({"m3u8_url": dead, "m3u8_url_list": [dead, hs], "flv_url": "", "record_url": ""})
     assert result == hs
@@ -776,8 +776,8 @@ def test_select_source_url_m3u8_list_all_dead_falls_back_to_flv() -> None:
         return url == flv
 
     with (
-        patch.object(state, "hls_collection_enabled", True),
-        patch("src.streams.selection._validate_stream_url", side_effect=_validate) as mock_v,
+        patch.object(settings, "hls_collection_enabled", True),
+        patch("src.recording.pipeline.selection._validate_stream_url", side_effect=_validate) as mock_v,
     ):
         result = select_source_url(
             {"m3u8_url": dead_hls[0], "m3u8_url_list": dead_hls, "flv_url": flv, "record_url": ""}
@@ -818,8 +818,8 @@ def test_select_source_url_shares_one_client_and_sends_headers_per_request() -> 
     hls_b = "https://a.cdn/live/2.m3u8"
     flv = "https://a.cdn/live/1.flv"
     with (
-        patch.object(state, "hls_collection_enabled", True),
-        patch("src.streams.selection.httpx.Client", _CountingClient),
+        patch.object(settings, "hls_collection_enabled", True),
+        patch("src.recording.pipeline.selection.httpx.Client", _CountingClient),
     ):
         result = select_source_url(
             {"m3u8_url": hls_a, "m3u8_url_list": [hls_a, hls_b], "flv_url": flv, "record_url": ""},
@@ -868,7 +868,10 @@ def clear_probe_backoff() -> Iterator[None]:
 def test_huya_stable_403_marks_backoff_then_skips_probe(clear_probe_backoff: None) -> None:
     # 第 1 轮：HLS 探针全 403（稳定拒绝）→ 判不可达并记入退避
     cls = _m3u8_client_cls([403, 403], ["text/html", "text/html"])
-    with patch("src.streams.selection.httpx.Client", cls), patch("src.streams.selection.time.sleep"):
+    with (
+        patch("src.recording.pipeline.selection.httpx.Client", cls),
+        patch("src.recording.pipeline.selection.time.sleep"),
+    ):
         assert _validate_stream_url(_HUYA_M3U8_URL, platform="虎牙直播", last_resort=False) is False
     assert _probe_in_backoff(_HUYA_M3U8_URL, "虎牙直播") is True
 
@@ -879,7 +882,7 @@ def test_huya_stable_403_marks_backoff_then_skips_probe(clear_probe_backoff: Non
         def __init__(self, *args: object, **kwargs: object) -> None:
             _NoProbeClient.instantiated += 1
 
-    with patch("src.streams.selection.httpx.Client", _NoProbeClient):
+    with patch("src.recording.pipeline.selection.httpx.Client", _NoProbeClient):
         assert _validate_stream_url(_HUYA_M3U8_URL, platform="虎牙直播", last_resort=False) is False
     assert _NoProbeClient.instantiated == 0
 
@@ -894,7 +897,7 @@ def test_huya_backoff_last_resort_released_without_probe(clear_probe_backoff: No
         def __init__(self, *args: object, **kwargs: object) -> None:
             _NoProbeClient.instantiated += 1
 
-    with patch("src.streams.selection.httpx.Client", _NoProbeClient):
+    with patch("src.recording.pipeline.selection.httpx.Client", _NoProbeClient):
         assert _validate_stream_url(_HUYA_FLV_URL, platform="虎牙直播", last_resort=True) is True
     assert _NoProbeClient.instantiated == 0
 
@@ -934,7 +937,10 @@ def test_huya_transient_flv_403_marks_backoff(clear_probe_backoff: None) -> None
         def __exit__(self, *_args: object) -> Literal[False]:
             return False
 
-    with patch("src.streams.selection.httpx.Client", _FlvTransient403Client), patch("src.streams.selection.time.sleep"):
+    with (
+        patch("src.recording.pipeline.selection.httpx.Client", _FlvTransient403Client),
+        patch("src.recording.pipeline.selection.time.sleep"),
+    ):
         assert _validate_stream_url(_HUYA_FLV_URL, platform="虎牙直播", last_resort=True) is True
     assert _probe_in_backoff(_HUYA_FLV_URL, "虎牙直播") is True
 
@@ -977,7 +983,7 @@ def test_backoff_window_covers_main_loop_interval(monkeypatch: pytest.MonkeyPatc
     # 的闭环恒不成立。原实现固定 60s，而 main.delay_default 默认 120s —— ffmpeg 1~2s 内
     # 403 被记入退避后，下一轮 T+124s 才到，早已超出窗口，于是又去撞同一条死线路
     # （实测虎牙 880214：两轮日志中「CDN 探针退避中」告警从未出现，房间假绿死循环）。
-    monkeypatch.setattr(state, "delay_default", 120)
+    monkeypatch.setattr(settings, "delay_default", 120)
     window = ss._probe_backoff_window()
     assert window > 120.0 + 5.0  # 覆盖默认间隔 + 抖动
     # 模拟实测节奏：T 记入退避 → T+124s（间隔 120s + 抖动 4s）下一轮到达时仍须命中
@@ -990,7 +996,7 @@ def test_backoff_window_covers_main_loop_interval(monkeypatch: pytest.MonkeyPatc
         _probe_backoff[_probe_backoff_key(_HUYA_M3U8_URL)] = time.time() - 185.0
     assert _probe_in_backoff(_HUYA_M3U8_URL, "虎牙直播") is True
     # 循环间隔被用户调小时窗口随之回落（不应按最大值锁死）
-    monkeypatch.setattr(state, "delay_default", 30)
+    monkeypatch.setattr(settings, "delay_default", 30)
     assert ss._probe_backoff_window() == 30.0 + ss._PROBE_BACKOFF_INTERVAL_MARGIN
     assert ss._probe_backoff_window() < window
 
@@ -1015,12 +1021,12 @@ def test_non_backoff_platform_keeps_retry_semantics(clear_probe_backoff: None) -
     # 斗鱼不在退避名单：稳定 403 不记退避，下一轮仍正常探针（保住「重试一次再定罪」
     # 与 HLS-first 语义，不因负缓存跳过导致回退 FLV 的回归）
     cls = _m3u8_client_cls([403, 403], ["text/html", "text/html"])
-    with patch("src.streams.selection.httpx.Client", cls), patch("src.streams.selection.time"):
+    with patch("src.recording.pipeline.selection.httpx.Client", cls), patch("src.recording.pipeline.selection.time"):
         assert _validate_stream_url(_M3U8_URL, platform="斗鱼直播", last_resort=False) is False
     assert _probe_in_backoff(_M3U8_URL, "斗鱼直播") is False
 
     cls2 = _m3u8_client_cls([206, 206], ["application/vnd.apple.mpegurl"] * 2)
-    with patch("src.streams.selection.httpx.Client", cls2), patch("src.streams.selection.time"):
+    with patch("src.recording.pipeline.selection.httpx.Client", cls2), patch("src.recording.pipeline.selection.time"):
         assert _validate_stream_url(_M3U8_URL, platform="斗鱼直播", last_resort=False) is True
     # 2 次 GET = 1 次 Range-GET（206 首次即通过）+ 1 次分片层探测的播放列表 GET
     # （2026-09-13 斗鱼 hw 事故修复新增的一跳，见上方 test_m3u8_range_get_retry_passes）。
@@ -1056,8 +1062,8 @@ def test_select_source_url_huya_backoff_round_straight_to_ffmpeg(clear_probe_bac
             raise AssertionError("退避窗口内不应发出任何探针")
 
     with (
-        patch.object(state, "hls_collection_enabled", True),
-        patch("src.streams.selection.httpx.Client", _NoProbeClient),
+        patch.object(settings, "hls_collection_enabled", True),
+        patch("src.recording.pipeline.selection.httpx.Client", _NoProbeClient),
     ):
         result = select_source_url(
             {"m3u8_url": _HUYA_M3U8_URL, "flv_url": _HUYA_FLV_URL, "record_url": ""},
@@ -1078,8 +1084,8 @@ def test_huya_flv_first_prefers_flv_on_cold_start(clear_probe_backoff: None) -> 
         return url == _HUYA_FLV_URL
 
     with (
-        patch.object(state, "hls_collection_enabled", True),
-        patch("src.streams.selection._validate_stream_url", side_effect=_validate),
+        patch.object(settings, "hls_collection_enabled", True),
+        patch("src.recording.pipeline.selection._validate_stream_url", side_effect=_validate),
     ):
         result = select_source_url(
             {"m3u8_url": _HUYA_M3U8_URL, "flv_url": _HUYA_FLV_URL, "record_url": ""},
@@ -1098,8 +1104,8 @@ def test_huya_flv_failed_falls_back_to_hls(clear_probe_backoff: None) -> None:
         return url == _HUYA_M3U8_URL
 
     with (
-        patch.object(state, "hls_collection_enabled", True),
-        patch("src.streams.selection._validate_stream_url", side_effect=_validate),
+        patch.object(settings, "hls_collection_enabled", True),
+        patch("src.recording.pipeline.selection._validate_stream_url", side_effect=_validate),
     ):
         result = select_source_url(
             {"m3u8_url": _HUYA_M3U8_URL, "flv_url": _HUYA_FLV_URL, "record_url": ""},
@@ -1118,8 +1124,8 @@ def test_douyu_keeps_hls_first(clear_probe_backoff: None) -> None:
         return True
 
     with (
-        patch.object(state, "hls_collection_enabled", True),
-        patch("src.streams.selection._validate_stream_url", side_effect=_validate),
+        patch.object(settings, "hls_collection_enabled", True),
+        patch("src.recording.pipeline.selection._validate_stream_url", side_effect=_validate),
     ):
         result = select_source_url(
             {
@@ -1146,9 +1152,9 @@ def test_excluded_platform_ignores_hls_and_uses_flv(clear_probe_backoff: None) -
         return True
 
     with (
-        patch.object(state, "hls_collection_enabled", True),
-        patch.object(state, "hls_collection_exclude_platforms", ["斗鱼直播"]),
-        patch("src.streams.selection._validate_stream_url", side_effect=_validate),
+        patch.object(settings, "hls_collection_enabled", True),
+        patch.object(settings, "hls_collection_exclude_platforms", ["斗鱼直播"]),
+        patch("src.recording.pipeline.selection._validate_stream_url", side_effect=_validate),
     ):
         result = select_source_url(
             {
@@ -1172,9 +1178,9 @@ def test_excluded_platform_flv_failed_never_falls_back_to_hls(clear_probe_backof
         return False
 
     with (
-        patch.object(state, "hls_collection_enabled", True),
-        patch.object(state, "hls_collection_exclude_platforms", ["斗鱼直播"]),
-        patch("src.streams.selection._validate_stream_url", side_effect=_validate),
+        patch.object(settings, "hls_collection_enabled", True),
+        patch.object(settings, "hls_collection_exclude_platforms", ["斗鱼直播"]),
+        patch("src.recording.pipeline.selection._validate_stream_url", side_effect=_validate),
     ):
         result = select_source_url(
             {
@@ -1194,9 +1200,9 @@ def test_excluded_platform_hls_only_no_fallback_warns(clear_probe_backoff: None)
     # 必须告警并放弃本轮，且恢复指引指向排除列表而非 HLS 开关
     info: dict[str, object] = {"anchor_name": "坤记喜事多", "m3u8_url": "https://x/abc.m3u8", "record_url": ""}
     with (
-        patch.object(state, "hls_collection_enabled", True),
-        patch.object(state, "hls_collection_exclude_platforms", ["斗鱼直播"]),
-        patch("src.streams.selection.logger.warning") as warn,
+        patch.object(settings, "hls_collection_enabled", True),
+        patch.object(settings, "hls_collection_exclude_platforms", ["斗鱼直播"]),
+        patch("src.recording.pipeline.selection.logger.warning") as warn,
     ):
         result = select_source_url(info, platform="斗鱼直播")
     assert result is None
@@ -1212,9 +1218,9 @@ def test_non_excluded_platform_keeps_hls_priority(clear_probe_backoff: None) -> 
         return True
 
     with (
-        patch.object(state, "hls_collection_enabled", True),
-        patch.object(state, "hls_collection_exclude_platforms", ["斗鱼直播"]),
-        patch("src.streams.selection._validate_stream_url", side_effect=_validate),
+        patch.object(settings, "hls_collection_enabled", True),
+        patch.object(settings, "hls_collection_exclude_platforms", ["斗鱼直播"]),
+        patch("src.recording.pipeline.selection._validate_stream_url", side_effect=_validate),
     ):
         result = select_source_url(
             {
@@ -1235,10 +1241,10 @@ def test_excluded_platform_h265_flv_not_switched_to_hls(clear_probe_backoff: Non
     # [历史注 2026-10-01] 原注释「h265 FLV 无法 copy 录制」已按容器可行性收窄（TS/MKV/MP4
     # 放行，见放宽矩阵用例），本用例改为显式钉 FLV 维持原判据。
     with (
-        patch.object(state, "hls_collection_enabled", True),
-        patch.object(state, "hls_collection_exclude_platforms", ["斗鱼直播"]),
-        patch.object(state, "video_save_type", "FLV"),
-        patch("src.streams.selection._validate_stream_url", return_value=True),
+        patch.object(settings, "hls_collection_enabled", True),
+        patch.object(settings, "hls_collection_exclude_platforms", ["斗鱼直播"]),
+        patch.object(settings, "video_save_type", "FLV"),
+        patch("src.recording.pipeline.selection._validate_stream_url", return_value=True),
     ):
         result = select_source_url(
             {
@@ -1271,7 +1277,7 @@ def test_throttle_probe_gaps_same_host(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(ss, "_PROBE_MIN_HOST_INTERVAL", 0.35)
     monkeypatch.setattr(ss, "_PROBE_THROTTLE_JITTER", 0.0)
     sleeps: list[float] = []
-    with patch("src.streams.selection.time.sleep", side_effect=lambda s: sleeps.append(s)):
+    with patch("src.recording.pipeline.selection.time.sleep", side_effect=lambda s: sleeps.append(s)):
         _throttle_probe(_FLV_URL)
         assert sleeps == []  # 首次探针不等待
         _throttle_probe(_FLV_URL)
@@ -1283,7 +1289,7 @@ def test_throttle_probe_different_hosts_independent(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr(ss, "_PROBE_MIN_HOST_INTERVAL", 0.35)
     monkeypatch.setattr(ss, "_PROBE_THROTTLE_JITTER", 0.0)
     sleeps: list[float] = []
-    with patch("src.streams.selection.time.sleep", side_effect=lambda s: sleeps.append(s)):
+    with patch("src.recording.pipeline.selection.time.sleep", side_effect=lambda s: sleeps.append(s)):
         _throttle_probe(_FLV_URL)
         _throttle_probe(_HUYA_FLV_URL)
     assert sleeps == []
@@ -1296,9 +1302,9 @@ def test_throttle_enforced_before_probe(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr(ss, "_PROBE_MIN_HOST_INTERVAL", 0.35)
     monkeypatch.setattr(ss, "_PROBE_THROTTLE_JITTER", 0.0)
     sleeps: list[float] = []
-    with patch("src.streams.selection.time.sleep", side_effect=lambda s: sleeps.append(s)):
+    with patch("src.recording.pipeline.selection.time.sleep", side_effect=lambda s: sleeps.append(s)):
         cls = _m3u8_client_cls([206, 206], ["application/vnd.apple.mpegurl"] * 2)
-        with patch("src.streams.selection.httpx.Client", cls):
+        with patch("src.recording.pipeline.selection.httpx.Client", cls):
             assert _validate_stream_url(_M3U8_URL) is True  # 首次：不节流、探针 200 通过
             assert _validate_stream_url(_M3U8_URL) is True  # 第二次：先节流再探针
     assert len(sleeps) == 1 and sleeps[0] > 0
@@ -1337,9 +1343,9 @@ def test_select_source_url_never_returns_malformed_addresses() -> None:
     ]
     for bad in bad_urls:
         with (
-            patch.object(state, "hls_collection_enabled", True),
-            patch("src.streams.selection._validate_stream_url", return_value=True),
-            patch("src.streams.selection.logger.warning") as warn,
+            patch.object(settings, "hls_collection_enabled", True),
+            patch("src.recording.pipeline.selection._validate_stream_url", return_value=True),
+            patch("src.recording.pipeline.selection.logger.warning") as warn,
         ):
             assert select_source_url({"flv_url": bad, "record_url": ""}) is None, bad
         assert any("形态不合规" in str(c.args[0]) for c in warn.call_args_list), bad
@@ -1349,8 +1355,8 @@ def test_select_source_url_allows_rtmp_candidate() -> None:
     # 对照：rtmp:// 是合法形态（斗鱼），必须照常选用
     url = "rtmp://dylive.rtmp.douyucdn.cn/live/100rT.flv?wsAuth=1"
     with (
-        patch.object(state, "hls_collection_enabled", True),
-        patch("src.streams.selection._validate_stream_url", return_value=True),
+        patch.object(settings, "hls_collection_enabled", True),
+        patch("src.recording.pipeline.selection._validate_stream_url", return_value=True),
     ):
         assert select_source_url({"flv_url": url}) == url
 
@@ -1365,8 +1371,8 @@ def test_malformed_record_url_dropped_without_probe_and_frees_last_resort() -> N
         return False
 
     with (
-        patch.object(state, "hls_collection_enabled", True),
-        patch("src.streams.selection._validate_stream_url", side_effect=_validate),
+        patch.object(settings, "hls_collection_enabled", True),
+        patch("src.recording.pipeline.selection._validate_stream_url", side_effect=_validate),
     ):
         result = select_source_url({"flv_url": "https://x/a.flv", "record_url": "file:///etc/passwd"})
     assert result is None
@@ -1387,9 +1393,9 @@ def test_excluded_platform_record_url_m3u8_emits_zero_hls_probes() -> None:
         return False
 
     with (
-        patch.object(state, "hls_collection_enabled", True),
-        patch.object(state, "hls_collection_exclude_platforms", ["抖音直播"]),
-        patch("src.streams.selection._validate_stream_url", side_effect=_validate),
+        patch.object(settings, "hls_collection_enabled", True),
+        patch.object(settings, "hls_collection_exclude_platforms", ["抖音直播"]),
+        patch("src.recording.pipeline.selection._validate_stream_url", side_effect=_validate),
     ):
         result = select_source_url(
             {
@@ -1413,9 +1419,9 @@ def test_hls_disabled_record_url_m3u8_warns_and_abandons() -> None:
         "record_url": "https://x/a.m3u8",
     }
     with (
-        patch.object(state, "hls_collection_enabled", False),
-        patch("src.streams.selection._validate_stream_url") as validate,
-        patch("src.streams.selection.logger.warning") as warn,
+        patch.object(settings, "hls_collection_enabled", False),
+        patch("src.recording.pipeline.selection._validate_stream_url") as validate,
+        patch("src.recording.pipeline.selection.logger.warning") as warn,
     ):
         assert select_source_url(info, platform="抖音直播") is None
     validate.assert_not_called()
@@ -1434,8 +1440,8 @@ def test_record_url_same_as_candidate_is_probed_only_once() -> None:
         return False
 
     with (
-        patch.object(state, "hls_collection_enabled", True),
-        patch("src.streams.selection._validate_stream_url", side_effect=_validate),
+        patch.object(settings, "hls_collection_enabled", True),
+        patch("src.recording.pipeline.selection._validate_stream_url", side_effect=_validate),
     ):
         result = select_source_url({"flv_url": flv, "record_url": flv}, platform="斗鱼直播")
     assert calls == [(flv, False)]  # 同一地址只发一轮探针
@@ -1452,8 +1458,8 @@ def test_record_url_different_from_candidates_still_probed_as_last_resort() -> N
         return url.endswith("b.flv")
 
     with (
-        patch.object(state, "hls_collection_enabled", True),
-        patch("src.streams.selection._validate_stream_url", side_effect=_validate),
+        patch.object(settings, "hls_collection_enabled", True),
+        patch("src.recording.pipeline.selection._validate_stream_url", side_effect=_validate),
     ):
         result = select_source_url({"flv_url": "https://x/a.flv", "record_url": "https://x/b.flv"})
     assert calls == [("https://x/a.flv", False), ("https://x/b.flv", True)]
@@ -1506,7 +1512,10 @@ def test_segment_reject_marks_backoff_under_playlist_key(clear_probe_backoff: No
     # 「分片被拒 → 下轮跳过该线路探针」在分片层完全没落地。
     cls = _media_playlist_client(403)
     cls.requested = []
-    with patch("src.streams.selection.httpx.Client", cls), patch("src.streams.selection.time.sleep"):
+    with (
+        patch("src.recording.pipeline.selection.httpx.Client", cls),
+        patch("src.recording.pipeline.selection.time.sleep"),
+    ):
         assert _validate_stream_url(_M3U8_URL, platform="虎牙直播", last_resort=False) is False
     seg_url = next(u for u in cls.requested if ".ts?" in u)
     assert seg_url != _M3U8_URL
@@ -1550,7 +1559,7 @@ def test_master_playlist_probes_highest_bandwidth_variant() -> None:
     # 端到端：升序 master playlist 必须探最高带宽变体的分片，低档一次都不碰
     cls = _media_playlist_client(200, playlist_text=_HLS_MASTER_ASCENDING)
     cls.requested = []
-    with patch("src.streams.selection.httpx.Client", cls):
+    with patch("src.recording.pipeline.selection.httpx.Client", cls):
         assert _validate_stream_url(_M3U8_URL, last_resort=False) is True
     assert "https://high.example.com/1080.m3u8" in cls.requested
     assert not any("360.m3u8" in u for u in cls.requested), "最低档变体不应被探测"
@@ -1693,7 +1702,7 @@ def test_bounded_probe_get_contract_with_fake_client() -> None:
 
 # ---------------------------------------------------------------------------
 # MID-N32 机检回归锁（2026-09-21，CODE_REVIEW_2026-09-21）
-# src/streams/selection.py 中 logger.* 调用（含其嵌套的 i18n.tr 模板实参）里所有
+# src/recording/pipeline/selection.py 中 logger.* 调用（含其嵌套的 i18n.tr 模板实参）里所有
 # url=<实参> 关键字都必须包 utils.mask_credentials(...)：流直链的查询侧挂有
 # 斗鱼 wsAuth / 抖音 signature 等凭据，裸传即明文落进 logs/streamget.log
 # （300 KB 轮转保留多份并可能被归档外发）。MID-N32 修复前实测 24 处已包、
@@ -1704,7 +1713,7 @@ def test_bounded_probe_get_contract_with_fake_client() -> None:
 # ---------------------------------------------------------------------------
 
 _LOGGER_METHODS = {"debug", "info", "success", "warning", "error", "critical", "exception", "trace", "log"}
-_STREAM_SELECT_PATH = Path(__file__).resolve().parent.parent / "src" / "streams/selection.py"
+_STREAM_SELECT_PATH = Path(__file__).resolve().parent.parent / "src" / "recording/pipeline/selection.py"
 
 
 def _is_mask_credentials_call(node: ast.AST) -> bool:
@@ -1749,7 +1758,7 @@ def test_stream_select_all_url_logger_kwargs_masked() -> None:
     # ① 全文件机检：不允许任何裸传 url=<变量>（新增一处裸传即变红）
     src = _STREAM_SELECT_PATH.read_text(encoding="utf-8-sig")
     offenders = _bare_url_kwarg_linenos(src)
-    detail = ", ".join(f"src/streams/selection.py:{ln}" for ln in offenders)
+    detail = ", ".join(f"src/recording/pipeline/selection.py:{ln}" for ln in offenders)
     assert not offenders, f"以下 url= 实参未经 utils.mask_credentials 脱敏（MID-N32 回归）：{detail}"
 
 
@@ -1781,8 +1790,8 @@ def test_mask_gate_predicate_sees_bare_url_kwarg() -> None:
 _BARE_PROXY = "127.0.0.1:7890"
 _NORMALIZED_PROXY = "http://127.0.0.1:7890"
 
-# patch("src.streams.selection.httpx.Client", ...) 换掉的其实是**全局 httpx 模块**上的属性
-# （src.streams.selection.httpx 就是 httpx 本体），所以桩内再写 httpx.Client(...) 等于调用桩自己、
+# patch("src.recording.pipeline.selection.httpx.Client", ...) 换掉的其实是**全局 httpx 模块**上的属性
+# （src.recording.pipeline.selection.httpx 就是 httpx 本体），所以桩内再写 httpx.Client(...) 等于调用桩自己、
 # 直接递归到 RecursionError。判据要用「真构造器」，只能在补丁生效前（import 期）先存一份引用。
 _REAL_SYNC_CLIENT = httpx.Client
 _REAL_ASYNC_CLIENT = httpx.AsyncClient
@@ -1791,7 +1800,7 @@ _REAL_ASYNC_CLIENT = httpx.AsyncClient
 class _ProxyContractClient(_StreamAsGet):
     # 记录每支探针客户端收到的 proxy 实参，并立刻交给真实 httpx 判一次契约（构造后即关闭）。
     # HEAD 200 + mpegurl、正文为空 → _probe_hls_segment 解析不出分片、保守放行，故首候选即通过。
-    # WP-J（2026-09-30）：形参签名必须跟住 src/streams/selection.py 的 _probe_client —— 它现在多传一个
+    # WP-J（2026-09-30）：形参签名必须跟住 src/recording/pipeline/selection.py 的 _probe_client —— 它现在多传一个
     # event_hooks（逐跳复检钩子）。这里既记录钩子条数（供「两处自建都挂上了钩子」的行为锁断言），
     # 也把 event_hooks 一并交给**真实** httpx 构造：桩若把实参形状写错，真 httpx 会当场抛错，
     # 契约仍由 httpx 本体判定、不在本文件自实现。
@@ -1842,9 +1851,9 @@ def test_select_source_url_bare_proxy_addr_normalized_before_construct() -> None
     # 裸 ip:port：整轮共用客户端必须以 http:// 前缀构造（探针确实走代理），且不得抛 ValueError
     _reset_proxy_contract_client()
     with (
-        patch.object(state, "hls_collection_enabled", True),
-        patch.object(state, "hls_collection_exclude_platforms", []),
-        patch("src.streams.selection.httpx.Client", _ProxyContractClient),
+        patch.object(settings, "hls_collection_enabled", True),
+        patch.object(settings, "hls_collection_exclude_platforms", []),
+        patch("src.recording.pipeline.selection.httpx.Client", _ProxyContractClient),
     ):
         result = select_source_url({"m3u8_url": _M3U8_URL, "flv_url": "", "record_url": ""}, _BARE_PROXY, "B站直播")
     assert result == _M3U8_URL, "归一后选源须正常返回首候选（修复前此处抛穿 ValueError）"
@@ -1861,9 +1870,9 @@ def test_select_source_url_empty_proxy_addr_becomes_none() -> None:
     # 「代理开关打开但地址留空」形态：归一为 None（= 不使用代理），不得把 "" 交给 httpx
     _reset_proxy_contract_client()
     with (
-        patch.object(state, "hls_collection_enabled", True),
-        patch.object(state, "hls_collection_exclude_platforms", []),
-        patch("src.streams.selection.httpx.Client", _ProxyContractClient),
+        patch.object(settings, "hls_collection_enabled", True),
+        patch.object(settings, "hls_collection_exclude_platforms", []),
+        patch("src.recording.pipeline.selection.httpx.Client", _ProxyContractClient),
     ):
         result = select_source_url({"m3u8_url": _M3U8_URL, "flv_url": "", "record_url": ""}, "", "B站直播")
     assert result == _M3U8_URL
@@ -1875,7 +1884,7 @@ def test_select_source_url_empty_proxy_addr_becomes_none() -> None:
 def test_validate_stream_url_self_built_client_normalizes_proxy() -> None:
     # 第二处构造点（_validate_stream_url 自建客户端，client=None 路径）同样必须归一
     _reset_proxy_contract_client()
-    with patch("src.streams.selection.httpx.Client", _ProxyContractClient):
+    with patch("src.recording.pipeline.selection.httpx.Client", _ProxyContractClient):
         assert _validate_stream_url(_M3U8_URL, proxy_addr=_BARE_PROXY, last_resort=True) is True
     assert _ProxyContractClient.proxies == [_NORMALIZED_PROXY]
     assert _ProxyContractClient.close_calls == 1, "自建客户端由 owns_client 语义自行关闭"
@@ -1904,9 +1913,9 @@ def test_probe_client_construction_failure_degrades_to_last_resort_release(clear
     handler_id = logger.add(lambda msg: captured.append(str(msg)), level="WARNING")
     try:
         with (
-            patch.object(state, "hls_collection_enabled", True),
-            patch.object(state, "hls_collection_exclude_platforms", []),
-            patch("src.streams.selection.httpx.Client", _AlwaysFailingClient),
+            patch.object(settings, "hls_collection_enabled", True),
+            patch.object(settings, "hls_collection_exclude_platforms", []),
+            patch("src.recording.pipeline.selection.httpx.Client", _AlwaysFailingClient),
         ):
             result = select_source_url(
                 {"m3u8_url_list": [hls_a, hls_b], "flv_url": flv, "record_url": ""},
@@ -1950,7 +1959,7 @@ async def test_bare_proxy_addr_reaches_sync_and_async_probe_with_same_value() ->
     _ProxyContractAsyncClient.proxies = []
     async_http._client_cache.clear()  # 桩客户端不得泄漏进模块级缓存（键含事件循环）
     try:
-        with patch("src.streams.selection.httpx.Client", _ProxyContractClient):
+        with patch("src.recording.pipeline.selection.httpx.Client", _ProxyContractClient):
             assert select_source_url({"m3u8_url": _M3U8_URL, "flv_url": "", "record_url": ""}, _BARE_PROXY, "B站直播")
         with patch("src.network.http.httpx.AsyncClient", _ProxyContractAsyncClient):
             assert await is_reachable(_M3U8_URL, proxy_addr=_BARE_PROXY, platform="B站直播") is True
@@ -1967,7 +1976,7 @@ async def test_bare_proxy_addr_reaches_sync_and_async_probe_with_same_value() ->
 # 运行期断言只覆盖「探针客户端被真的构造」的调用形态；一旦有人把归一行整条删掉、或把某个新
 # 构造点写成裸传，而该路径当前没有运行期用例走到，锁就瞎了。AST 判据不依赖执行，直接把
 # 「每个 httpx.Client 构造点的 proxy= 都经 normalize_proxy_url」钉成机检。
-#   [WP-J 2026-09-30 形态变更] 两处裸 httpx.Client(...) 已收敛为 src/streams/selection.py 的 _probe_client
+#   [WP-J 2026-09-30 形态变更] 两处裸 httpx.Client(...) 已收敛为 src/recording/pipeline/selection.py 的 _probe_client
 #   工厂（唯一的 httpx.Client 构造点）+ 两个调用点。归一约束随之从「构造点的 proxy=」平移到
 #   「_probe_client 调用点的 proxy_addr 实参」——语义完全等价（值仍必须在同一作用域内、使用之前由
 #   network_urls.normalize_proxy_url 得到），且工厂自身那次 httpx.Client(proxy=proxy_addr) 的 proxy 来自形参、
@@ -2108,7 +2117,7 @@ def test_all_probe_client_constructions_normalize_proxy_addr() -> None:
     # ① 全文件机检：两处构造点都必须归一（新增第三处裸传即变红）
     src = _STREAM_SELECT_PATH.read_text(encoding="utf-8-sig")
     offenders, total, probe_calls = _unnormalized_proxy_constructions(src)
-    detail = ", ".join(f"src/streams/selection.py:{ln}" for ln in offenders)
+    detail = ", ".join(f"src/recording/pipeline/selection.py:{ln}" for ln in offenders)
     assert not offenders, (
         f"以下 httpx.Client 构造点 / _probe_client 调用点的 proxy 未经 network_urls.normalize_proxy_url 归一（SEV-N05 回归）：{detail}"
     )

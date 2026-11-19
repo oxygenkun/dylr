@@ -25,14 +25,16 @@ flowchart TD
     Entry -->|web_enable| Web["src/web.py"]
     Web --> API["api/routes.py + web/"]
     Engine --> Session["recording/session.py"]
-    Engine --> Monitors["monitors/registry.py"]
+    Engine --> Monitors["recording/sources/account.py"]
     Engine --> State["recording/state.py + status.py"]
     API --> State
-    Session --> Dispatch["streams/dispatch.py"]
-    Dispatch --> Parsers["streams/spider.py + stream.py"]
-    Session --> Selection["streams/selection.py"]
+    Engine --> Settings["config/settings.py"]
+    Session --> Settings
+    Session --> Dispatch["recording/pipeline/dispatch.py"]
+    Dispatch --> Parsers["platforms/live/spider.py + recording/pipeline/stream.py"]
+    Session --> Selection["recording/pipeline/selection.py"]
     Session --> Process["recording/process.py + postprocess.py"]
-    Session --> Danmaku["danmaku/factory.py → danmaku/collector.py"]
+    Session --> Danmaku["danmaku/service.py → danmaku/session.py"]
 ```
 
 纯录制与面板模式共用录制引擎和状态。图中省略日志、配置、网络及外部运行时等公共支撑连线。
@@ -43,8 +45,8 @@ flowchart TD
 2. 引擎读取主配置与房间列表，检查 FFmpeg / Node、初始化退出协调及备份任务，随后热加载配置并调度房间。
 3. 每房间一个线程，在各自 `asyncio.run()` 中执行平台请求；没有全局共享事件循环。平台分派归一化 URL，获取直播数据并解析流地址和画质，选源层验证候选。
 4. 单房间会话启动并监控 FFmpeg（或直下），反馈结果并触发通知；录制结束执行后处理。弹幕链与视频解析平行，经工厂与会话同起同停。
-5. Web API 经共享状态、状态快照与配置接口管理引擎；业务模块不反向导入 CLI / Web 入口。配置文件写入共用 `state.file_update_lock`。
-6. `support/` 和 `app/` 不依赖录制状态，网络层不导入 API；配置操作归 `config/`，JS 执行归 `runtime/`，URL/Cookie 格式处理归 `network/urls.py`，平台异常兜底归 `streams/errors.py`。
+5. Web API 经共享状态、状态快照与配置接口管理引擎；业务模块不反向导入 CLI / Web 入口。配置文件写入共用 `config.lock.file_update_lock`。
+6. `support/` 和 `app/` 不依赖录制状态，网络层不导入 API；配置操作归 `config/`，JS 执行归 `runtime/`，URL/Cookie 格式处理归 `network/urls.py`，平台异常兜底归 `platforms/live/errors.py`。
 
 源码文件的完整列表只在 [项目结构](../agent-reference/project-structure.md) 维护。
 
