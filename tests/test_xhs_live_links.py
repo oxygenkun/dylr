@@ -443,10 +443,16 @@ async def test_live_success_still_builds_stream_urls(monkeypatch: pytest.MonkeyP
 @pytest.mark.asyncio
 async def test_short_link_resolves_landing_room_id(monkeypatch: pytest.MonkeyPatch) -> None:
     fake = _fake_async_req({_SHORT_URL: _DYNAMIC_ROOM_URL, LIVE_DYNAMIC_SEGMENT: _page("end")})
+    monkeypatch.setattr(sp.targets, "host_rejection_reason", lambda host: None)
     with patch.object(sp.http, "request", new=fake):
-        result = await sp.get_xhs_stream_url(_SHORT_URL)
+        result = await sp.get_xhs_stream_url(_SHORT_URL, cookies="SESSDATA=SECRET")
     assert result["room_id"] == LIVE_ROOM_ID
     assert result["normalized_url"] == _DYNAMIC_ROOM_URL
+    probe, landing = fake.sent
+    assert probe["redirect"] is True
+    assert not {"Cookie", "xy-common-params"} & probe["headers"].keys()
+    assert landing["headers"]["Cookie"] == "SESSDATA=SECRET"
+    assert "sid=" in landing["headers"]["xy-common-params"]
 
 
 @pytest.mark.asyncio
@@ -473,12 +479,17 @@ async def test_short_link_redirect_failure_is_reported(monkeypatch: pytest.Monke
 
 
 @pytest.mark.asyncio
-async def test_external_landing_still_keeps_credentials_contained(monkeypatch: pytest.MonkeyPatch) -> None:
-    # SEV-2214 的安全不变量在新解析器下必须仍成立：跳到外站时不得请求该外站
-    fake = _fake_async_req({_SHORT_URL: "https://evil.example.com/steal"})
+@pytest.mark.parametrize("landing", ["https://evil.example.com/steal", "https://xhslink.com/o/AnotherCode"])
+async def test_untrusted_or_short_landing_keeps_credentials_contained(
+    monkeypatch: pytest.MonkeyPatch, landing: str
+) -> None:
+    fake = _fake_async_req({_SHORT_URL: landing})
+    monkeypatch.setattr(sp.targets, "host_rejection_reason", lambda host: None)
     with patch.object(sp.http, "request", new=fake):
         await sp.get_xhs_stream_url(_SHORT_URL, cookies="SESSDATA=SECRET")
     assert not any("evil.example.com" in item["url"] for item in fake.sent), fake.sent
+    assert fake.sent
+    assert all(not {"Cookie", "xy-common-params"} & item["headers"].keys() for item in fake.sent)
 
 
 @pytest.mark.asyncio

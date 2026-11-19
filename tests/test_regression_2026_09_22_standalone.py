@@ -396,6 +396,19 @@ class TestRedirectHopGuard:
         assert new is not None
         assert new.full_url == "https://cdn.example/live/b.flv"
 
+    @pytest.mark.parametrize(("host", "keeps_credentials"), [("cdn.example:443", True), ("other.example", False)])
+    def test_redirect_credentials_are_scoped_to_origin(self, host: str, keeps_credentials: bool) -> None:
+        handler = SA._HopGuardRedirectHandler()
+        req = urllib.request.Request(
+            "https://cdn.example/live/a.flv",
+            headers={"Cookie": "session=test", "Authorization": "Bearer test", "User-Agent": "dlr"},
+        )
+        redirected = handler.redirect_request(req, None, 302, "Found", {}, f"https://{host}/live/b.flv")
+        assert redirected is not None
+        assert redirected.has_header("Cookie") is keeps_credentials
+        assert redirected.has_header("Authorization") is keeps_credentials
+        assert redirected.get_header("User-agent") == "dlr"
+
     def test_opener_installs_guarded_redirect_handler(self) -> None:
         # 结构锁：opener 必须挂的是守卫子类，裸 HTTPRedirectHandler 不得再次出现——
         # 回退成裸版时本条与上面两条行为锁同红

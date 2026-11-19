@@ -28,6 +28,8 @@
 
 异步 HTTP 与同步选源探针共用 `targets.py`。request 钩子在发送初始地址及每一次重定向前检查；响应读取上限保持普通响应 8 MiB、解压响应 32 MiB，同步探针保留自己的小响应上限。代理域名使用代理侧解析语义，IP 字面量与已知内部域名仍校验。
 
+异步 HTTP 和同步选源探针在跨源重定向时剥离凭据头，包括小红书的 `xy-common-params`。小红书分享链接先匿名解析，落地页通过域名、地址和直播链接校验后才附带会话头。独立录制工具也会在跨源时剥离 Cookie 与认证头。Webhook 的重定向目标沿用初始推送地址的准入规则。
+
 DNS 检查与传输层实际解析是两次操作，仍存在重绑定时间窗口；本实现不声称固定了最终连接 IP。独立录制工具保留自己的 HTTP/HTTPS urllib 白名单与重定向前检查。
 
 WebSocket 的连接、串行发送、心跳和重连由 `src/network/websocket.py` 的 `WebSocketClient` 提供，平台协议见 [弹幕与字幕](danmaku.md)。回归边界见 [HTTP 客户端约束](../agent-reference/known-pitfalls.md#http-客户端复用与连接管理)。

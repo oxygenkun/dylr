@@ -12,7 +12,7 @@ import httpx
 
 from src.network import policy
 from src.network import urls as network_urls
-from src.network.targets import UnsafeTarget, stream_target_reason, validate_http_target
+from src.network.targets import UnsafeTarget, stream_target_reason, strip_redirect_credentials, validate_http_target
 from src.support import i18n, utils
 from src.support.logger import logger
 
@@ -60,6 +60,7 @@ async def _bounded_response_read(response: httpx.Response) -> None:
 def _request_guard(proxy_addr: str | None) -> Callable[[httpx.Request], Awaitable[None]]:
     async def guard(request: httpx.Request) -> None:
         validate_http_target(str(request.url), proxy_addr)
+        strip_redirect_credentials(request)
 
     return guard
 

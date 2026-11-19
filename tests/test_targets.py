@@ -56,13 +56,34 @@ async def test_internal_redirect_is_rejected_before_transport(
 
 
 @pytest.mark.parametrize("client_kind", ["async", "sync"])
-async def test_public_redirect_still_reaches_destination(monkeypatch: pytest.MonkeyPatch, client_kind: str) -> None:
+@pytest.mark.parametrize(
+    ("destination", "same_origin"),
+    [
+        ("https://start.example.com:443/redirected", True),
+        ("https://start.example.com:8443/redirected", False),
+        ("https://final.example.com/live", False),
+        ("http://start.example.com/live", False),
+    ],
+)
+async def test_public_redirect_still_reaches_destination(
+    monkeypatch: pytest.MonkeyPatch, client_kind: str, destination: str, same_origin: bool
+) -> None:
     monkeypatch.setattr(targets, "resolve_host_ips", lambda host: ["93.184.216.34"])
     seen: list[str] = []
-    start, destination = "https://start.example.com/live", "https://final.example.com/live"
+    received: list[dict[str, str]] = []
+    start = "https://start.example.com/live"
+    credentials = {
+        "authorization": "Bearer test-auth",
+        "xy-common-params": "sid=test-session",
+        "client-integrity": "test-integrity",
+        "x-api-key": "test-api-key",
+        "ms_token": "test-token",
+    }
+    headers = {**credentials, "referer": "https://start.example.com/"}
 
     def handle(request: httpx.Request) -> httpx.Response:
         seen.append(str(request.url))
+        received.append(dict(request.headers))
         if str(request.url) == start:
             return httpx.Response(302, headers={"location": destination})
         return httpx.Response(200, text="OK")
@@ -71,14 +92,17 @@ async def test_public_redirect_still_reaches_destination(monkeypatch: pytest.Mon
         async with http._build_client(None, 5, True, False) as client:
             client._mounts = {}
             client._transport = httpx.MockTransport(handle)
-            response = await client.get(start, follow_redirects=True)
+            response = await client.get(start, headers=headers, follow_redirects=True)
     else:
         with selection._probe_client(5, None, True) as client:
             client._mounts = {}
             client._transport = httpx.MockTransport(handle)
-            response = client.get(start, follow_redirects=True)
+            response = client.get(start, headers=headers, follow_redirects=True)
     assert response.text == "OK"
-    assert seen == [start, destination]
+    assert seen == [start, str(httpx.URL(destination))]
+    assert {key: received[0][key] for key in credentials} == credentials
+    assert {key: received[1][key] for key in credentials if key in received[1]} == (credentials if same_origin else {})
+    assert received[1]["referer"] == headers["referer"]
 
 
 @pytest.mark.parametrize(

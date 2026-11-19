@@ -182,6 +182,15 @@ _SECRET_KEYS: tuple[str, ...] = (
 
 _SECRET_KEY_ALT = "|".join(sorted(_SECRET_KEYS, key=lambda _k: (-len(_k), _k)))
 
+_CREDENTIAL_HEADER_RE = re.compile(
+    r"(?:^|[-_])(?:" + _SECRET_KEY_ALT.replace("_", "[-_]") + r")(?:$|[-_])",
+    re.IGNORECASE,
+)
+
+
+def is_credential_header(name: str) -> bool:
+    return name.lower() in {"xy-common-params", "client-integrity"} or bool(_CREDENTIAL_HEADER_RE.search(name))
+
 
 _SECRET_CAMEL_BOUNDARY = r"(?<=[a-z])(?=[A-Z])"
 

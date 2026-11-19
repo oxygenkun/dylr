@@ -8,13 +8,41 @@
 # _mask_url 会漏掉「调用点忘传参数」）。
 
 from collections.abc import Callable
+from email.message import Message
+from io import BytesIO
 from typing import cast
 from unittest.mock import patch
-from urllib.request import Request
+from urllib.error import URLError
+from urllib.request import BaseHandler, Request
+from urllib.response import addinfourl
 
+import pytest
 from loguru import logger
 
+from src.notifications import msg_push
 from src.notifications.msg_push import _mask_secret, _mask_url, bark, dingtalk
+
+
+def test_push_redirect_checks_destination_before_sending(monkeypatch: pytest.MonkeyPatch) -> None:
+    seen: list[str] = []
+
+    class FakeTransport(BaseHandler):
+        handler_order = 100
+
+        def https_open(self, request: Request) -> addinfourl:
+            seen.append(request.full_url)
+            headers = Message()
+            headers["Location"] = "/next" if len(seen) == 1 else "https://169.254.169.254/"
+            response = addinfourl(BytesIO(), headers, request.full_url, 302)
+            response.msg = "Found"
+            return response
+
+    monkeypatch.setattr("src.network.targets.resolve_host_ips", lambda host: ["93.184.216.34"])
+    opener = msg_push._build_push_opener()
+    opener.add_handler(FakeTransport())
+    with pytest.raises(URLError):
+        opener.open("https://example.com/start")
+    assert seen == ["https://example.com/start", "https://example.com/next"]
 
 
 # 守护 _mask_secret 的长度分档策略：短凭证整串遮蔽、长凭证保留首尾各 2 位。
@@ -37,6 +65,9 @@ class TestMaskSecret:
 
 # 守护 _mask_url 对不同 URL 形态的处理：路径段凭证、query 凭证、以及普通 URL 不被误伤。
 class TestMaskUrl:
+    def test_userinfo_is_omitted(self) -> None:
+        assert _mask_url("https://user:private@example.com/hook") == "https://example.com/hook"
+
     def test_bark_short_key_masked(self) -> None:
         # 8 位 Bark key 此前因长度 <=12 漏遮蔽，凭证落盘日志
         masked = _mask_url("https://api.day.app/AbCd1234", mask_last_segment=True)

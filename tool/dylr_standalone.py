@@ -219,7 +219,17 @@ class _HopGuardRedirectHandler(urllib.request.HTTPRedirectHandler):
         reason = _untrusted_stream_target_reason(newurl)
         if reason is not None:
             raise urllib.error.URLError(f"重定向目标不可信({reason}): {newurl}")
-        return super().redirect_request(req, fp, code, msg, headers, newurl)
+        redirected = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if redirected is not None and _http_origin(req.full_url) != _http_origin(redirected.full_url):
+            for name in ("Cookie", "Authorization", "Proxy-authorization"):
+                redirected.remove_header(name)
+        return redirected
+
+
+def _http_origin(url: str) -> tuple[str, str | None, int]:
+    parts = urllib.parse.urlsplit(url)
+    port = parts.port
+    return parts.scheme, parts.hostname, port if port is not None else 443 if parts.scheme == "https" else 80
 
 
 _HTTP_ONLY_HANDLERS: tuple[type[urllib.request.BaseHandler], ...] = (

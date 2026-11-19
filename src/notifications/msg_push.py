@@ -8,6 +8,7 @@ import urllib.request
 from email.header import Header
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from io import BufferedIOBase
 from typing import cast
 from urllib.parse import urlsplit, urlunsplit
 
@@ -16,12 +17,31 @@ from loguru import logger
 from src.network.targets import host_rejection_reason
 from src.support import i18n
 
+
+class _PushRedirectHandler(urllib.request.HTTPRedirectHandler):
+    def redirect_request(
+        self,
+        req: urllib.request.Request,
+        fp: BufferedIOBase,
+        code: int,
+        msg: str,
+        headers: http.client.HTTPMessage,
+        newurl: str,
+    ) -> urllib.request.Request | None:
+        try:
+            _checked_push_url(newurl)
+        except ValueError as exc:
+            fp.close()
+            raise urllib.error.URLError(str(exc)) from exc
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 no_proxy_handler: urllib.request.ProxyHandler = urllib.request.ProxyHandler({})
 _PUSH_HTTP_HANDLERS: tuple[type[urllib.request.BaseHandler], ...] = (
     urllib.request.UnknownHandler,
     urllib.request.HTTPHandler,
     urllib.request.HTTPDefaultErrorHandler,
-    urllib.request.HTTPRedirectHandler,
+    _PushRedirectHandler,
     urllib.request.HTTPErrorProcessor,
 )
 
@@ -107,7 +127,8 @@ def _mask_url(url: str, *, mask_last_segment: bool = False) -> str:
             else:
                 masked_segs.append(seg)
         masked_path = "/" + "/".join(masked_segs) if masked_segs else ""
-        return urlunsplit((parts.scheme, parts.netloc, masked_path, "", ""))
+        netloc = parts.netloc.rsplit("@", 1)[-1]
+        return urlunsplit((parts.scheme, netloc, masked_path, "", ""))
     except Exception:
         return _mask_secret(url)
 

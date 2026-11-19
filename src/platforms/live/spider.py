@@ -1937,6 +1937,8 @@ async def get_xhs_stream_url(
         headers["Cookie"] = cookies
 
     if link_info["kind"] == "short":
+        page_headers = headers
+        headers = {name: value for name, value in page_headers.items() if not utils.is_credential_header(name)}
         url_result = await http.request(url, proxy_addr=proxy_addr, headers=headers, redirect_url=True)
         if not isinstance(url_result, str) or not url_result.strip():
             logger.warning(i18n.tr("小红书短链重定向失败，本轮按解析失败处理: {url}", url=utils.mask_credentials(url)))
@@ -1961,6 +1963,8 @@ async def get_xhs_stream_url(
                     )
                     return {"anchor_name": "", "is_live": False, "error": e.code}
                 url = link_info["normalized_url"]
+                if link_info["kind"] != "short":
+                    headers = page_headers
             else:
                 logger.warning(
                     i18n.tr(

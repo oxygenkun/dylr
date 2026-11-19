@@ -249,13 +249,18 @@ def _read_redirect_body(response: httpx.Response) -> None:
 
 def _probe_client(timeout: int, proxy_addr: str | None, verify: bool) -> httpx.Client:
     """为一次选源构造客户端，校验目标并限制中间跳响应体。"""
+
+    def guard(request: httpx.Request) -> None:
+        targets.validate_http_target(str(request.url), proxy_addr)
+        targets.strip_redirect_credentials(request)
+
     return httpx.Client(
         timeout=timeout,
         proxy=proxy_addr,
         verify=verify,
         trust_env=False,
         event_hooks={
-            "request": [lambda request: targets.validate_http_target(str(request.url), proxy_addr)],
+            "request": [guard],
             "response": [_read_redirect_body],
         },
     )

@@ -5,9 +5,11 @@ import socket
 from typing import cast
 from urllib.parse import urlparse
 
+import httpx
+
 from src.network.urls import is_http_url
 from src.support import i18n
-from src.support.utils import mask_credentials
+from src.support.utils import is_credential_header, mask_credentials
 
 _EXTRA_BLOCKED_V4_NETWORKS = (
     ipaddress.ip_network("100.64.0.0/10"),  # CGNAT/共享地址空间（阿里云元数据 100.100.100.200 落于其中）
@@ -225,3 +227,14 @@ def validate_http_target(url: str, proxy_addr: str | None = None) -> None:
     reason = stream_target_reason(url, proxy_addr) if is_http_url(url) else "非 HTTP/HTTPS 地址"
     if reason is not None:
         raise UnsafeTarget(url, reason)
+
+
+def strip_redirect_credentials(request: httpx.Request) -> None:
+    # HTTPX copies request extensions into each redirect request.
+    origin = (request.url.scheme, request.url.host, request.url.port)
+    previous_origin = request.extensions.get("dlr_previous_origin", origin)
+    request.extensions["dlr_previous_origin"] = origin
+    if previous_origin != origin:
+        for name in list(request.headers):
+            if is_credential_header(name):
+                del request.headers[name]
