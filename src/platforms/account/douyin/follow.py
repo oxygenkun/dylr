@@ -54,6 +54,11 @@ def parse_follow_feed(payload: Any) -> dict[str, Any]:
             continue
         rooms[rid] = {
             "anchor_name": owner["nickname"],
+            "owner_user_id": room.get("owner_user_id_str")
+            or room.get("owner_user_id")
+            or owner.get("id_str")
+            or owner.get("id"),
+            "start_time": room.get("start_time") or room.get("create_time"),
             "title": room.get("title") or "",
             "status": 2,
             "id_str": str(room.get("id_str") or room.get("id") or ""),

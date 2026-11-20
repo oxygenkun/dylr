@@ -212,7 +212,7 @@ class _GuardCase:
 class TestBilibiliRoomInfoHardening(_GuardCase):
     # B站房间信息：room_init → master/info → getH5InfoByRoom 三连，任一环裸解析都会静默漏录。
     URL = "https://live.bilibili.com/26066074"
-    _INIT = '{"code":0,"message":"0","msg":"","data":{"room_id":23058,"uid":401742185,"live_status":1}}'
+    _INIT = '{"code":0,"message":"0","msg":"","data":{"room_id":23058,"uid":401742185,"live_status":1,"live_time":1789268400}}'
     _MASTER = '{"code":0,"data":{"info":{"uname":"受检主播","face":""}}}'
     _H5 = '{"code":0,"data":{"room_info":{"title":"晚间直播"}}}'
     _OFFLINE_INIT = '{"code":0,"message":"0","data":{"room_id":23058,"uid":401742185,"live_status":0}}'
@@ -221,10 +221,21 @@ class TestBilibiliRoomInfoHardening(_GuardCase):
         ('{"code":-404,"message":"啥都木有","msg":"啥都木有"}', "B站 room_init", "-404"),
         ('{"data": {"uid": 4', "B站 room_init", None),
     ]
-    expected = {"anchor_name": "受检主播", "live_status": True, "room_url": URL, "title": "晚间直播"}
+    expected = {
+        "anchor_name": "受检主播",
+        "anchor_id": 401742185,
+        "live_status": True,
+        "live_started_at": 1789268400,
+        "room_url": URL,
+        "title": "晚间直播",
+    }
     # live_status==0 是「房间存在、主播没开播」——正常轮询常态，不得告警
     silent_body = _OFFLINE_INIT
-    silent_expected = {"anchor_name": "受检主播", "live_status": False, "room_url": URL, "title": "晚间直播"}
+    silent_expected = {
+        **expected,
+        "live_status": False,
+        "live_started_at": None,
+    }
 
     def payloads(self, body: str | None) -> dict[str, Any]:
         return {

@@ -140,6 +140,7 @@ def start_record(
     set_room_context(f"序号{count_variable}")
     _select_source = select_source or select_source_url
     last_follow_revision = 0
+    first_live_at: float | None = None
     while True:
         record_name = ""
         record_host = ""
@@ -253,11 +254,18 @@ def start_record(
                             and latest_anchor_name != "空白昵称"
                             and anchor_name != latest_anchor_name
                         ):
-                            if rename_anchor_directory(
-                                anchor_name, latest_anchor_name, platform
+                            template_enabled = bool(settings.record_directory_template.strip())
+                            if (
+                                template_enabled or rename_anchor_directory(anchor_name, latest_anchor_name, platform)
                             ) and update_anchor_name(record_url, latest_anchor_name):
                                 logger.info(
                                     i18n.tr(
+                                        "主播名已变更，配置已更新: {anchor_name} -> {latest_anchor_name}",
+                                        anchor_name=anchor_name,
+                                        latest_anchor_name=latest_anchor_name,
+                                    )
+                                    if template_enabled
+                                    else i18n.tr(
                                         "主播名已变更，配置与录制文件同步更新: {anchor_name} -> {latest_anchor_name}",
                                         anchor_name=anchor_name,
                                         latest_anchor_name=latest_anchor_name,
@@ -294,6 +302,7 @@ def start_record(
 
                         push_at = datetime.datetime.today().strftime("%Y-%m-%d %H:%M:%S")
                         if not port_info.get("is_live", False):
+                            first_live_at = None
                             if len(recording_state.recording) == 0:
                                 print(i18n.tr("\r{record_name} 等待直播... ", record_name=record_name))
 
@@ -315,6 +324,8 @@ def start_record(
                                 start_pushed = False
 
                         else:
+                            if first_live_at is None:
+                                first_live_at = time.time()
                             print(i18n.tr("\r{record_name} 正在直播中...", record_name=record_name))
 
                             if settings.live_status_push and not start_pushed:
@@ -396,6 +407,7 @@ def start_record(
                                     title=cast(str, port_info.get("title", "")),
                                     port_info=port_info,
                                     danmaku_args=record_danmaku_args,
+                                    first_live_at=first_live_at,
                                 ),
                                 source_url=real_url,
                                 user_agent=user_agent,

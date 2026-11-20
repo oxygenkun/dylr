@@ -57,9 +57,14 @@ class FollowTests(unittest.TestCase):
         return m
 
     def test_normalize_zero_status_live_feed(self) -> Any:
-        room = parse_follow_feed(payload(entry()))["681134154663"]
+        item = entry()
+        item["room"]["owner"]["id_str"] = "12345"
+        item["room"]["create_time"] = 1789268400
+        room = parse_follow_feed(payload(item))["681134154663"]
         self.assertEqual(room["status"], 2)
         self.assertEqual(room["anchor_name"], "test")
+        self.assertEqual(room["owner_user_id"], "12345")
+        self.assertEqual(room["start_time"], 1789268400)
         self.assertTrue(room["stream_url"]["flv_pull_url"])
 
     def test_recommended_unfollowed_offline_and_bad_rooms_are_ignored(self) -> Any:

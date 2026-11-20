@@ -1,6 +1,8 @@
 """单房间录制、FFmpeg 命令与进程守护、录后处理。"""
 
 import datetime
+import hashlib
+import ntpath
 import os
 import re
 import subprocess
@@ -42,6 +44,7 @@ from src.recording.process import (
     unregister_ffmpeg_process,
 )
 from src.recording.scheduler import host_of
+from src.recording.signals import RoomObservation
 from src.support import console, i18n, utils
 from src.support.errors import get_error_line
 
@@ -824,6 +827,69 @@ _SEGMENT_NOW_FORMAT_BY_SAVE_TYPE: dict[str, str] = {
     "TS": "%Y-%m-%d_%H-%M-%S",
 }
 _DEFAULT_SEGMENT_NOW_FORMAT = "%Y-%m-%d_%H-%M-%S"
+_DIRECTORY_PLACEHOLDER = re.compile(r"\{[^{}]*\}|[{}]")
+
+
+def _live_date(value: object, first_live_at: float | None, now: datetime.datetime) -> str:
+    if isinstance(value, (str, int, float)) and not isinstance(value, bool):
+        try:
+            timestamp = float(value)
+            if timestamp >= 10**12:
+                timestamp /= 1000
+            if 0 < timestamp <= now.timestamp():
+                return datetime.datetime.fromtimestamp(timestamp).date().isoformat()
+        except OSError, OverflowError, ValueError:
+            pass
+    return (datetime.datetime.fromtimestamp(first_live_at) if first_live_at is not None else now).date().isoformat()
+
+
+def _render_record_directory(
+    template: str, root: Path, observation: RoomObservation, now: datetime.datetime, live_title: str
+) -> str:
+    prefix, *parts = template.replace("\\", "/").rstrip("/").split("/")
+    if prefix != "{record_dir}" or any(part in ("", ".", "..") for part in parts):
+        raise ValueError
+
+    info = observation.port_info or {}
+    anchor_id = info.get("anchor_id")
+    if type(anchor_id) not in (str, int) or not anchor_id or anchor_id == "0":
+        digest = hashlib.sha256(observation.room_key.encode()).hexdigest()[:16]
+        anchor_id = f"room-{digest}"
+    values = {
+        "{user_id}": str(anchor_id),
+        "{username}": observation.anchor_name,
+        "{live_date}": _live_date(info.get("live_started_at"), observation.first_live_at, now),
+        "{live_title}": live_title or "无标题",
+    }
+    path = root
+    for part in parts:
+        name = clean_name(_DIRECTORY_PLACEHOLDER.sub(lambda match: values[match[0]], part))
+        path /= f"{name}_" if ntpath.isreserved(name) else name
+    if not path.resolve().is_relative_to(root.resolve()):
+        raise ValueError
+    return path.as_posix()
+
+
+def _record_directory(observation: RoomObservation, now: datetime.datetime, live_title: str) -> str:
+    root = (settings.video_save_path or config_paths.default_path).replace("\\", "/")
+    template = settings.record_directory_template.strip()
+    if template:
+        try:
+            return _render_record_directory(template, Path(root), observation, now, live_title)
+        except KeyError, ValueError:
+            logger.warning(i18n.tr("录制目录模板无效，已使用原有目录规则"))
+
+    anchor_name = observation.anchor_name
+    full_path = f"{root.rstrip('/')}/{observation.platform}"
+    date_dir = now.strftime("%y%m%d")
+    if settings.folder_by_author:
+        full_path = f"{full_path}/{anchor_name}"
+    if settings.folder_by_time:
+        full_path = f"{full_path}/{date_dir}"
+    if settings.folder_by_title and live_title:
+        folder = f"{live_title}_{anchor_name}" if settings.folder_by_time else f"{date_dir}_{live_title}"
+        full_path = f"{full_path}/{folder}"
+    return full_path
 
 
 def _sanitize_output_name_base(base: str) -> str:
@@ -1041,32 +1107,14 @@ class RecorderSession:
         platform_cookie = plan.cookies
         record_finished = False
 
-        full_path = f"{config_paths.default_path}/{platform}"
-        now = datetime.datetime.today().strftime("%y%m%d_%H%M%S")
-        date_dir = datetime.datetime.today().strftime("%y%m%d")
-        live_title = cast(str, port_info.get("title", ""))
-        title_in_name = ""
-        if live_title:
-            live_title = clean_name(live_title)
-            title_in_name = live_title + "_" if settings.filename_by_title else ""
+        recorded_at = datetime.datetime.today()
+        now = recorded_at.strftime("%y%m%d_%H%M%S")
+        title = port_info.get("title") or observation.title
+        live_title = clean_name(title) if isinstance(title, str) and title else ""
+        title_in_name = live_title + "_" if live_title and settings.filename_by_title else ""
 
         try:
-            if len(settings.video_save_path) > 0:
-                if not settings.video_save_path.endswith(("/", "\\")):
-                    full_path = f"{settings.video_save_path}/{platform}"
-                else:
-                    full_path = f"{settings.video_save_path}{platform}"
-
-            full_path = full_path.replace("\\", "/")
-            if settings.folder_by_author:
-                full_path = f"{full_path}/{anchor_name}"
-            if settings.folder_by_time:
-                full_path = f"{full_path}/{date_dir}"
-            if settings.folder_by_title and port_info.get("title"):
-                if settings.folder_by_time:
-                    full_path = f"{full_path}/{live_title}_{anchor_name}"
-                else:
-                    full_path = f"{full_path}/{date_dir}_{live_title}"
+            full_path = _record_directory(observation, recorded_at, live_title)
             os.makedirs(full_path, exist_ok=True)
         except Exception as e:
             logger.error(

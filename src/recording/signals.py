@@ -58,6 +58,7 @@ class RoomObservation:
     port_info: Mapping[str, object] | None = None
     danmaku_args: Mapping[str, object] | None = None
     new_url: str = ""
+    first_live_at: float | None = None
 
 
 type Signal = LiveHint | RoomAdded | RoomObservation

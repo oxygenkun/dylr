@@ -269,6 +269,7 @@ def _setup_case(main: ModuleType, monkeypatch: pytest.MonkeyPatch, case: dict[st
                 "delete_origin_file": False,
                 "custom_script": "",
                 "video_save_path": "",
+                "record_directory_template": "",
                 "folder_by_author": False,
                 "folder_by_time": False,
                 "folder_by_title": False,
@@ -567,6 +568,35 @@ def test_start_record_command_golden(
         + ("  期间日志:\n    " + "\n    ".join(cap.errors) + "\n" if cap.errors else "")
         + "若属预期重构，请先 GOLDEN_REGEN=1 重新生成基准。"
     )
+
+
+def test_directory_template_reaches_segmented_output(
+    main_mod: ModuleType, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    case = _case("directory_template", split=True)
+    cap = _setup_case(main_mod, monkeypatch, case)
+    monkeypatch.setattr(settings, "video_save_path", str(tmp_path))
+    monkeypatch.setattr(
+        settings, "record_directory_template", "{record_dir}/{user_id}{username}/{live_date}{live_title}/"
+    )
+    _patch(monkeypatch, "os", os)
+    started = _FIXED - datetime.timedelta(days=1)
+    info = {
+        "is_live": True,
+        "anchor_name": case["anchor_name"],
+        "anchor_id": "123456",
+        "title": "闲聊/100%",
+        "live_started_at": int(started.timestamp() * 1000),
+    }
+    _patch(monkeypatch, "_resolve_platform_stream", lambda *a, **k: (case["platform"], info, None, ""))
+
+    room_poller.start_record((case["quality"], case["record_url"], case["anchor_name"]))
+
+    assert cap.commands, cap.errors
+    output = Path(cap.commands[0]["command"][-1])
+    assert output.parent == tmp_path / "123456测试主播" / "2026-09-12闲聊_100"
+    assert output.parent.is_dir()
+    assert output.name.endswith("_%03d.ts")
 
 
 # ---------------------------------------------------------------------------

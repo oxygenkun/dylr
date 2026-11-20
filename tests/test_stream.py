@@ -289,6 +289,9 @@ class TestGetDouyinStreamUrl:
         json_data = {
             "anchor_name": "anchor_a",
             "status": 2,
+            "owner": {"id_str": "7654321"},
+            "start_time": 1789268400,
+            "title": "周末闲聊",
             "stream_url": {
                 "flv_pull_url": {"HD": "https://flv.example.com/hd.flv", "SD": "https://flv.example.com/sd.flv"},
                 "hls_pull_url_map": {"HD": "https://m3u8.example.com/hd.m3u8"},
@@ -301,6 +304,9 @@ class TestGetDouyinStreamUrl:
             result = await get_douyin_stream_url(json_data, video_quality="HD")
 
         assert result["is_live"] is True
+        assert result["anchor_id"] == "7654321"
+        assert result["live_started_at"] == 1789268400
+        assert result["title"] == "周末闲聊"
         # MID-26：解析阶段的探针也必须带 platform（与 stream_select / ffmpeg 同一份
         # 拉流侧 SSL 口径），否则证书异常平台的 m3u8 会被判不可达、错误降级画质
         assert mock_status.await_args is not None

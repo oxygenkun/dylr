@@ -53,6 +53,7 @@ douyin_dm_require_live: Annotated[bool, "录制设置", "抖音私信自动录�
 douyin_follow_interval: Annotated[int, "录制设置", "抖音关注轮询间隔(秒)"] = 60
 douyin_follow_mode: Annotated[str, "录制设置", "抖音直播检测方式(逐个/关注优先)"] = "逐个"
 video_save_path: Annotated[str, "录制设置", "直播保存路径(不填则默认)"] = ""
+record_directory_template: Annotated[str, "录制设置", "录制目录模板"] = ""
 max_record_seconds: Annotated[int, "录制设置", "单次录制时长上限(秒,0为不限制)"] = 6 * 60 * 60
 clean_emoji: Annotated[bool, "录制设置", "是否去除名称中的表情符号"] = True
 filename_by_title: Annotated[bool, "录制设置", "保存文件名是否包含标题"] = False

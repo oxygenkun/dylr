@@ -527,6 +527,8 @@ async def get_douyin_web_stream_data(
             room_data = cast(dict[str, object], cast(list[object], inner_list)[0])
             user_info = cast(dict[str, object], json_data.get("user") or {})
             room_data["anchor_name"] = _dig_str(user_info, "nickname")
+            if user_info and not room_data.get("owner"):
+                room_data["owner"] = user_info
             return room_data
 
         room_data: dict[str, object] | None = None
@@ -1371,7 +1373,14 @@ async def get_bilibili_room_info(
             return {"anchor_name": "", "live_status": False, "room_url": url}
 
         title = await get_bilibili_room_info_h5(url, proxy_addr, cookies) or ""
-        return {"anchor_name": anchor_name, "live_status": live_status, "room_url": url, "title": title}
+        return {
+            "anchor_name": anchor_name,
+            "anchor_id": uid,
+            "live_status": live_status,
+            "live_started_at": _dig(room_info, "data", "live_time"),
+            "room_url": url,
+            "title": title,
+        }
     except Exception as e:
         logger.warning(
             i18n.tr(

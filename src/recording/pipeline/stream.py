@@ -14,7 +14,13 @@ from src.support import i18n
 
 class DouyinStreamUrl(TypedDict, total=False):
     anchor_name: str | None
+    title: str
     status: int
+    owner: dict[str, object]
+    owner_user_id_str: str
+    owner_user_id: str | int
+    start_time: str | int
+    create_time: str | int
     stream_url: DouyinStreamInner
 
 
@@ -132,7 +138,9 @@ class YyCdnDetail(TypedDict, total=False):
 
 class BilibiliStreamUrl(TypedDict, total=False):
     anchor_name: str
+    anchor_id: str | int
     live_status: int
+    live_started_at: str | int
     title: str
     room_url: str
 
@@ -415,8 +423,13 @@ async def get_douyin_stream_url(
             if not use_hevc_flv and flv_pairs:
                 flv_quality_name, flv_url = flv_pairs[index]
             actual_quality = _norm_code(flv_quality_name or m3u8_quality_name)
+        owner = d.get("owner")
+        owner = owner if isinstance(owner, dict) else {}
         result |= {
             "is_live": True,
+            "anchor_id": d.get("owner_user_id_str") or d.get("owner_user_id") or owner.get("id_str") or owner.get("id"),
+            "live_started_at": d.get("start_time") or d.get("create_time"),
+            "title": d.get("title") or "",
             "quality": video_quality,
             "actual_quality": actual_quality,
             "available_qualities": available_qualities,
@@ -914,7 +927,9 @@ async def get_bilibili_stream_url(
     available_qualities = [qn_to_code[str(q)] for q in accept_qn if str(q) in qn_to_code] or None
     return {
         "anchor_name": anchor_name,
+        "anchor_id": b.get("anchor_id"),
         "is_live": True,
+        "live_started_at": b.get("live_started_at"),
         "title": b.get("title", ""),
         "quality": video_quality,
         "actual_quality": actual_quality,
